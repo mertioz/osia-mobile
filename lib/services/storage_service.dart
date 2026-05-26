@@ -7,6 +7,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 class StorageService {
   static const _keyTailscaleIp = 'osia_tailscale_ip';
   static const _keyToken = 'osia_token';
+  static const _keyThemeKey = 'osia_theme_key';
+  static const _keySelectedModel = 'osia_selected_model';
 
   final FlutterSecureStorage _storage;
 
@@ -37,6 +39,30 @@ class StorageService {
     return await _storage.read(key: _keyToken);
   }
 
+  // ── Theme ────────────────────────────────────────────────────────────
+
+  Future<void> setThemeKey(String key) async {
+    await _storage.write(key: _keyThemeKey, value: key);
+  }
+
+  Future<String?> getThemeKey() async {
+    return await _storage.read(key: _keyThemeKey);
+  }
+
+  // ── Selected model ───────────────────────────────────────────────────
+
+  Future<void> setSelectedModel(String model) async {
+    await _storage.write(key: _keySelectedModel, value: model);
+  }
+
+  Future<String?> getSelectedModel() async {
+    return await _storage.read(key: _keySelectedModel);
+  }
+
+  Future<void> clearSelectedModel() async {
+    await _storage.delete(key: _keySelectedModel);
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────
 
   /// True if both IP and token are stored (i.e. ready to connect).
@@ -44,6 +70,14 @@ class StorageService {
     final ip = await getTailscaleIp();
     final token = await getToken();
     return ip != null && ip.isNotEmpty && token != null && token.isNotEmpty;
+  }
+
+  /// Clear connection credentials (IP, token, selected model) while
+  /// preserving non-connection preferences like the chosen theme.
+  Future<void> clearCredentials() async {
+    await _storage.delete(key: _keyTailscaleIp);
+    await _storage.delete(key: _keyToken);
+    await _storage.delete(key: _keySelectedModel);
   }
 
   /// Clear all stored values.

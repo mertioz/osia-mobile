@@ -17,7 +17,7 @@ android {
     defaultConfig {
         applicationId = "com.osia.osia_mobile"
         // minSdk 23 required by the `record` package (AudioRecorder).
-        minSdk = 23
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

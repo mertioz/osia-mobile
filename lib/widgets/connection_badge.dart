@@ -2,12 +2,10 @@ import 'package:flutter/material.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 
-/// A small badge showing the WebSocket connection status.
+/// A small status dot showing the WebSocket connection state.
 ///
-/// Displays a colored dot with a label:
-/// - Green dot + "Connecté" when connected
-/// - Yellow dot + "Connexion..." when connecting
-/// - Red dot + "Déconnecté" when disconnected
+/// Minimal: just a colored dot (green/yellow/red), no label, no chip.
+/// Used next to the conversation title in the app bar.
 class ConnectionBadge extends StatelessWidget {
   final ws.ConnectionState state;
 
@@ -15,51 +13,37 @@ class ConnectionBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
     final (Color dotColor, String label) = switch (state) {
       ws.ConnectionState.connected => (const Color(0xFF22C55E), 'Connecté'),
       ws.ConnectionState.connecting => (const Color(0xFFEAB308), 'Connexion…'),
-      ws.ConnectionState.disconnected => (const Color(0xFFEF4444), 'Déconnecté'),
+      ws.ConnectionState.disconnected =>
+        (palette.error, 'Déconnecté'),
     };
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: osiaSurface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: osiaBorder, width: 0.5),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Pulsing dot for connecting state
-          if (state == ws.ConnectionState.connecting)
-            _PulsingDot(color: dotColor)
-          else
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: dotColor,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: dotColor.withValues(alpha: 0.5),
-                    blurRadius: 4,
+    return Tooltip(
+      message: label,
+      child: SizedBox(
+        width: 14,
+        height: 14,
+        child: Center(
+          child: state == ws.ConnectionState.connecting
+              ? _PulsingDot(color: dotColor)
+              : Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: dotColor,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: dotColor.withValues(alpha: 0.5),
+                        blurRadius: 4,
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: dotColor,
-              letterSpacing: 0.3,
-            ),
-          ),
-        ],
+                ),
+        ),
       ),
     );
   }
