@@ -190,12 +190,25 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         });
         _scrollToBottomAnimated();
-      case ws.AudioMessage(:final data):
+      case ws.AudioMessage(:final data, :final source):
+        // Read-aloud audio (speaker button): always play — the user
+        // explicitly asked for it. Untagged frames (older server) fall
+        // back to the _speakRequested flag.
+        final isSpeakAudio =
+            source == 'speak' || (source == null && _speakRequested);
+        if (isSpeakAudio) {
+          debugPrint(
+              '[OSIA Chat] audio: source=$source → playing (read-aloud)');
+          _speakRequested = false;
+          _audioService.playMp3(data);
+          break;
+        }
+        // Response audio (auto-TTS path): gated by the toggle and the
+        // conversation-switch discard flag.
         if (_discardCurrentResponse) break;
-        // Auto-TTS off → drop response audio, unless the user explicitly
-        // asked for this one via the speaker button on a message.
-        if (!_autoTts && !_speakRequested) break;
-        _speakRequested = false;
+        debugPrint('[OSIA Chat] audio: autoTts=$_autoTts → '
+            '${_autoTts ? "playing audio" : "dropped (auto-TTS off)"}');
+        if (!_autoTts) break;
         _audioService.playMp3(data);
       case ws.StatusMessage(:final content):
         if (content == 'thinking') {
@@ -413,6 +426,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _awaitingResponse = true;
       _discardCurrentResponse = false;
     });
+    // A new turn supersedes any stale read-aloud request — never let an
+    // old speak tap unlock this turn's response audio.
+    _speakRequested = false;
   }
 
   void _clearPendingFile() {
@@ -423,11 +439,21 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  /// Ask the PC to read one assistant message aloud (speaker button on the
-  /// bubble). Always allowed, regardless of the auto-TTS preference.
+  /// Ask the server to read one assistant message aloud (speaker button on
+  /// the bubble). The server synthesizes TTS and sends the audio back to
+  /// the phone. Always allowed, regardless of the auto-TTS preference.
   void _speakMessage(String content) {
     if (content.isEmpty) return;
-    if (_wsService.state != ws.ConnectionState.connected) return;
+    final connState = _wsService.state;
+    debugPrint('[OSIA Chat] read-aloud tapped: connState=$connState, '
+        '${content.length} chars');
+    if (connState != ws.ConnectionState.connected) {
+      // Surface why nothing will happen instead of failing silently.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(OsiaL10n.of(context).disconnected)),
+      );
+      return;
+    }
     _speakRequested = true;
     _wsService.sendSpeak(content);
   }
@@ -448,6 +474,8 @@ class _ChatScreenState extends State<ChatScreen> {
         _wsService.sendAudio(base64Wav);
         _awaitingResponse = true;
         _discardCurrentResponse = false;
+        // Same as _sendText: a new turn invalidates stale speak requests.
+        _speakRequested = false;
       }
       setState(() {});
     } else {

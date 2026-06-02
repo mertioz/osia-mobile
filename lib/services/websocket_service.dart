@@ -44,7 +44,12 @@ class ResponseChunkMessage extends OsiaMessage {
 class AudioMessage extends OsiaMessage {
   /// Base64-encoded MP3 data.
   final String data;
-  const AudioMessage(this.data);
+
+  /// Why the server sent this audio: 'response' for a reply's auto-TTS,
+  /// 'speak' for an explicit read-aloud request. Null when the server
+  /// doesn't tag its audio frames (older server versions).
+  final String? source;
+  const AudioMessage(this.data, {this.source});
 }
 
 class StatusMessage extends OsiaMessage {
@@ -303,9 +308,12 @@ class WebSocketService {
     _send({'type': 'set_model', 'model': model});
   }
 
-  /// Ask the PC to read [text] aloud over TTS (the speaker button under
-  /// an assistant message). Works regardless of the auto-TTS preference.
+  /// Ask the server to synthesize [text] over TTS and send the audio back
+  /// (the speaker button under an assistant message). Works regardless of
+  /// the auto-TTS preference.
   void sendSpeak(String text) {
+    final preview = text.length > 50 ? '${text.substring(0, 50)}…' : text;
+    debugPrint('[OSIA WS] sendSpeak: state=$_state, text="$preview"');
     _send({'type': 'speak', 'text': text});
   }
 
@@ -397,6 +405,13 @@ class WebSocketService {
   }
 
   void _send(Map<String, dynamic> json) {
+    // Surface dropped sends loudly — a null channel means the socket is
+    // down and the message silently goes nowhere otherwise.
+    if (_channel == null) {
+      debugPrint(
+          '[OSIA WS] Send DROPPED (socket not connected): type=${json['type']}');
+      return;
+    }
     final encoded = jsonEncode(json);
     try {
       _channel?.sink.add(encoded);
@@ -486,7 +501,11 @@ class WebSocketService {
           }
         case 'audio':
           if (data != null) {
-            _emit(AudioMessage(data));
+            final source = json['source'] as String?;
+            debugPrint(
+                '[OSIA WS] audio frame received: ${data.length} b64 chars, '
+                'source=$source');
+            _emit(AudioMessage(data, source: source));
           }
         case 'status':
           if (content != null) {
