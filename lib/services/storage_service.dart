@@ -10,6 +10,7 @@ class StorageService {
   static const _keyThemeKey = 'osia_theme_key';
   static const _keySelectedModel = 'osia_selected_model';
   static const _keyLanguage = 'osia_language';
+  static const _keyAutoTts = 'osia_auto_tts';
 
   /// Default server host used by the connection screen — the app always
   /// connects to the public OSIA endpoint; only the token is asked for.
@@ -64,6 +65,20 @@ class StorageService {
   /// (first launch — the device locale is used instead).
   Future<String?> getLanguageCode() async {
     return await _storage.read(key: _keyLanguage);
+  }
+
+  // ── Auto-TTS ─────────────────────────────────────────────────────────
+
+  /// Save whether OSIA reads responses aloud automatically.
+  Future<void> setAutoTts(bool enabled) async {
+    await _storage.write(key: _keyAutoTts, value: enabled ? 'true' : 'false');
+  }
+
+  /// Whether OSIA reads responses aloud automatically. Defaults to true
+  /// when the user never touched the toggle.
+  Future<bool> getAutoTts() async {
+    final raw = await _storage.read(key: _keyAutoTts);
+    return raw != 'false';
   }
 
   // ── Selected model ───────────────────────────────────────────────────

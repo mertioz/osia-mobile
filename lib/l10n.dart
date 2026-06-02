@@ -85,6 +85,10 @@ class OsiaStrings {
   final String legal;
   final String termsOfService;
   final String privacyPolicy;
+  final String voiceSection;
+  final String autoReadResponses;
+  final String autoReadResponsesSubtitle;
+  final String readAloud;
   final String connectionSection;
   final String restartServer;
   final String restartServerSubtitle;
@@ -152,6 +156,10 @@ class OsiaStrings {
     required this.legal,
     required this.termsOfService,
     required this.privacyPolicy,
+    required this.voiceSection,
+    required this.autoReadResponses,
+    required this.autoReadResponsesSubtitle,
+    required this.readAloud,
     required this.connectionSection,
     required this.restartServer,
     required this.restartServerSubtitle,
@@ -255,6 +263,11 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   legal: 'Legal',
   termsOfService: 'Terms of Service',
   privacyPolicy: 'Privacy Policy',
+  voiceSection: 'Voice',
+  autoReadResponses: 'Read responses aloud automatically',
+  autoReadResponsesSubtitle:
+      'When off, tap the speaker icon under a message to hear it.',
+  readAloud: 'Read aloud',
   connectionSection: 'Connection',
   restartServer: 'Restart server',
   restartServerSubtitle: 'Restart the OSIA server remotely.',
@@ -325,6 +338,11 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   legal: 'Légal',
   termsOfService: "Conditions d'utilisation",
   privacyPolicy: 'Politique de confidentialité',
+  voiceSection: 'Voix',
+  autoReadResponses: 'Lire les réponses à voix haute automatiquement',
+  autoReadResponsesSubtitle:
+      "Si désactivé, touchez l'icône haut-parleur sous un message pour l'écouter.",
+  readAloud: 'Lire à voix haute',
   connectionSection: 'Connexion',
   restartServer: 'Redémarrer le serveur',
   restartServerSubtitle: 'Redémarre le serveur OSIA à distance.',
@@ -394,6 +412,10 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   legal: '法律',
   termsOfService: '服务条款',
   privacyPolicy: '隐私政策',
+  voiceSection: '语音',
+  autoReadResponses: '自动朗读回复',
+  autoReadResponsesSubtitle: '关闭后，点按消息下方的扬声器图标即可收听。',
+  readAloud: '朗读',
   connectionSection: '连接',
   restartServer: '重启服务器',
   restartServerSubtitle: '远程重启 OSIA 服务器。',
@@ -462,6 +484,10 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   legal: '法的情報',
   termsOfService: '利用規約',
   privacyPolicy: 'プライバシーポリシー',
+  voiceSection: '音声',
+  autoReadResponses: '応答を自動的に読み上げる',
+  autoReadResponsesSubtitle: 'オフの場合、メッセージの下のスピーカーアイコンをタップすると読み上げられます。',
+  readAloud: '読み上げる',
   connectionSection: '接続',
   restartServer: 'サーバーを再起動',
   restartServerSubtitle: 'OSIA サーバーをリモートで再起動します。',
@@ -533,6 +559,11 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   legal: 'Rechtliches',
   termsOfService: 'Nutzungsbedingungen',
   privacyPolicy: 'Datenschutzerklärung',
+  voiceSection: 'Sprachausgabe',
+  autoReadResponses: 'Antworten automatisch vorlesen',
+  autoReadResponsesSubtitle:
+      'Wenn deaktiviert, tippen Sie auf das Lautsprechersymbol unter einer Nachricht, um sie anzuhören.',
+  readAloud: 'Vorlesen',
   connectionSection: 'Verbindung',
   restartServer: 'Server neu starten',
   restartServerSubtitle: 'Startet den OSIA-Server aus der Ferne neu.',
@@ -605,6 +636,11 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   legal: 'Legal',
   termsOfService: 'Términos de servicio',
   privacyPolicy: 'Política de privacidad',
+  voiceSection: 'Voz',
+  autoReadResponses: 'Leer las respuestas en voz alta automáticamente',
+  autoReadResponsesSubtitle:
+      'Si está desactivado, toca el icono del altavoz bajo un mensaje para escucharlo.',
+  readAloud: 'Leer en voz alta',
   connectionSection: 'Conexión',
   restartServer: 'Reiniciar servidor',
   restartServerSubtitle: 'Reinicia el servidor OSIA de forma remota.',

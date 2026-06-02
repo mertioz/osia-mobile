@@ -13,9 +13,10 @@ import 'legal_screen.dart';
 const String _kDonationUrl = 'https://osia.space/donate';
 
 /// Settings screen. Only reachable from the chat screen, i.e. after a
-/// successful connection. Hosts four sections plus a donation link:
+/// successful connection. Hosts five sections plus a donation link:
 ///   - Appearance: color theme swatches (applied live)
 ///   - Language: EN/FR/ZH/JA/DE/ES dropdown
+///   - Voice: auto-TTS toggle
 ///   - Legal: ToS + privacy policy
 ///   - Connection: restart server + disconnect
 class SettingsScreen extends StatefulWidget {
@@ -48,9 +49,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Timer? _restartTimeout;
   Timer? _reconnectedReset;
 
+  /// Whether OSIA reads responses aloud automatically (ON by default).
+  bool _autoTts = true;
+
   @override
   void initState() {
     super.initState();
+    widget.storage.getAutoTts().then((enabled) {
+      if (mounted) setState(() => _autoTts = enabled);
+    });
     _connState = widget.wsService.state;
     _connSub = widget.wsService.connectionStream.listen((state) {
       if (!mounted) return;
@@ -87,6 +94,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.languageController.setLanguageByCode(code);
     widget.storage.setLanguageCode(code);
     setState(() {});
+  }
+
+  void _onToggleAutoTts(bool enabled) {
+    setState(() => _autoTts = enabled);
+    widget.storage.setAutoTts(enabled);
   }
 
   void _restartServer() {
@@ -213,6 +225,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: _LanguageDropdown(
                   currentCode: widget.languageController.code,
                   onChanged: _onPickLanguage,
+                  palette: palette,
+                ),
+              ),
+
+              // ── Voice ────────────────────────────────────────────────
+              _SectionHeader(label: strings.voiceSection, palette: palette),
+              _SectionCard(
+                palette: palette,
+                padding: EdgeInsets.zero,
+                child: _ToggleTile(
+                  icon: Icons.volume_up_rounded,
+                  title: strings.autoReadResponses,
+                  subtitle: strings.autoReadResponsesSubtitle,
+                  value: _autoTts,
+                  onChanged: _onToggleAutoTts,
                   palette: palette,
                 ),
               ),
@@ -663,6 +690,74 @@ class _RestartServerTile extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ToggleTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final OsiaPalette palette;
+  const _ToggleTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+    required this.palette,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => onChanged(!value),
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 28,
+              child: Icon(icon, size: 18, color: palette.accent),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: palette.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 12, color: palette.textMuted),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Switch(
+              value: value,
+              onChanged: onChanged,
+              activeTrackColor: palette.accent,
+              activeThumbColor:
+                  palette.isDark ? palette.background : Colors.white,
+              inactiveTrackColor: palette.border.withValues(alpha: 0.5),
+              inactiveThumbColor: palette.textMuted,
+            ),
+          ],
         ),
       ),
     );

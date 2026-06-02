@@ -87,6 +87,13 @@ class _ChatScreenState extends State<ChatScreen> {
   // dropped until the matching status=done/error arrives.
   bool _discardCurrentResponse = false;
 
+  // Auto-TTS preference (Settings → Voice). When false, audio frames that
+  // arrive with a response are not played automatically.
+  bool _autoTts = true;
+  // True right after the user taps the speaker button on a message, so the
+  // resulting TTS audio plays even when auto-TTS is off. Reset on playback.
+  bool _speakRequested = false;
+
   @override
   void initState() {
     super.initState();
@@ -97,6 +104,9 @@ class _ChatScreenState extends State<ChatScreen> {
     final ip = await widget.storage.getTailscaleIp();
     final token = await widget.storage.getToken();
     _selectedModel = await widget.storage.getSelectedModel();
+    // Re-read on every (re)connection so a toggle change in Settings is
+    // picked up when the chat screen rebuilds its connection.
+    _autoTts = await widget.storage.getAutoTts();
 
     if (ip == null || token == null || ip.isEmpty || token.isEmpty) {
       if (mounted) {
@@ -182,6 +192,10 @@ class _ChatScreenState extends State<ChatScreen> {
         _scrollToBottomAnimated();
       case ws.AudioMessage(:final data):
         if (_discardCurrentResponse) break;
+        // Auto-TTS off → drop response audio, unless the user explicitly
+        // asked for this one via the speaker button on a message.
+        if (!_autoTts && !_speakRequested) break;
+        _speakRequested = false;
         _audioService.playMp3(data);
       case ws.StatusMessage(:final content):
         if (content == 'thinking') {
@@ -407,6 +421,15 @@ class _ChatScreenState extends State<ChatScreen> {
       _pendingFileBytes = null;
       _pendingIsImage = false;
     });
+  }
+
+  /// Ask the PC to read one assistant message aloud (speaker button on the
+  /// bubble). Always allowed, regardless of the auto-TTS preference.
+  void _speakMessage(String content) {
+    if (content.isEmpty) return;
+    if (_wsService.state != ws.ConnectionState.connected) return;
+    _speakRequested = true;
+    _wsService.sendSpeak(content);
   }
 
   bool _isImageFilename(String filename) {
@@ -738,6 +761,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             return const ThinkingIndicator();
                           }
                           final entry = _entries[index];
+                          final isAssistant =
+                              !entry.isUser && !entry.isSystem;
                           return ChatBubble(
                             // Stable key per slot so the bubble (and its
                             // blinking-cursor Timer) is preserved while
@@ -748,6 +773,9 @@ class _ChatScreenState extends State<ChatScreen> {
                             isTranscript: entry.isTranscript,
                             isStreaming: entry.isStreaming,
                             isSystem: entry.isSystem,
+                            onSpeak: isAssistant
+                                ? () => _speakMessage(entry.content)
+                                : null,
                           );
                         },
                       ),

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../l10n.dart';
 import '../theme.dart';
 
 /// A chat bubble for displaying messages in the conversation.
@@ -17,6 +18,11 @@ class ChatBubble extends StatefulWidget {
   final bool isStreaming;
   final bool isSystem;
 
+  /// Called when the user taps the speaker button under an assistant
+  /// message — asks the PC to read this message aloud. The button is only
+  /// shown when this is non-null (i.e. on completed assistant bubbles).
+  final VoidCallback? onSpeak;
+
   const ChatBubble({
     super.key,
     required this.text,
@@ -24,6 +30,7 @@ class ChatBubble extends StatefulWidget {
     this.isTranscript = false,
     this.isStreaming = false,
     this.isSystem = false,
+    this.onSpeak,
   });
 
   @override
@@ -173,6 +180,10 @@ class _ChatBubbleState extends State<ChatBubble>
     // Assistant message reads as clean text on canvas with a subtle accent
     // bar on the left — no heavy bubble — so streaming output feels like a
     // stream of thought rather than a card animating in.
+    // The speaker button only appears once the message is complete, so it
+    // never sends a half-streamed text to the PC for TTS.
+    final showSpeak = widget.onSpeak != null && !widget.isStreaming;
+
     return Container(
       padding: const EdgeInsets.only(left: 4),
       child: Row(
@@ -189,13 +200,50 @@ class _ChatBubbleState extends State<ChatBubble>
             ),
           ),
           Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 2, vertical: 4),
-              child: content,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 2, vertical: 4),
+                  child: content,
+                ),
+                if (showSpeak) _SpeakButton(onTap: widget.onSpeak!),
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Small speaker button under an assistant message — asks the PC to read
+/// that message aloud over TTS. Deliberately subtle: a bare violet icon,
+/// no fill, no border.
+class _SpeakButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _SpeakButton({required this.onTap});
+
+  /// OSIA's voice violet — fixed, independent of the active theme.
+  static const Color _violet = Color(0xFFC4B5F5);
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: OsiaL10n.of(context).readAloud,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: const Padding(
+          padding: EdgeInsets.all(6),
+          child: Icon(
+            Icons.volume_up_rounded,
+            size: 16,
+            color: _violet,
+          ),
+        ),
       ),
     );
   }

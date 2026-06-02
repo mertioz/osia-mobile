@@ -303,6 +303,12 @@ class WebSocketService {
     _send({'type': 'set_model', 'model': model});
   }
 
+  /// Ask the PC to read [text] aloud over TTS (the speaker button under
+  /// an assistant message). Works regardless of the auto-TTS preference.
+  void sendSpeak(String text) {
+    _send({'type': 'speak', 'text': text});
+  }
+
   /// Ask the server to restart itself. The socket will drop shortly after;
   /// the built-in reconnection loop then brings the connection back up
   /// once the server is reachable again.
