@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -77,7 +78,9 @@ class Conversation {
     }
     return Conversation(
       id: (json['id'] ?? '').toString(),
-      title: (json['title'] ?? 'Sans titre').toString(),
+      // Untitled conversations keep an empty title here; the UI shows a
+      // localized "Untitled" label instead.
+      title: (json['title'] ?? '').toString(),
       date: parsed,
     );
   }
@@ -221,6 +224,23 @@ class WebSocketService {
   ConnectionState _state = ConnectionState.disconnected;
   ConnectionState get state => _state;
 
+  // ── Chunk pacing ─────────────────────────────────────────────────────
+  //
+  // Streamed `response_chunk` frames can arrive in bursts (the server
+  // pushes whole sentences as soon as they're ready). To make streaming
+  // feel smooth and real-time rather than batchy, every parsed message
+  // flows through an ordered queue: chunks are emitted at most one per
+  // [_chunkInterval], and all other message types keep their position in
+  // the stream so ordering invariants (chunks → response → status done)
+  // are preserved.
+
+  /// Minimum delay between two emitted response chunks.
+  static const Duration _chunkInterval = Duration(milliseconds: 30);
+
+  final Queue<OsiaMessage> _outQueue = Queue<OsiaMessage>();
+  Timer? _drainTimer;
+  bool _drainPaused = false;
+
   // ── Constructor ──────────────────────────────────────────────────────
 
   WebSocketService({required this.ip, required this.token});
@@ -283,6 +303,13 @@ class WebSocketService {
     _send({'type': 'set_model', 'model': model});
   }
 
+  /// Ask the server to restart itself. The socket will drop shortly after;
+  /// the built-in reconnection loop then brings the connection back up
+  /// once the server is reachable again.
+  void sendRestartServer() {
+    _send({'type': 'restart_server'});
+  }
+
   /// Upload a file as base64 bytes. The server saves it to disk and
   /// injects its path into the next user turn. When [isImage] is true,
   /// the same base64 payload is repeated under `image_base64` so the
@@ -304,6 +331,9 @@ class WebSocketService {
   /// Free all resources.
   void dispose() {
     disconnect();
+    _drainTimer?.cancel();
+    _drainTimer = null;
+    _outQueue.clear();
     _connectionCtrl.close();
     _messageCtrl.close();
     _errorCtrl.close();
@@ -328,6 +358,36 @@ class WebSocketService {
     if (_state == newState) return;
     _state = newState;
     _connectionCtrl.add(newState);
+  }
+
+  /// Enqueue a parsed message for ordered, paced delivery to listeners.
+  void _emit(OsiaMessage msg) {
+    _outQueue.add(msg);
+    _drainQueue();
+  }
+
+  /// Drain the output queue. Non-chunk messages are delivered immediately
+  /// (in order); after each [ResponseChunkMessage] the drain pauses for
+  /// [_chunkInterval] so the UI renders chunks smoothly instead of in
+  /// batches.
+  void _drainQueue() {
+    if (_drainPaused) return;
+    while (_outQueue.isNotEmpty) {
+      if (_messageCtrl.isClosed) {
+        _outQueue.clear();
+        return;
+      }
+      final msg = _outQueue.removeFirst();
+      _messageCtrl.add(msg);
+      if (msg is ResponseChunkMessage) {
+        _drainPaused = true;
+        _drainTimer = Timer(_chunkInterval, () {
+          _drainPaused = false;
+          _drainQueue();
+        });
+        return;
+      }
+    }
   }
 
   void _send(Map<String, dynamic> json) {
@@ -408,23 +468,23 @@ class WebSocketService {
       switch (type) {
         case 'transcript':
           if (content != null) {
-            _messageCtrl.add(TranscriptMessage(content));
+            _emit(TranscriptMessage(content));
           }
         case 'response':
           if (content != null) {
-            _messageCtrl.add(ResponseMessage(content));
+            _emit(ResponseMessage(content));
           }
         case 'response_chunk':
           if (content != null && content.isNotEmpty) {
-            _messageCtrl.add(ResponseChunkMessage(content));
+            _emit(ResponseChunkMessage(content));
           }
         case 'audio':
           if (data != null) {
-            _messageCtrl.add(AudioMessage(data));
+            _emit(AudioMessage(data));
           }
         case 'status':
           if (content != null) {
-            _messageCtrl.add(StatusMessage(content));
+            _emit(StatusMessage(content));
           }
         case 'conversations':
           final raw = json['items'] ?? json['conversations'];
@@ -440,7 +500,7 @@ class WebSocketService {
               debugPrint(
                   '[OSIA WS]   first: id=${list.first.id} title="${list.first.title}" date=${list.first.date}');
             }
-            _messageCtrl.add(ConversationsMessage(list));
+            _emit(ConversationsMessage(list));
           } else {
             debugPrint(
                 '[OSIA WS] conversations message had no list payload: keys=${json.keys.toList()}');
@@ -450,7 +510,7 @@ class WebSocketService {
           final title = json['title']?.toString();
           debugPrint(
               '[OSIA WS] active_conversation: id=$id title="$title"');
-          _messageCtrl.add(ActiveConversationMessage(id: id, title: title));
+          _emit(ActiveConversationMessage(id: id, title: title));
         case 'models_list':
           final rawModels = json['models'] ?? json['items'];
           final list = rawModels is List
@@ -460,7 +520,7 @@ class WebSocketService {
               (json['current'] ?? json['selected'])?.toString();
           debugPrint(
               '[OSIA WS] models_list: ${list.length} model(s), current=$current');
-          _messageCtrl.add(ModelsListMessage(models: list, current: current));
+          _emit(ModelsListMessage(models: list, current: current));
         case 'conversation_history':
           final raw = json['messages'];
           final list = raw is List
@@ -472,7 +532,7 @@ class WebSocketService {
               : <HistoryMessage>[];
           debugPrint(
               '[OSIA WS] conversation_history: ${list.length} message(s) for id=${json['id']}');
-          _messageCtrl.add(ConversationHistoryMessage(
+          _emit(ConversationHistoryMessage(
             id: json['id']?.toString(),
             messages: list,
           ));

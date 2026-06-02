@@ -1,6 +1,6 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-/// Service for persisting sensitive settings: Tailscale IP and auth token.
+/// Service for persisting sensitive settings: server host and auth token.
 ///
 /// Uses [FlutterSecureStorage] so keys are stored in the platform keychain
 /// (Android Keystore / iOS Keychain).
@@ -9,6 +9,11 @@ class StorageService {
   static const _keyToken = 'osia_token';
   static const _keyThemeKey = 'osia_theme_key';
   static const _keySelectedModel = 'osia_selected_model';
+  static const _keyLanguage = 'osia_language';
+
+  /// Default server host used by the connection screen — the app always
+  /// connects to the public OSIA endpoint; only the token is asked for.
+  static const String defaultHost = 'osia.space';
 
   final FlutterSecureStorage _storage;
 
@@ -47,6 +52,18 @@ class StorageService {
 
   Future<String?> getThemeKey() async {
     return await _storage.read(key: _keyThemeKey);
+  }
+
+  // ── Language ─────────────────────────────────────────────────────────
+
+  Future<void> setLanguageCode(String code) async {
+    await _storage.write(key: _keyLanguage, value: code);
+  }
+
+  /// Read the saved language code, or `null` if the user never picked one
+  /// (first launch — the device locale is used instead).
+  Future<String?> getLanguageCode() async {
+    return await _storage.read(key: _keyLanguage);
   }
 
   // ── Selected model ───────────────────────────────────────────────────

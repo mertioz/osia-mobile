@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../l10n.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 
@@ -14,11 +15,14 @@ class ConnectionBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
     final (Color dotColor, String label) = switch (state) {
-      ws.ConnectionState.connected => (const Color(0xFF22C55E), 'Connecté'),
-      ws.ConnectionState.connecting => (const Color(0xFFEAB308), 'Connexion…'),
+      ws.ConnectionState.connected =>
+        (const Color(0xFF22C55E), strings.connected),
+      ws.ConnectionState.connecting =>
+        (const Color(0xFFEAB308), strings.connectingStatus),
       ws.ConnectionState.disconnected =>
-        (palette.error, 'Déconnecté'),
+        (palette.error, strings.disconnected),
     };
 
     return Tooltip(

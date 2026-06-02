@@ -6,6 +6,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../l10n.dart';
+import '../nav.dart';
 import '../services/audio_service.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
@@ -15,13 +17,21 @@ import '../widgets/connection_badge.dart';
 import '../widgets/glass_input_bar.dart';
 import '../widgets/model_selector_sheet.dart';
 import '../widgets/thinking_indicator.dart';
+import 'settings_screen.dart';
 
 /// Main chat screen: conversation history, floating glass input,
 /// thinking indicator, model selector and connection badge.
 class ChatScreen extends StatefulWidget {
   final StorageService storage;
+  final ThemeController themeController;
+  final LanguageController languageController;
 
-  const ChatScreen({super.key, required this.storage});
+  const ChatScreen({
+    super.key,
+    required this.storage,
+    required this.themeController,
+    required this.languageController,
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -29,7 +39,9 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   // Services
-  late final ws.WebSocketService _wsService;
+  // Not `final`: the service is disposed and recreated on every Settings
+  // round-trip (see _openSettings → _initConnection).
+  late ws.WebSocketService _wsService;
   final AudioService _audioService = AudioService();
 
   // State
@@ -88,7 +100,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (ip == null || token == null || ip.isEmpty || token.isEmpty) {
       if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/settings');
+        Navigator.of(context).pushReplacementNamed('/connection');
       }
       return;
     }
@@ -277,23 +289,25 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _deleteConversation(ws.Conversation conv) async {
     final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Supprimer la conversation ?'),
+        title: Text(strings.deleteConversationTitle),
         content: Text(
-          '« ${conv.title} » sera supprimée définitivement.',
+          strings.deleteConversationBody(conv.title),
           style: TextStyle(color: palette.textMuted, fontSize: 14),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child:
-                Text('Annuler', style: TextStyle(color: palette.textMuted)),
+            child: Text(strings.cancel,
+                style: TextStyle(color: palette.textMuted)),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text('Supprimer', style: TextStyle(color: palette.error)),
+            child:
+                Text(strings.delete, style: TextStyle(color: palette.error)),
           ),
         ],
       ),
@@ -312,7 +326,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  String _formatConversationDate(DateTime? date) {
+  String _formatConversationDate(DateTime? date, OsiaStrings strings) {
     if (date == null) return '';
     final now = DateTime.now();
     final local = date.toLocal();
@@ -322,10 +336,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (diffDays == 0) {
       final h = local.hour.toString().padLeft(2, '0');
       final m = local.minute.toString().padLeft(2, '0');
-      return "Aujourd'hui $h:$m";
+      return '${strings.today} $h:$m';
     }
-    if (diffDays == 1) return 'Hier';
-    if (diffDays < 7) return 'Il y a $diffDays j';
+    if (diffDays == 1) return strings.yesterday;
+    if (diffDays < 7) return strings.daysAgo(diffDays);
     final d = local.day.toString().padLeft(2, '0');
     final mo = local.month.toString().padLeft(2, '0');
     final y = local.year.toString();
@@ -369,11 +383,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _wsService.sendFile(filename, base64Encode(bytes), isImage: isImage);
     }
 
+    final strings = OsiaL10n.of(context);
     final prompt = text.isNotEmpty
         ? text
         : (isImage
-            ? "Analyse cette image."
-            : "Voici le fichier ${filename ?? ''}.");
+            ? strings.analyzeImagePrompt
+            : strings.hereIsFile(filename ?? ''));
     _wsService.sendText(prompt);
 
     _textCtrl.clear();
@@ -418,15 +433,16 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() {});
       } catch (e) {
         if (mounted) {
+          final strings = OsiaL10n.of(context);
           final msg = _audioService.isPermissionPermanentlyDenied
-              ? "Permission micro refusée. Ouvrez les paramètres pour l'autoriser."
-              : "Impossible d'accéder au microphone.";
+              ? strings.micPermissionDenied
+              : strings.micUnavailable;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(msg),
               action: _audioService.isPermissionPermanentlyDenied
                   ? SnackBarAction(
-                      label: 'Paramètres',
+                      label: strings.openSettingsAction,
                       onPressed: () =>
                           _audioService.openMicrophoneSettings(),
                     )
@@ -495,7 +511,7 @@ class _ChatScreenState extends State<ChatScreen> {
       debugPrint('[OSIA Attach] pickFiles threw: $e\n$stack');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Sélection de fichier impossible : $e")),
+          SnackBar(content: Text(OsiaL10n.of(context).filePickFailed('$e'))),
         );
       }
       return;
@@ -524,7 +540,8 @@ class _ChatScreenState extends State<ChatScreen> {
         debugPrint('[OSIA Attach] disk read failed: $e\n$stack');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Lecture du fichier impossible : $e")),
+            SnackBar(
+                content: Text(OsiaL10n.of(context).fileReadFailed('$e'))),
           );
         }
         return;
@@ -534,7 +551,7 @@ class _ChatScreenState extends State<ChatScreen> {
       debugPrint('[OSIA Attach] empty / null bytes after load');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Fichier vide ou inaccessible.')),
+          SnackBar(content: Text(OsiaL10n.of(context).fileEmpty)),
         );
       }
       return;
@@ -562,14 +579,15 @@ class _ChatScreenState extends State<ChatScreen> {
     _modelLoadTimeout?.cancel();
 
     if (_models.isEmpty) {
+      final strings = OsiaL10n.of(context);
       _wsService.sendGetModels();
       _modelLoadTimeout = Timer(const Duration(seconds: 5), () {
         if (_modelSelectorNotifier != notifier) return;
         if (notifier.value.models.isNotEmpty) return;
-        notifier.value = const ModelSelectorState(
-          models: [],
+        notifier.value = ModelSelectorState(
+          models: const [],
           isLoading: false,
-          errorMessage: 'Impossible de charger les modèles',
+          errorMessage: strings.modelsLoadFailed,
         );
       });
     }
@@ -593,11 +611,43 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Settings is pushed directly (not via a named route) so it can borrow
+  /// the live WebSocket service for the "restart server" action. When it
+  /// pops, the connection is rebuilt from scratch in case anything changed.
+  Future<void> _openSettings() async {
+    await Navigator.of(context).push(slideFadeRoute(
+      SettingsScreen(
+        storage: widget.storage,
+        themeController: widget.themeController,
+        languageController: widget.languageController,
+        wsService: _wsService,
+      ),
+    ));
+    // If settings disconnected us, this whole screen was removed from the
+    // navigator — don't touch state in that case.
+    if (!mounted) return;
+    _msgSub?.cancel();
+    _connSub?.cancel();
+    _errSub?.cancel();
+    _wsService.dispose();
+    setState(() {
+      _initialized = false;
+      _entries.clear();
+      _thinking = false;
+      _connError = null;
+      _conversations = [];
+      _activeConversationId = null;
+      _activeConversationTitle = null;
+      _streamingIndex = null;
+    });
+    _initConnection();
+  }
+
   /// Full label of the active model for the input-bar pill. Falls back to
   /// the raw id until the server's models_list gives us a pretty label.
-  String get _currentModelLabel {
+  String _currentModelLabel(OsiaStrings strings) {
     final id = _selectedModel;
-    if (id == null || id.isEmpty) return 'Modèle';
+    if (id == null || id.isEmpty) return strings.model;
     final found = _models.where((m) => m.id == id).toList();
     return found.isNotEmpty ? found.first.label : id;
   }
@@ -619,6 +669,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
 
     if (!_initialized && _connState == ws.ConnectionState.disconnected) {
       return Scaffold(
@@ -639,7 +690,7 @@ class _ChatScreenState extends State<ChatScreen> {
         leading: IconButton(
           icon: const Icon(Icons.menu_rounded),
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-          tooltip: 'Conversations',
+          tooltip: strings.conversations,
         ),
         title: Row(
           mainAxisSize: MainAxisSize.min,
@@ -664,25 +715,8 @@ class _ChatScreenState extends State<ChatScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.settings_rounded),
-            onPressed: () async {
-              await Navigator.of(context).pushNamed('/settings');
-              _msgSub?.cancel();
-              _connSub?.cancel();
-              _errSub?.cancel();
-              _wsService.dispose();
-              setState(() {
-                _initialized = false;
-                _entries.clear();
-                _thinking = false;
-                _connError = null;
-                _conversations = [];
-                _activeConversationId = null;
-                _activeConversationTitle = null;
-                _streamingIndex = null;
-              });
-              _initConnection();
-            },
-            tooltip: 'Paramètres',
+            onPressed: _openSettings,
+            tooltip: strings.settingsTooltip,
           ),
           const SizedBox(width: 4),
         ],
@@ -693,7 +727,7 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               Expanded(
                 child: _entries.isEmpty && !_thinking
-                    ? _buildEmptyState(palette)
+                    ? _buildEmptyState(palette, strings)
                     : ListView.builder(
                         controller: _scrollCtrl,
                         padding: const EdgeInsets.fromLTRB(0, 12, 0, 120),
@@ -730,7 +764,7 @@ class _ChatScreenState extends State<ChatScreen> {
               switchOutCurve: Curves.easeIn,
               child: (_connError != null &&
                       _connState != ws.ConnectionState.connected)
-                  ? _buildErrorBanner(palette)
+                  ? _buildErrorBanner(palette, strings)
                   : const SizedBox.shrink(key: ValueKey('no-banner')),
             ),
           ),
@@ -745,7 +779,7 @@ class _ChatScreenState extends State<ChatScreen> {
               onSend: _sendText,
               onMicTap: _toggleRecording,
               onAttach: _onAttach,
-              modelLabel: _currentModelLabel,
+              modelLabel: _currentModelLabel(strings),
               onModelTap: _openModelSelector,
               onChanged: (_) => setState(() {}),
               onSubmitted: (_) => _sendText(),
@@ -758,7 +792,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildEmptyState(OsiaPalette palette) {
+  Widget _buildEmptyState(OsiaPalette palette, OsiaStrings strings) {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -780,7 +814,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            'Dites bonjour à OSIA',
+            strings.sayHello,
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w500,
@@ -789,7 +823,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            'Tapez un message ou utilisez le micro.',
+            strings.typeMessageOrMic,
             style: TextStyle(
               fontSize: 13,
               color: palette.textMuted.withValues(alpha: 0.8),
@@ -801,6 +835,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildConversationsDrawer(OsiaPalette palette) {
+    final strings = OsiaL10n.of(context);
     return Drawer(
       backgroundColor: palette.background,
       shape: const RoundedRectangleBorder(
@@ -837,7 +872,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         color: palette.accent, size: 20),
                     const SizedBox(width: 10),
                     Text(
-                      'Conversations',
+                      strings.conversations,
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -855,7 +890,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: ElevatedButton.icon(
                     onPressed: _newConversation,
                     icon: const Icon(Icons.add_rounded, size: 20),
-                    label: const Text('Nouveau chat'),
+                    label: Text(strings.newChat),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: palette.accent,
                       foregroundColor: palette.isDark
@@ -883,7 +918,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         child: Padding(
                           padding: const EdgeInsets.all(24),
                           child: Text(
-                            'Aucune conversation pour le moment',
+                            strings.noConversationsYet,
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 13,
@@ -910,8 +945,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildConversationTile(ws.Conversation conv, OsiaPalette palette) {
+    final strings = OsiaL10n.of(context);
     final isActive = conv.id == _activeConversationId;
-    final dateLabel = _formatConversationDate(conv.date);
+    final dateLabel = _formatConversationDate(conv.date, strings);
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 2),
@@ -961,7 +997,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          conv.title.isEmpty ? 'Sans titre' : conv.title,
+                          conv.title.isEmpty ? strings.untitled : conv.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -1003,7 +1039,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildErrorBanner(OsiaPalette palette) {
+  Widget _buildErrorBanner(OsiaPalette palette, OsiaStrings strings) {
     return Container(
       key: const ValueKey('error-banner'),
       width: double.infinity,
@@ -1043,9 +1079,9 @@ class _ChatScreenState extends State<ChatScreen> {
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: const Text('Réessayer',
-                style:
-                    TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+            child: Text(strings.retry,
+                style: const TextStyle(
+                    fontSize: 12.5, fontWeight: FontWeight.w600)),
           ),
         ],
       ),

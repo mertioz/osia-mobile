@@ -144,9 +144,14 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Widget _userBubble(OsiaPalette palette, Widget content) {
+    // Accent-tinted rounded card: the palette bubble base blended with a
+    // soft wash of the accent color so the tint follows the active theme.
     return Container(
       decoration: BoxDecoration(
-        color: palette.userBubble,
+        color: Color.alphaBlend(
+          palette.accent.withValues(alpha: 0.10),
+          palette.userBubble,
+        ),
         borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(20),
           topRight: Radius.circular(20),
@@ -154,7 +159,7 @@ class _ChatBubbleState extends State<ChatBubble>
           bottomRight: Radius.circular(6),
         ),
         border: Border.all(
-          color: palette.accent.withValues(alpha: 0.18),
+          color: palette.accent.withValues(alpha: 0.22),
           width: 0.6,
         ),
       ),
@@ -165,9 +170,9 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Widget _assistantBubble(OsiaPalette palette, Widget content) {
-    // Assistant message reads as text on canvas with a tiny side accent
-    // marker — no heavy bubble — so streaming output feels like a stream
-    // of thought rather than a card animating in.
+    // Assistant message reads as clean text on canvas with a subtle accent
+    // bar on the left — no heavy bubble — so streaming output feels like a
+    // stream of thought rather than a card animating in.
     return Container(
       padding: const EdgeInsets.only(left: 4),
       child: Row(
@@ -176,10 +181,10 @@ class _ChatBubbleState extends State<ChatBubble>
         children: [
           Container(
             margin: const EdgeInsets.only(top: 8, right: 10),
-            width: 4,
+            width: 3,
             height: 14,
             decoration: BoxDecoration(
-              color: palette.accent.withValues(alpha: 0.6),
+              color: palette.accent.withValues(alpha: 0.55),
               borderRadius: BorderRadius.circular(2),
             ),
           ),

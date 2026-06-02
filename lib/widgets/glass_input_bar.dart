@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import '../l10n.dart';
 import '../theme.dart';
 
 /// Shared motion constants so every implicit animation in the bar moves
@@ -55,6 +56,7 @@ class GlassInputBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
     final glassFill =
         palette.surface.withValues(alpha: palette.isDark ? 0.55 : 0.70);
     final borderColor =
@@ -126,7 +128,7 @@ class GlassInputBar extends StatelessWidget {
                     isCollapsed: true,
                     contentPadding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 12),
-                    hintText: 'Message OSIA…',
+                    hintText: strings.messageHint,
                     hintStyle: TextStyle(
                       color: palette.textMuted,
                       fontSize: 15,
@@ -146,7 +148,7 @@ class GlassInputBar extends StatelessWidget {
                   _GlassIconButton(
                     icon: Icons.add_rounded,
                     onTap: onAttach,
-                    tooltip: 'Joindre un fichier',
+                    tooltip: strings.attachFile,
                   ),
                   const SizedBox(width: 2),
                   Expanded(

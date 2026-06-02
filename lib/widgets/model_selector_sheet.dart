@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../l10n.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 
@@ -72,6 +73,7 @@ class _ModelSelectorSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
     return SafeArea(
       child: Container(
         margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
@@ -100,7 +102,7 @@ class _ModelSelectorSheet extends StatelessWidget {
                       color: palette.accent, size: 18),
                   const SizedBox(width: 8),
                   Text(
-                    'Modèles disponibles',
+                    strings.availableModels,
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
@@ -123,7 +125,7 @@ class _ModelSelectorSheet extends StatelessWidget {
                   switchOutCurve: Curves.easeInCubic,
                   child: KeyedSubtree(
                     key: ValueKey(_bodyKind),
-                    child: _buildBody(palette),
+                    child: _buildBody(palette, strings),
                   ),
                 ),
               ),
@@ -144,7 +146,7 @@ class _ModelSelectorSheet extends StatelessWidget {
     return 'list';
   }
 
-  Widget _buildBody(OsiaPalette palette) {
+  Widget _buildBody(OsiaPalette palette, OsiaStrings strings) {
     // Loading but no cached list to fall back on — spinner.
     if (isLoading && models.isEmpty) {
       return Padding(
@@ -169,13 +171,13 @@ class _ModelSelectorSheet extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
         child: Text(
-          'Aucun modèle reçu du serveur.',
+          strings.noModelsReceived,
           style: TextStyle(color: palette.textMuted, fontSize: 13),
           textAlign: TextAlign.center,
         ),
       );
     }
-    final entries = _buildEntries();
+    final entries = _buildEntries(strings);
     return ListView.separated(
       shrinkWrap: true,
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
@@ -201,7 +203,7 @@ class _ModelSelectorSheet extends StatelessWidget {
   /// Flattens [models] into list entries: one section header per provider
   /// (groups ordered by first appearance) followed by that provider's models.
   /// Falls back to a flat list when no model carries provider info.
-  List<_SheetEntry> _buildEntries() {
+  List<_SheetEntry> _buildEntries(OsiaStrings strings) {
     final hasProviders =
         models.any((m) => (m.provider ?? '').trim().isNotEmpty);
     if (!hasProviders) {
@@ -209,7 +211,9 @@ class _ModelSelectorSheet extends StatelessWidget {
     }
     final groups = <String, List<ws.OsiaModel>>{};
     for (final m in models) {
-      groups.putIfAbsent(_providerName(m.provider), () => []).add(m);
+      groups
+          .putIfAbsent(_providerName(m.provider, strings), () => [])
+          .add(m);
     }
     return [
       for (final group in groups.entries) ...[
@@ -231,9 +235,9 @@ class _ModelSelectorSheet extends StatelessWidget {
     'deepseek': 'DEEPSEEK',
   };
 
-  String _providerName(String? provider) {
+  String _providerName(String? provider, OsiaStrings strings) {
     final key = (provider ?? '').trim().toLowerCase();
-    if (key.isEmpty) return 'AUTRES';
+    if (key.isEmpty) return strings.otherProviders;
     return _providerLabels[key] ?? key.toUpperCase();
   }
 }

@@ -1,104 +1,135 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../l10n.dart';
 import '../services/storage_service.dart';
+import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 import 'legal_screen.dart';
 
-/// Settings screen. Hosts four sections:
-///   - Connexion: server IP + auth token
-///   - Apparence: color theme picker
-///   - Compte: disconnect (clears IP/token/model)
-///   - Légal: ToS + privacy policy links
-///
-/// Doubles as the onboarding screen when nothing is configured yet.
+/// Placeholder donation URL — to be replaced with the real one later.
+const String _kDonationUrl = 'https://osia.space/donate';
+
+/// Settings screen. Only reachable from the chat screen, i.e. after a
+/// successful connection. Hosts four sections plus a donation link:
+///   - Appearance: color theme swatches (applied live)
+///   - Language: EN/FR/ZH/JA/DE/ES dropdown
+///   - Legal: ToS + privacy policy
+///   - Connection: restart server + disconnect
 class SettingsScreen extends StatefulWidget {
   final StorageService storage;
   final ThemeController themeController;
+  final LanguageController languageController;
+
+  /// Live connection to the OSIA server, owned by the chat screen.
+  /// Used to send the restart command and watch the reconnection.
+  final ws.WebSocketService wsService;
 
   const SettingsScreen({
     super.key,
     required this.storage,
     required this.themeController,
+    required this.languageController,
+    required this.wsService,
   });
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
+enum _RestartState { idle, reconnecting, reconnected }
+
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _ipController = TextEditingController();
-  final _tokenController = TextEditingController();
-  bool _saving = false;
-  bool _hasExistingCredentials = false;
-  String? _error;
+  _RestartState _restartState = _RestartState.idle;
+  ws.ConnectionState _connState = ws.ConnectionState.disconnected;
+  StreamSubscription? _connSub;
+  Timer? _restartTimeout;
+  Timer? _reconnectedReset;
 
   @override
   void initState() {
     super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final ip = await widget.storage.getTailscaleIp();
-    final token = await widget.storage.getToken();
-    if (mounted) {
-      setState(() {
-        _ipController.text = ip ?? '';
-        _tokenController.text = token ?? '';
-        _hasExistingCredentials = (ip ?? '').isNotEmpty &&
-            (token ?? '').isNotEmpty;
-      });
-    }
-  }
-
-  Future<void> _save() async {
-    setState(() {
-      _saving = true;
-      _error = null;
+    _connState = widget.wsService.state;
+    _connSub = widget.wsService.connectionStream.listen((state) {
+      if (!mounted) return;
+      setState(() => _connState = state);
+      if (_restartState == _RestartState.reconnecting &&
+          state == ws.ConnectionState.connected) {
+        _restartTimeout?.cancel();
+        setState(() => _restartState = _RestartState.reconnected);
+        _reconnectedReset = Timer(const Duration(seconds: 3), () {
+          if (mounted) setState(() => _restartState = _RestartState.idle);
+        });
+      }
     });
+  }
 
-    try {
-      final ip = _ipController.text.trim();
-      final token = _tokenController.text.trim();
+  @override
+  void dispose() {
+    _connSub?.cancel();
+    _restartTimeout?.cancel();
+    _reconnectedReset?.cancel();
+    super.dispose();
+  }
 
-      if (ip.isEmpty || token.isEmpty) {
-        setState(() => _error = 'Veuillez remplir tous les champs.');
-        return;
+  // ── Actions ─────────────────────────────────────────────────────────────
+
+  void _onPickTheme(String key) {
+    widget.themeController.setPaletteByKey(key);
+    widget.storage.setThemeKey(key);
+    setState(() {});
+  }
+
+  void _onPickLanguage(String? code) {
+    if (code == null) return;
+    widget.languageController.setLanguageByCode(code);
+    widget.storage.setLanguageCode(code);
+    setState(() {});
+  }
+
+  void _restartServer() {
+    if (_restartState == _RestartState.reconnecting) return;
+    // The restart command can only be delivered over a live socket; the
+    // tile is disabled when disconnected, but guard anyway.
+    if (widget.wsService.state != ws.ConnectionState.connected) return;
+    widget.wsService.sendRestartServer();
+    setState(() => _restartState = _RestartState.reconnecting);
+    // Safety net: if the server never comes back, stop showing the spinner.
+    _restartTimeout?.cancel();
+    _restartTimeout = Timer(const Duration(seconds: 90), () {
+      if (mounted && _restartState == _RestartState.reconnecting) {
+        setState(() => _restartState = _RestartState.idle);
       }
-
-      await widget.storage.setTailscaleIp(ip);
-      await widget.storage.setToken(token);
-
-      if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/chat');
-      }
-    } catch (e) {
-      setState(() => _error = 'Erreur: $e');
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
+    });
   }
 
   Future<void> _disconnect() async {
     final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Se déconnecter ?'),
+        title: Text(strings.disconnectConfirmTitle),
         content: Text(
-          'Votre adresse de serveur et votre jeton seront effacés. Le thème est conservé.',
+          strings.disconnectConfirmBody,
           style: TextStyle(color: palette.textMuted, fontSize: 13.5),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text('Annuler',
-                style: TextStyle(color: palette.textMuted)),
+            child: Text(
+              strings.cancel,
+              style: TextStyle(color: palette.textMuted),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text('Se déconnecter',
-                style: TextStyle(color: palette.error)),
+            child: Text(
+              strings.disconnect,
+              style: TextStyle(color: palette.error),
+            ),
           ),
         ],
       ),
@@ -107,50 +138,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     await widget.storage.clearCredentials();
     if (!mounted) return;
-    setState(() {
-      _ipController.clear();
-      _tokenController.clear();
-      _hasExistingCredentials = false;
-    });
-    Navigator.of(context)
-        .pushNamedAndRemoveUntil('/settings', (_) => false);
+    // Back to the connection page, clearing the whole navigation stack
+    // (the chat screen underneath tears its connection down on dispose).
+    Navigator.of(context).pushNamedAndRemoveUntil('/connection', (_) => false);
   }
 
-  void _onPickTheme(String key) {
-    widget.themeController.setPaletteByKey(key);
-    widget.storage.setThemeKey(key);
-    setState(() {});
-  }
-
-  Future<void> _pasteFromClipboard() async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    if (data?.text == null) return;
-    final t = data!.text!;
-    if (t.length >= 32) {
-      if (t.length == 64 && RegExp(r'^[a-f0-9]+$').hasMatch(t)) {
-        _tokenController.text = t;
-      } else {
-        _ipController.text = t;
-      }
-      setState(() {});
+  Future<void> _openDonation() async {
+    final uri = Uri.parse(_kDonationUrl);
+    var opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      opened = false;
+    }
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(OsiaL10n.of(context).linkOpenFailed)),
+      );
     }
   }
 
-  @override
-  void dispose() {
-    _ipController.dispose();
-    _tokenController.dispose();
-    super.dispose();
+  void _openLegal(LegalDocument document) {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => LegalScreen(document: document)));
   }
+
+  // ── Build ───────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
 
     return Scaffold(
       backgroundColor: palette.background,
       appBar: AppBar(
-        title: const Text('Paramètres'),
+        title: Text(strings.settingsTitle),
         backgroundColor: palette.background,
         iconTheme: IconThemeData(color: palette.accent),
       ),
@@ -160,145 +184,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (!_hasExistingCredentials) _buildHeader(palette),
-
-              // ── Connexion ────────────────────────────────────────────
-              _SectionHeader(label: 'Connexion', palette: palette),
-              _SectionCard(
-                palette: palette,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _FieldLabel(text: 'Adresse IP ou domaine', palette: palette),
-                    const SizedBox(height: 6),
-                    _OsiaTextField(
-                      controller: _ipController,
-                      hint: 'Ex: 100.64.0.42 ou osia.space',
-                      palette: palette,
-                      textInputAction: TextInputAction.next,
-                    ),
-                    const SizedBox(height: 14),
-                    _FieldLabel(text: 'Token d\'authentification', palette: palette),
-                    const SizedBox(height: 6),
-                    _OsiaTextField(
-                      controller: _tokenController,
-                      hint: 'Token affiché par votre serveur OSIA',
-                      palette: palette,
-                      obscure: true,
-                      onSubmitted: (_) => _save(),
-                    ),
-                    const SizedBox(height: 10),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        onPressed: _pasteFromClipboard,
-                        icon: Icon(Icons.content_paste_rounded,
-                            size: 16, color: palette.accent),
-                        label: Text(
-                          'Coller',
-                          style: TextStyle(
-                              color: palette.accent, fontSize: 13),
-                        ),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
-                          minimumSize: Size.zero,
-                        ),
-                      ),
-                    ),
-                    if (_error != null) ...[
-                      const SizedBox(height: 4),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: palette.error.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                              color: palette.error.withValues(alpha: 0.3)),
-                        ),
-                        child: Text(
-                          _error!,
-                          style: TextStyle(
-                              color: palette.error, fontSize: 13),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      height: 48,
-                      child: ElevatedButton(
-                        onPressed: _saving ? null : _save,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: palette.accent,
-                          foregroundColor: palette.isDark
-                              ? palette.background
-                              : Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          textStyle: const TextStyle(
-                              fontSize: 15, fontWeight: FontWeight.w600),
-                        ),
-                        child: _saving
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.5,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : Text(_hasExistingCredentials
-                                ? 'Mettre à jour'
-                                : 'Se connecter'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // ── Apparence ────────────────────────────────────────────
-              _SectionHeader(label: 'Apparence', palette: palette),
+              // ── Appearance ───────────────────────────────────────────
+              _SectionHeader(label: strings.appearance, palette: palette),
               _SectionCard(
                 palette: palette,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      'Thème de couleur',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: palette.textMuted,
-                      ),
+                      strings.colorTheme,
+                      style: TextStyle(fontSize: 13, color: palette.textMuted),
                     ),
                     const SizedBox(height: 14),
                     _ThemeSwatchRow(
                       currentKey: widget.themeController.palette.key,
                       onTap: _onPickTheme,
                       palette: palette,
+                      strings: strings,
                     ),
                   ],
                 ),
               ),
 
-              // ── Compte ───────────────────────────────────────────────
-              if (_hasExistingCredentials) ...[
-                _SectionHeader(label: 'Compte', palette: palette),
-                _SectionCard(
+              // ── Language ─────────────────────────────────────────────
+              _SectionHeader(label: strings.language, palette: palette),
+              _SectionCard(
+                palette: palette,
+                child: _LanguageDropdown(
+                  currentCode: widget.languageController.code,
+                  onChanged: _onPickLanguage,
                   palette: palette,
-                  child: _DangerTile(
-                    icon: Icons.logout_rounded,
-                    title: 'Se déconnecter',
-                    subtitle:
-                        'Efface l\'adresse, le jeton et le modèle mémorisé.',
-                    onTap: _disconnect,
-                    palette: palette,
-                  ),
                 ),
-              ],
+              ),
 
-              // ── Légal ────────────────────────────────────────────────
-              _SectionHeader(label: 'Légal', palette: palette),
+              // ── Legal ────────────────────────────────────────────────
+              _SectionHeader(label: strings.legal, palette: palette),
               _SectionCard(
                 palette: palette,
                 padding: EdgeInsets.zero,
@@ -306,9 +226,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   children: [
                     _NavTile(
                       icon: Icons.description_outlined,
-                      title: 'Conditions d\'utilisation',
-                      onTap: () => _openLegal(
-                          'Conditions d\'utilisation', osiaTermsOfService),
+                      title: strings.termsOfService,
+                      onTap: () => _openLegal(LegalDocument.termsOfService),
                       palette: palette,
                     ),
                     Divider(
@@ -318,15 +237,85 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     _NavTile(
                       icon: Icons.privacy_tip_outlined,
-                      title: 'Politique de confidentialité',
-                      onTap: () => _openLegal(
-                          'Confidentialité', osiaPrivacyPolicy),
+                      title: strings.privacyPolicy,
+                      onTap: () => _openLegal(LegalDocument.privacyPolicy),
                       palette: palette,
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
+
+              // ── Connection ───────────────────────────────────────────
+              _SectionHeader(
+                label: strings.connectionSection,
+                palette: palette,
+              ),
+              _SectionCard(
+                palette: palette,
+                padding: EdgeInsets.zero,
+                child: Column(
+                  children: [
+                    _RestartServerTile(
+                      state: _restartState,
+                      connected: _connState == ws.ConnectionState.connected,
+                      onTap: _restartServer,
+                      palette: palette,
+                      strings: strings,
+                    ),
+                    Divider(
+                      height: 1,
+                      color: palette.border.withValues(alpha: 0.5),
+                      indent: 56,
+                    ),
+                    _DangerTile(
+                      icon: Icons.logout_rounded,
+                      title: strings.disconnect,
+                      subtitle: strings.disconnectSubtitle,
+                      onTap: _disconnect,
+                      palette: palette,
+                    ),
+                  ],
+                ),
+              ),
+
+              // ── Donation + footer ────────────────────────────────────
+              const SizedBox(height: 28),
+              Center(
+                child: InkWell(
+                  onTap: _openDonation,
+                  borderRadius: BorderRadius.circular(20),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.favorite_rounded,
+                          size: 16,
+                          color: palette.accent,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          strings.makeDonation,
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w500,
+                            color: palette.accent,
+                            decoration: TextDecoration.underline,
+                            decorationColor: palette.accent.withValues(
+                              alpha: 0.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
               Center(
                 child: Text(
                   'OSIA Mobile',
@@ -342,50 +331,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
-  }
-
-  Widget _buildHeader(OsiaPalette palette) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 10, 4, 18),
-      child: Column(
-        children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: palette.accent.withValues(alpha: 0.12),
-              border: Border.all(
-                  color: palette.accent.withValues(alpha: 0.4), width: 1),
-            ),
-            child: Icon(Icons.graphic_eq_rounded,
-                size: 30, color: palette.accent),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            'OSIA Mobile',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-              color: palette.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Configurez la connexion à votre serveur.',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: palette.textMuted),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _openLegal(String title, String body) {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => LegalScreen(title: title, body: body),
-    ));
   }
 }
 
@@ -437,82 +382,18 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
-class _FieldLabel extends StatelessWidget {
-  final String text;
-  final OsiaPalette palette;
-  const _FieldLabel({required this.text, required this.palette});
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: TextStyle(
-        fontSize: 12.5,
-        fontWeight: FontWeight.w500,
-        color: palette.textMuted,
-      ),
-    );
-  }
-}
-
-class _OsiaTextField extends StatelessWidget {
-  final TextEditingController controller;
-  final String hint;
-  final OsiaPalette palette;
-  final bool obscure;
-  final TextInputAction textInputAction;
-  final ValueChanged<String>? onSubmitted;
-  const _OsiaTextField({
-    required this.controller,
-    required this.hint,
-    required this.palette,
-    this.obscure = false,
-    this.textInputAction = TextInputAction.done,
-    this.onSubmitted,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      obscureText: obscure,
-      textInputAction: textInputAction,
-      onSubmitted: onSubmitted,
-      cursorColor: palette.accent,
-      style: TextStyle(color: palette.textPrimary, fontSize: 14.5),
-      decoration: InputDecoration(
-        filled: true,
-        fillColor: palette.background.withValues(
-            alpha: palette.isDark ? 0.7 : 0.5),
-        hintText: hint,
-        hintStyle: TextStyle(color: palette.textMuted, fontSize: 14),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: palette.border),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: palette.border),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: palette.accent, width: 1.4),
-        ),
-      ),
-    );
-  }
-}
+// ── Theme swatches ────────────────────────────────────────────────────────
 
 class _ThemeSwatchRow extends StatelessWidget {
   final String currentKey;
   final ValueChanged<String> onTap;
   final OsiaPalette palette;
+  final OsiaStrings strings;
   const _ThemeSwatchRow({
     required this.currentKey,
     required this.onTap,
     required this.palette,
+    required this.strings,
   });
 
   @override
@@ -523,9 +404,9 @@ class _ThemeSwatchRow extends StatelessWidget {
         for (final p in osiaPalettes)
           _ThemeSwatch(
             target: p,
+            label: strings.themeName(p.key),
             isActive: p.key == currentKey,
             highlight: palette.accent,
-            label: palette.textPrimary,
             muted: palette.textMuted,
             onTap: () => onTap(p.key),
           ),
@@ -536,16 +417,16 @@ class _ThemeSwatchRow extends StatelessWidget {
 
 class _ThemeSwatch extends StatelessWidget {
   final OsiaPalette target;
+  final String label;
   final bool isActive;
   final Color highlight;
-  final Color label;
   final Color muted;
   final VoidCallback onTap;
   const _ThemeSwatch({
     required this.target,
+    required this.label,
     required this.isActive,
     required this.highlight,
-    required this.label,
     required this.muted,
     required this.onTap,
   });
@@ -558,7 +439,8 @@ class _ThemeSwatch extends StatelessWidget {
         GestureDetector(
           onTap: onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOutCubic,
             width: 44,
             height: 44,
             decoration: BoxDecoration(
@@ -589,7 +471,7 @@ class _ThemeSwatch extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Text(
-          target.label,
+          label,
           style: TextStyle(
             fontSize: 11,
             fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
@@ -597,6 +479,192 @@ class _ThemeSwatch extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ── Language dropdown ─────────────────────────────────────────────────────
+
+class _LanguageDropdown extends StatelessWidget {
+  final String currentCode;
+  final ValueChanged<String?> onChanged;
+  final OsiaPalette palette;
+  const _LanguageDropdown({
+    required this.currentCode,
+    required this.onChanged,
+    required this.palette,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<String>(
+      initialValue: currentCode,
+      onChanged: onChanged,
+      borderRadius: BorderRadius.circular(14),
+      dropdownColor: palette.surfaceElevated,
+      icon: Icon(
+        Icons.keyboard_arrow_down_rounded,
+        color: palette.accent,
+        size: 22,
+      ),
+      style: TextStyle(color: palette.textPrimary, fontSize: 14.5),
+      decoration: InputDecoration(
+        filled: true,
+        fillColor: palette.background.withValues(
+          alpha: palette.isDark ? 0.7 : 0.5,
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 12,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: palette.border),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: palette.border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: palette.accent, width: 1.4),
+        ),
+      ),
+      // Closed state shows just the language name (no check icon).
+      selectedItemBuilder: (context) => [
+        for (final s in osiaAllStrings)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              s.languageName,
+              style: TextStyle(fontSize: 14.5, color: palette.textPrimary),
+            ),
+          ),
+      ],
+      items: [
+        for (final s in osiaAllStrings)
+          DropdownMenuItem<String>(
+            value: s.languageCode,
+            child: Row(
+              children: [
+                Text(
+                  s.languageName,
+                  style: TextStyle(fontSize: 14.5, color: palette.textPrimary),
+                ),
+                if (s.languageCode == currentCode) ...[
+                  const SizedBox(width: 8),
+                  Icon(Icons.check_rounded, size: 16, color: palette.accent),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// ── Connection tiles ──────────────────────────────────────────────────────
+
+class _RestartServerTile extends StatelessWidget {
+  final _RestartState state;
+
+  /// Whether the WebSocket is currently connected — the restart command
+  /// can only be delivered over a live socket, so the tile is disabled
+  /// (and dimmed) while disconnected.
+  final bool connected;
+  final VoidCallback onTap;
+  final OsiaPalette palette;
+  final OsiaStrings strings;
+  const _RestartServerTile({
+    required this.state,
+    required this.connected,
+    required this.onTap,
+    required this.palette,
+    required this.strings,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final (Widget leading, String title, String subtitle) = switch (state) {
+      _RestartState.idle => (
+        Icon(Icons.restart_alt_rounded, size: 18, color: palette.accent),
+        strings.restartServer,
+        strings.restartServerSubtitle,
+      ),
+      _RestartState.reconnecting => (
+        SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: palette.accent,
+          ),
+        ),
+        strings.reconnecting,
+        strings.restartServerSubtitle,
+      ),
+      _RestartState.reconnected => (
+        const Icon(
+          Icons.check_circle_rounded,
+          size: 18,
+          color: Color(0xFF22C55E),
+        ),
+        strings.reconnected,
+        strings.restartServerSubtitle,
+      ),
+    };
+
+    final enabled = state == _RestartState.idle && connected;
+
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOutCubic,
+      opacity: enabled || state != _RestartState.idle ? 1.0 : 0.45,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              SizedBox(width: 28, child: Center(child: leading)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      child: Text(
+                        title,
+                        key: ValueKey(title),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: palette.textPrimary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(fontSize: 12, color: palette.textMuted),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 18,
+                color: palette.textMuted,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -623,20 +691,21 @@ class _NavTile extends StatelessWidget {
         child: Row(
           children: [
             SizedBox(
-                width: 28,
-                child: Icon(icon, size: 18, color: palette.accent)),
+              width: 28,
+              child: Icon(icon, size: 18, color: palette.accent),
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 title,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: palette.textPrimary,
-                ),
+                style: TextStyle(fontSize: 14, color: palette.textPrimary),
               ),
             ),
-            Icon(Icons.chevron_right_rounded,
-                size: 18, color: palette.textMuted),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 18,
+              color: palette.textMuted,
+            ),
           ],
         ),
       ),
@@ -664,19 +733,19 @@ class _DangerTile extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: [
             Container(
-              width: 36,
-              height: 36,
+              width: 28,
+              height: 28,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: palette.error.withValues(alpha: 0.12),
               ),
-              child: Icon(icon, size: 18, color: palette.error),
+              child: Icon(icon, size: 15, color: palette.error),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -693,16 +762,16 @@ class _DangerTile extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: palette.textMuted,
-                    ),
+                    style: TextStyle(fontSize: 12, color: palette.textMuted),
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right_rounded,
-                size: 18, color: palette.textMuted),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 18,
+              color: palette.textMuted,
+            ),
           ],
         ),
       ),

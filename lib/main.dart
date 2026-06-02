@@ -1,8 +1,10 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'services/storage_service.dart';
+import 'l10n.dart';
+import 'nav.dart';
 import 'screens/chat_screen.dart';
-import 'screens/settings_screen.dart';
+import 'screens/connection_screen.dart';
+import 'services/storage_service.dart';
 import 'theme.dart';
 
 void main() {
@@ -27,6 +29,7 @@ class OsiaApp extends StatefulWidget {
 class _OsiaAppState extends State<OsiaApp> {
   final StorageService _storage = StorageService();
   final ThemeController _themeController = ThemeController();
+  final LanguageController _languageController = LanguageController();
 
   bool? _configured;
   bool _loading = true;
@@ -49,6 +52,21 @@ class _OsiaAppState extends State<OsiaApp> {
       // Keep default palette on any storage error.
     }
 
+    // Restore the saved language; on first launch, auto-detect it from the
+    // device locale (EN default, FR/ZH/JA/DE/ES supported).
+    try {
+      final saved = await _storage.getLanguageCode();
+      if (saved != null) {
+        _languageController.setLanguageByCode(saved);
+      } else {
+        final detected = LanguageController.detectDeviceLanguage();
+        _languageController.setLanguageByCode(detected);
+        await _storage.setLanguageCode(detected);
+      }
+    } catch (_) {
+      // Keep default language (English) on any storage error.
+    }
+
     var configured = false;
     try {
       configured = await _storage
@@ -69,19 +87,28 @@ class _OsiaAppState extends State<OsiaApp> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: _themeController,
+      animation: Listenable.merge([_themeController, _languageController]),
       builder: (context, _) {
         final palette = _themeController.palette;
+        final strings = _languageController.strings;
         return OsiaTheme(
           palette: palette,
-          child: MaterialApp(
-            title: 'OSIA Mobile',
-            debugShowCheckedModeBanner: false,
-            theme: buildOsiaTheme(palette),
-            builder: (context, child) =>
-                OsiaTheme(palette: palette, child: child ?? const SizedBox()),
-            home: _buildHome(palette),
-            onGenerateRoute: _generateRoute,
+          child: OsiaL10n(
+            strings: strings,
+            child: MaterialApp(
+              title: 'OSIA Mobile',
+              debugShowCheckedModeBanner: false,
+              theme: buildOsiaTheme(palette),
+              builder: (context, child) => OsiaTheme(
+                palette: palette,
+                child: OsiaL10n(
+                  strings: strings,
+                  child: child ?? const SizedBox(),
+                ),
+              ),
+              home: _buildHome(palette),
+              onGenerateRoute: _generateRoute,
+            ),
           ),
         );
       },
@@ -89,46 +116,28 @@ class _OsiaAppState extends State<OsiaApp> {
   }
 
   /// Named routes, each wrapped in a smooth slide-up + fade transition.
-  /// Same destinations as before — only the transition changed.
+  ///
+  /// Note: there is intentionally no '/settings' route — settings is only
+  /// reachable from the chat screen (i.e. after a successful connection),
+  /// which pushes it directly with the live WebSocket service.
   Route<dynamic>? _generateRoute(RouteSettings settings) {
     switch (settings.name) {
-      case '/settings':
-        return _slideFadeRoute(
-          SettingsScreen(
-            storage: _storage,
-            themeController: _themeController,
-          ),
+      case '/connection':
+        return slideFadeRoute(
+          ConnectionScreen(storage: _storage),
           settings,
         );
       case '/chat':
-        return _slideFadeRoute(ChatScreen(storage: _storage), settings);
+        return slideFadeRoute(_buildChatScreen(), settings);
     }
     return null;
   }
 
-  static Route<dynamic> _slideFadeRoute(Widget page, RouteSettings settings) {
-    return PageRouteBuilder<dynamic>(
-      settings: settings,
-      transitionDuration: const Duration(milliseconds: 280),
-      reverseTransitionDuration: const Duration(milliseconds: 240),
-      pageBuilder: (_, _, _) => page,
-      transitionsBuilder: (_, animation, _, child) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
-        );
-        return FadeTransition(
-          opacity: curved,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, 0.06),
-              end: Offset.zero,
-            ).animate(curved),
-            child: child,
-          ),
-        );
-      },
+  ChatScreen _buildChatScreen() {
+    return ChatScreen(
+      storage: _storage,
+      themeController: _themeController,
+      languageController: _languageController,
     );
   }
 
@@ -142,11 +151,8 @@ class _OsiaAppState extends State<OsiaApp> {
       );
     }
     if (_configured == true) {
-      return ChatScreen(storage: _storage);
+      return _buildChatScreen();
     }
-    return SettingsScreen(
-      storage: _storage,
-      themeController: _themeController,
-    );
+    return ConnectionScreen(storage: _storage);
   }
 }
