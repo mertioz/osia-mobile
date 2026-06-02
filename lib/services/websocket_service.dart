@@ -279,6 +279,24 @@ class WebSocketService {
     _send({'type': 'set_model', 'model': model});
   }
 
+  /// Upload a file as base64 bytes. The server saves it to disk and
+  /// injects its path into the next user turn. When [isImage] is true,
+  /// the same base64 payload is repeated under `image_base64` so the
+  /// server can hand it straight to a vision model without re-reading
+  /// the file from disk.
+  void sendFile(String filename, String base64Data, {bool isImage = false}) {
+    final msg = <String, dynamic>{
+      'type': 'file',
+      'filename': filename,
+      'data': base64Data,
+      'is_image': isImage,
+    };
+    if (isImage) {
+      msg['image_base64'] = base64Data;
+    }
+    _send(msg);
+  }
+
   /// Free all resources.
   void dispose() {
     disconnect();

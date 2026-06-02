@@ -3,11 +3,21 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../theme.dart';
 
+/// Shared motion constants so every implicit animation in the bar moves
+/// with the same rhythm.
+const Duration _kBarAnimDuration = Duration(milliseconds: 250);
+const Curve _kBarAnimCurve = Curves.easeOutCubic;
+
 /// Floating glassmorphism input bar pinned to the bottom of the chat.
 ///
-/// Layout: `[+]  text field  [mic]  [send]`. Recording state morphs the
-/// mic into a stop control. The whole bar is a blurred translucent
-/// rounded rectangle so the chat content shows faintly underneath.
+/// Two-row layout, like a modern AI chat app:
+///   row 1: growing text field ("Message OSIA…")
+///   row 2: [+] [model pill]            [mic] [send]
+///
+/// The model pill shows the currently active model and opens the model
+/// selector sheet on tap. Recording state morphs the mic into a stop
+/// control. The whole bar is a blurred translucent rounded rectangle so
+/// the chat content shows faintly underneath.
 class GlassInputBar extends StatelessWidget {
   final TextEditingController textController;
   final bool isRecording;
@@ -17,6 +27,14 @@ class GlassInputBar extends StatelessWidget {
   final VoidCallback onAttach;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
+  final String? pendingFilename;
+  final VoidCallback? onRemovePending;
+
+  /// Label of the currently active model, shown in the pill.
+  final String modelLabel;
+
+  /// Opens the model selector sheet.
+  final VoidCallback onModelTap;
 
   const GlassInputBar({
     super.key,
@@ -26,8 +44,12 @@ class GlassInputBar extends StatelessWidget {
     required this.onSend,
     required this.onMicTap,
     required this.onAttach,
+    required this.modelLabel,
+    required this.onModelTap,
     this.onChanged,
     this.onSubmitted,
+    this.pendingFilename,
+    this.onRemovePending,
   });
 
   @override
@@ -37,15 +59,16 @@ class GlassInputBar extends StatelessWidget {
         palette.surface.withValues(alpha: palette.isDark ? 0.55 : 0.70);
     final borderColor =
         palette.accent.withValues(alpha: palette.isDark ? 0.20 : 0.30);
+    final radius = BorderRadius.circular(16);
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(28),
+      borderRadius: radius,
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
         child: Container(
           decoration: BoxDecoration(
             color: glassFill,
-            borderRadius: BorderRadius.circular(28),
+            borderRadius: radius,
             border: Border.all(color: borderColor, width: 0.8),
             boxShadow: [
               BoxShadow(
@@ -56,65 +79,225 @@ class GlassInputBar extends StatelessWidget {
               ),
             ],
           ),
-          padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _GlassIconButton(
-                icon: Icons.add_rounded,
-                onTap: onAttach,
-                tooltip: 'Joindre un fichier',
-              ),
-              const SizedBox(width: 2),
-              Expanded(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    minHeight: 40,
-                    maxHeight: 140,
-                  ),
-                  child: TextField(
-                    controller: textController,
-                    minLines: 1,
-                    maxLines: 6,
-                    textInputAction: TextInputAction.send,
-                    onChanged: onChanged,
-                    onSubmitted: onSubmitted,
-                    cursorColor: palette.accent,
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontSize: 15,
-                      height: 1.35,
-                    ),
-                    decoration: InputDecoration(
-                      isCollapsed: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 12),
-                      hintText: 'Écrivez votre message…',
-                      hintStyle: TextStyle(
-                        color: palette.textMuted,
-                        fontSize: 15,
+              // Pending attachment chip — animates in/out of the layout.
+              AnimatedSize(
+                duration: _kBarAnimDuration,
+                curve: _kBarAnimCurve,
+                alignment: Alignment.topCenter,
+                child: pendingFilename == null
+                    ? const SizedBox(width: double.infinity)
+                    : Padding(
+                        padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: _PendingFileChip(
+                            filename: pendingFilename!,
+                            onRemove: onRemovePending,
+                          ),
+                        ),
                       ),
-                      filled: false,
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
+              ),
+              // Row 1 — text field. AnimatedSize smooths the height change
+              // as the text wraps onto new lines (up to 5, then it scrolls
+              // internally).
+              AnimatedSize(
+                duration: _kBarAnimDuration,
+                curve: _kBarAnimCurve,
+                alignment: Alignment.topCenter,
+                child: TextField(
+                  controller: textController,
+                  minLines: 1,
+                  maxLines: 5,
+                  textInputAction: TextInputAction.send,
+                  onChanged: onChanged,
+                  onSubmitted: onSubmitted,
+                  cursorColor: palette.accent,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 15,
+                    height: 1.35,
+                  ),
+                  decoration: InputDecoration(
+                    isCollapsed: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 12),
+                    hintText: 'Message OSIA…',
+                    hintStyle: TextStyle(
+                      color: palette.textMuted,
+                      fontSize: 15,
                     ),
+                    filled: false,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
                   ),
                 ),
               ),
-              const SizedBox(width: 4),
-              _GlassMicButton(
-                isRecording: isRecording,
-                onTap: onMicTap,
-              ),
-              const SizedBox(width: 6),
-              _GlassSendButton(
-                active: hasText,
-                onTap: onSend,
+              const SizedBox(height: 4),
+              // Row 2 — attach + model pill on the left, mic + send on the
+              // right.
+              Row(
+                children: [
+                  _GlassIconButton(
+                    icon: Icons.add_rounded,
+                    onTap: onAttach,
+                    tooltip: 'Joindre un fichier',
+                  ),
+                  const SizedBox(width: 2),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: _ModelPill(
+                        label: modelLabel,
+                        onTap: onModelTap,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  _GlassMicButton(
+                    isRecording: isRecording,
+                    onTap: onMicTap,
+                  ),
+                  const SizedBox(width: 6),
+                  _GlassSendButton(
+                    active: hasText,
+                    onTap: onSend,
+                  ),
+                ],
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Pill showing the currently active model. Tapping it opens the model
+/// selector sheet; the label cross-fades when the selection changes.
+class _ModelPill extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+  const _ModelPill({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: _kBarAnimDuration,
+          curve: _kBarAnimCurve,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: palette.accent.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: palette.accent.withValues(alpha: 0.28),
+              width: 0.7,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.auto_awesome_rounded,
+                  size: 13, color: palette.accent),
+              const SizedBox(width: 5),
+              Flexible(
+                child: AnimatedSwitcher(
+                  duration: _kBarAnimDuration,
+                  switchInCurve: _kBarAnimCurve,
+                  switchOutCurve: Curves.easeInCubic,
+                  layoutBuilder: (current, previous) => Stack(
+                    alignment: Alignment.centerLeft,
+                    children: [...previous, ?current],
+                  ),
+                  child: Text(
+                    label,
+                    key: ValueKey(label),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w500,
+                      color: palette.accent,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 3),
+              Icon(
+                Icons.keyboard_arrow_down_rounded,
+                size: 15,
+                color: palette.accent.withValues(alpha: 0.7),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PendingFileChip extends StatelessWidget {
+  final String filename;
+  final VoidCallback? onRemove;
+  const _PendingFileChip({required this.filename, this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+      decoration: BoxDecoration(
+        color: palette.accent.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: palette.accent.withValues(alpha: 0.35),
+          width: 0.6,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.attach_file_rounded,
+              size: 16, color: palette.accent),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 220),
+            child: Text(
+              filename,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                color: palette.textPrimary.withValues(alpha: 0.9),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: onRemove,
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(
+                Icons.close_rounded,
+                size: 16,
+                color: palette.textMuted,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -197,7 +380,9 @@ class _GlassMicButtonState extends State<_GlassMicButton>
         animation: _pulse,
         builder: (context, _) {
           final glow = widget.isRecording ? 0.3 + 0.4 * _pulse.value : 0.0;
-          return Container(
+          return AnimatedContainer(
+            duration: _kBarAnimDuration,
+            curve: _kBarAnimCurve,
             width: 40,
             height: 40,
             decoration: BoxDecoration(
@@ -215,10 +400,25 @@ class _GlassMicButtonState extends State<_GlassMicButton>
                     ]
                   : null,
             ),
-            child: Icon(
-              widget.isRecording ? Icons.stop_rounded : Icons.mic_none_rounded,
-              size: 20,
-              color: widget.isRecording ? palette.accent : palette.textMuted,
+            // Cross-fade + scale between the mic and stop glyphs instead of
+            // an instant swap.
+            child: AnimatedSwitcher(
+              duration: _kBarAnimDuration,
+              switchInCurve: _kBarAnimCurve,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, anim) => ScaleTransition(
+                scale: Tween<double>(begin: 0.7, end: 1.0).animate(anim),
+                child: FadeTransition(opacity: anim, child: child),
+              ),
+              child: Icon(
+                widget.isRecording
+                    ? Icons.stop_rounded
+                    : Icons.mic_none_rounded,
+                key: ValueKey(widget.isRecording),
+                size: 20,
+                color:
+                    widget.isRecording ? palette.accent : palette.textMuted,
+              ),
             ),
           );
         },
@@ -236,8 +436,8 @@ class _GlassSendButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
+      duration: _kBarAnimDuration,
+      curve: _kBarAnimCurve,
       width: 40,
       height: 40,
       decoration: BoxDecoration(

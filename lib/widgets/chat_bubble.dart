@@ -15,6 +15,7 @@ class ChatBubble extends StatefulWidget {
   final bool isUser;
   final bool isTranscript;
   final bool isStreaming;
+  final bool isSystem;
 
   const ChatBubble({
     super.key,
@@ -22,6 +23,7 @@ class ChatBubble extends StatefulWidget {
     this.isUser = false,
     this.isTranscript = false,
     this.isStreaming = false,
+    this.isSystem = false,
   });
 
   @override
@@ -37,11 +39,13 @@ class _ChatBubbleState extends State<ChatBubble>
   @override
   void initState() {
     super.initState();
+    // Same rhythm as the input bar's implicit animations: 250 ms,
+    // easeOutCubic, for a consistent feel across the whole chat.
     _appearCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 220),
+      duration: const Duration(milliseconds: 250),
     );
-    _fade = CurvedAnimation(parent: _appearCtrl, curve: Curves.easeOut);
+    _fade = CurvedAnimation(parent: _appearCtrl, curve: Curves.easeOutCubic);
     _slide = Tween<Offset>(
       begin: const Offset(0, 0.12),
       end: Offset.zero,
@@ -58,6 +62,40 @@ class _ChatBubbleState extends State<ChatBubble>
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
+
+    if (widget.isSystem) {
+      return FadeTransition(
+        opacity: _fade,
+        child: SlideTransition(
+          position: _slide,
+          child: Center(
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 24),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: palette.surface.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: palette.border.withValues(alpha: 0.4),
+                  width: 0.5,
+                ),
+              ),
+              child: Text(
+                widget.text,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: palette.textMuted.withValues(alpha: 0.85),
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     final alignment =
         widget.isUser ? Alignment.centerRight : Alignment.centerLeft;
 

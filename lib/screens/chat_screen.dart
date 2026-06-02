@@ -1,6 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../services/audio_service.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
@@ -48,10 +53,27 @@ class _ChatScreenState extends State<ChatScreen> {
   // Models
   List<ws.OsiaModel> _models = [];
   String? _selectedModel;
-  bool _loadingModels = false;
+  // Active notifier for the open model-selector sheet, if any. Lets the
+  // chat screen push state updates (models arriving, load timing out) into
+  // a sheet that's already on screen.
+  ValueNotifier<ModelSelectorState>? _modelSelectorNotifier;
+  Timer? _modelLoadTimeout;
 
   // Index of the entry currently receiving streamed chunks (null when idle).
   int? _streamingIndex;
+
+  // Pending attachment shown as a chip in the input bar. Only sent when
+  // the user taps the send arrow (or hits enter).
+  String? _pendingFilename;
+  Uint8List? _pendingFileBytes;
+  bool _pendingIsImage = false;
+
+  // True while we sent a turn and haven't yet seen status=done/error.
+  bool _awaitingResponse = false;
+  // True if the user switched conversation mid-response — every subsequent
+  // response_chunk / response / audio frame for the in-flight request is
+  // dropped until the matching status=done/error arrives.
+  bool _discardCurrentResponse = false;
 
   @override
   void initState() {
@@ -80,7 +102,6 @@ class _ChatScreenState extends State<ChatScreen> {
           if (state == ws.ConnectionState.connected) {
             _connError = null;
             // Ask for available models once the socket is up.
-            _loadingModels = true;
             _wsService.sendGetModels();
             // Replay our remembered selection so the server is in sync.
             if (_selectedModel != null && _selectedModel!.isNotEmpty) {
@@ -110,6 +131,7 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       case ws.ResponseChunkMessage(:final content):
         if (content.isEmpty) break;
+        if (_discardCurrentResponse) break;
         setState(() {
           _thinking = false;
           final idx = _streamingIndex;
@@ -133,6 +155,7 @@ class _ChatScreenState extends State<ChatScreen> {
         });
         _scrollToBottomAnimated();
       case ws.ResponseMessage(:final content):
+        if (_discardCurrentResponse) break;
         setState(() {
           _thinking = false;
           final idx = _streamingIndex;
@@ -146,18 +169,26 @@ class _ChatScreenState extends State<ChatScreen> {
         });
         _scrollToBottomAnimated();
       case ws.AudioMessage(:final data):
+        if (_discardCurrentResponse) break;
         _audioService.playMp3(data);
       case ws.StatusMessage(:final content):
         if (content == 'thinking') {
+          if (_discardCurrentResponse) break;
           setState(() => _thinking = true);
           _scrollToBottomAnimated();
         } else if (content == 'done' || content == 'error') {
+          final wasDiscarding = _discardCurrentResponse;
           setState(() {
-            _thinking = false;
-            final idx = _streamingIndex;
-            if (idx != null) {
-              _entries[idx] = _entries[idx].copyWith(isStreaming: false);
-              _streamingIndex = null;
+            _awaitingResponse = false;
+            _discardCurrentResponse = false;
+            if (!wasDiscarding) {
+              _thinking = false;
+              final idx = _streamingIndex;
+              if (idx != null) {
+                _entries[idx] =
+                    _entries[idx].copyWith(isStreaming: false);
+                _streamingIndex = null;
+              }
             }
           });
         }
@@ -188,7 +219,6 @@ class _ChatScreenState extends State<ChatScreen> {
       case ws.ModelsListMessage(:final models, :final current):
         setState(() {
           _models = models;
-          _loadingModels = false;
           // Server-reported current wins unless we already have a saved
           // selection that's still in the list.
           final saved = _selectedModel;
@@ -199,12 +229,28 @@ class _ChatScreenState extends State<ChatScreen> {
             }
           }
         });
+        // If the model selector sheet is currently open, push the fresh
+        // list into it so it stops spinning.
+        final notifier = _modelSelectorNotifier;
+        if (notifier != null) {
+          _modelLoadTimeout?.cancel();
+          notifier.value = ModelSelectorState(
+            models: models,
+            isLoading: false,
+          );
+        }
     }
   }
 
   void _loadConversation(ws.Conversation conv) {
     _wsService.sendLoadConversation(conv.id);
     setState(() {
+      // If a response was in flight, drop everything it sends after the
+      // switch so chunks meant for the old conversation never land on
+      // this one. The flag clears on the next status=done/error.
+      if (_awaitingResponse) {
+        _discardCurrentResponse = true;
+      }
       _entries.clear();
       _thinking = false;
       _streamingIndex = null;
@@ -217,6 +263,9 @@ class _ChatScreenState extends State<ChatScreen> {
   void _newConversation() {
     _wsService.sendNewConversation();
     setState(() {
+      if (_awaitingResponse) {
+        _discardCurrentResponse = true;
+      }
       _entries.clear();
       _thinking = false;
       _streamingIndex = null;
@@ -300,14 +349,58 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  bool get _canSend =>
+      _textCtrl.text.trim().isNotEmpty || _pendingFileBytes != null;
+
   void _sendText() {
     final text = _textCtrl.text.trim();
-    if (text.isEmpty) return;
+    final filename = _pendingFilename;
+    final bytes = _pendingFileBytes;
+    final isImage = _pendingIsImage;
+    final hasFile = filename != null && bytes != null;
+    if (text.isEmpty && !hasFile) return;
 
-    _addEntry(_ChatEntry(content: text, isUser: true));
-    _wsService.sendText(text);
+    final displayContent = hasFile
+        ? (text.isEmpty ? '📎 $filename' : '📎 $filename\n$text')
+        : text;
+    _addEntry(_ChatEntry(content: displayContent, isUser: true));
+
+    if (hasFile) {
+      _wsService.sendFile(filename, base64Encode(bytes), isImage: isImage);
+    }
+
+    final prompt = text.isNotEmpty
+        ? text
+        : (isImage
+            ? "Analyse cette image."
+            : "Voici le fichier ${filename ?? ''}.");
+    _wsService.sendText(prompt);
+
     _textCtrl.clear();
-    setState(() {}); // refresh send-button active state
+    setState(() {
+      _pendingFilename = null;
+      _pendingFileBytes = null;
+      _pendingIsImage = false;
+      _awaitingResponse = true;
+      _discardCurrentResponse = false;
+    });
+  }
+
+  void _clearPendingFile() {
+    setState(() {
+      _pendingFilename = null;
+      _pendingFileBytes = null;
+      _pendingIsImage = false;
+    });
+  }
+
+  bool _isImageFilename(String filename) {
+    final lower = filename.toLowerCase();
+    return lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.webp');
   }
 
   Future<void> _toggleRecording() async {
@@ -315,6 +408,8 @@ class _ChatScreenState extends State<ChatScreen> {
       final base64Wav = await _audioService.stopRecording();
       if (base64Wav != null && base64Wav.isNotEmpty) {
         _wsService.sendAudio(base64Wav);
+        _awaitingResponse = true;
+        _discardCurrentResponse = false;
       }
       setState(() {});
     } else {
@@ -343,39 +438,174 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _onAttach() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Joindre un fichier — bientôt disponible')),
+  /// Request the storage / media permissions file_picker may need on
+  /// Android. On Android 13+ generic-file picks go through the Storage
+  /// Access Framework which doesn't require any of these — but media picks
+  /// do, and asking up-front sidesteps a confusing "nothing happens" UX
+  /// when the user taps a media file.
+  ///
+  /// The request is best-effort: we log each outcome and proceed regardless
+  /// of the grant state, because the SAF picker works without permissions
+  /// and we don't want to block the user.
+  Future<void> _requestAttachPermissions() async {
+    if (!Platform.isAndroid) {
+      debugPrint('[OSIA Attach] non-Android platform, skipping permissions');
+      return;
+    }
+    final perms = <Permission>[
+      Permission.storage,
+      Permission.photos,
+      Permission.videos,
+      Permission.audio,
+    ];
+    for (final p in perms) {
+      try {
+        final before = await p.status;
+        debugPrint('[OSIA Attach] $p initial status=$before');
+        if (before.isGranted || before.isLimited) continue;
+        if (before.isPermanentlyDenied) {
+          debugPrint('[OSIA Attach] $p permanently denied — skipping request');
+          continue;
+        }
+        final result = await p.request();
+        debugPrint('[OSIA Attach] $p request -> $result');
+      } catch (e) {
+        debugPrint('[OSIA Attach] $p threw on request: $e');
+      }
+    }
+  }
+
+  Future<void> _onAttach() async {
+    debugPrint('[OSIA Attach] tap → _onAttach start');
+    await _requestAttachPermissions();
+
+    FilePickerResult? result;
+    try {
+      debugPrint('[OSIA Attach] calling FilePicker.pickFiles(FileType.any)');
+      result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        allowMultiple: false,
+        withData: true,
+      );
+      debugPrint(
+        '[OSIA Attach] pickFiles returned: '
+        '${result == null ? "null (user cancelled)" : "${result.files.length} file(s)"}',
+      );
+    } catch (e, stack) {
+      debugPrint('[OSIA Attach] pickFiles threw: $e\n$stack');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Sélection de fichier impossible : $e")),
+        );
+      }
+      return;
+    }
+    if (result == null || result.files.isEmpty) {
+      debugPrint('[OSIA Attach] no file picked, returning');
+      return;
+    }
+
+    final picked = result.files.first;
+    final filename = picked.name;
+    debugPrint(
+      '[OSIA Attach] picked: name=$filename '
+      'path=${picked.path} '
+      'size=${picked.size} '
+      'bytesPresent=${picked.bytes != null}',
     );
+
+    Uint8List? bytes = picked.bytes;
+    if (bytes == null && picked.path != null) {
+      try {
+        debugPrint('[OSIA Attach] reading bytes from path');
+        bytes = await File(picked.path!).readAsBytes();
+        debugPrint('[OSIA Attach] read ${bytes.length} bytes from disk');
+      } catch (e, stack) {
+        debugPrint('[OSIA Attach] disk read failed: $e\n$stack');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Lecture du fichier impossible : $e")),
+          );
+        }
+        return;
+      }
+    }
+    if (bytes == null || bytes.isEmpty) {
+      debugPrint('[OSIA Attach] empty / null bytes after load');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Fichier vide ou inaccessible.')),
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      _pendingFilename = filename;
+      _pendingFileBytes = bytes;
+      _pendingIsImage = _isImageFilename(filename);
+    });
+    debugPrint(
+        '[OSIA Attach] staged ${bytes.length} bytes for $filename (image=$_pendingIsImage)');
   }
 
   Future<void> _openModelSelector() async {
-    if (_models.isEmpty && !_loadingModels) {
-      setState(() => _loadingModels = true);
-      _wsService.sendGetModels();
-    }
-    final chosen = await showModelSelector(
-      context: context,
-      models: _models,
-      currentModel: _selectedModel,
-      isLoading: _loadingModels,
+    // The sheet listens to this notifier so we can flip from spinner →
+    // model list (or → error) after it's already on screen.
+    final notifier = ValueNotifier<ModelSelectorState>(
+      ModelSelectorState(
+        models: _models,
+        isLoading: _models.isEmpty,
+      ),
     );
-    if (chosen != null && chosen != _selectedModel) {
-      setState(() => _selectedModel = chosen);
-      await widget.storage.setSelectedModel(chosen);
-      _wsService.sendSetModel(chosen);
+    _modelSelectorNotifier = notifier;
+    _modelLoadTimeout?.cancel();
+
+    if (_models.isEmpty) {
+      _wsService.sendGetModels();
+      _modelLoadTimeout = Timer(const Duration(seconds: 5), () {
+        if (_modelSelectorNotifier != notifier) return;
+        if (notifier.value.models.isNotEmpty) return;
+        notifier.value = const ModelSelectorState(
+          models: [],
+          isLoading: false,
+          errorMessage: 'Impossible de charger les modèles',
+        );
+      });
+    }
+
+    try {
+      final chosen = await showModelSelector(
+        context: context,
+        stateListenable: notifier,
+        currentModel: _selectedModel,
+      );
+      if (chosen != null && chosen != _selectedModel) {
+        setState(() => _selectedModel = chosen);
+        await widget.storage.setSelectedModel(chosen);
+        _wsService.sendSetModel(chosen);
+      }
+    } finally {
+      _modelLoadTimeout?.cancel();
+      _modelLoadTimeout = null;
+      _modelSelectorNotifier = null;
+      notifier.dispose();
     }
   }
 
-  String _shortModelLabel(String id) {
+  /// Full label of the active model for the input-bar pill. Falls back to
+  /// the raw id until the server's models_list gives us a pretty label.
+  String get _currentModelLabel {
+    final id = _selectedModel;
+    if (id == null || id.isEmpty) return 'Modèle';
     final found = _models.where((m) => m.id == id).toList();
-    final label = found.isNotEmpty ? found.first.label : id;
-    if (label.length <= 14) return label;
-    return '${label.substring(0, 13)}…';
+    return found.isNotEmpty ? found.first.label : id;
   }
 
   @override
   void dispose() {
+    _modelLoadTimeout?.cancel();
+    _modelSelectorNotifier?.dispose();
     _msgSub?.cancel();
     _connSub?.cancel();
     _errSub?.cancel();
@@ -432,14 +662,6 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
-          _ModelChip(
-            label: _selectedModel == null
-                ? 'Modèle'
-                : _shortModelLabel(_selectedModel!),
-            onTap: _openModelSelector,
-            palette: palette,
-          ),
-          const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.settings_rounded),
             onPressed: () async {
@@ -491,14 +713,26 @@ class _ChatScreenState extends State<ChatScreen> {
                             isUser: entry.isUser,
                             isTranscript: entry.isTranscript,
                             isStreaming: entry.isStreaming,
+                            isSystem: entry.isSystem,
                           );
                         },
                       ),
               ),
-              if (_connError != null &&
-                  _connState != ws.ConnectionState.connected)
-                _buildErrorBanner(palette),
             ],
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 280),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeIn,
+              child: (_connError != null &&
+                      _connState != ws.ConnectionState.connected)
+                  ? _buildErrorBanner(palette)
+                  : const SizedBox.shrink(key: ValueKey('no-banner')),
+            ),
           ),
           Positioned(
             left: 12,
@@ -507,12 +741,16 @@ class _ChatScreenState extends State<ChatScreen> {
             child: GlassInputBar(
               textController: _textCtrl,
               isRecording: _audioService.isRecording,
-              hasText: _textCtrl.text.trim().isNotEmpty,
+              hasText: _canSend,
               onSend: _sendText,
               onMicTap: _toggleRecording,
               onAttach: _onAttach,
+              modelLabel: _currentModelLabel,
+              onModelTap: _openModelSelector,
               onChanged: (_) => setState(() {}),
               onSubmitted: (_) => _sendText(),
+              pendingFilename: _pendingFilename,
+              onRemovePending: _clearPendingFile,
             ),
           ),
         ],
@@ -767,9 +1005,18 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildErrorBanner(OsiaPalette palette) {
     return Container(
+      key: const ValueKey('error-banner'),
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      color: palette.error.withValues(alpha: 0.12),
+      decoration: BoxDecoration(
+        color: palette.error.withValues(alpha: 0.12),
+        border: Border(
+          bottom: BorderSide(
+            color: palette.error.withValues(alpha: 0.25),
+            width: 0.5,
+          ),
+        ),
+      ),
       child: Row(
         children: [
           Icon(Icons.error_outline_rounded, color: palette.error, size: 18),
@@ -806,69 +1053,20 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-class _ModelChip extends StatelessWidget {
-  final String label;
-  final VoidCallback onTap;
-  final OsiaPalette palette;
-
-  const _ModelChip({
-    required this.label,
-    required this.onTap,
-    required this.palette,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Material(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(20),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: onTap,
-          child: Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: palette.border, width: 0.6),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.tune_rounded,
-                    color: palette.accent, size: 14),
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    color: palette.textPrimary.withValues(alpha: 0.85),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// A single entry in the chat history.
 class _ChatEntry {
   final String content;
   final bool isUser;
   final bool isTranscript;
   final bool isStreaming;
+  final bool isSystem;
 
   const _ChatEntry({
     required this.content,
     required this.isUser,
     this.isTranscript = false,
     this.isStreaming = false,
+    this.isSystem = false,
   });
 
   _ChatEntry copyWith({String? content, bool? isStreaming}) {
@@ -877,6 +1075,7 @@ class _ChatEntry {
       isUser: isUser,
       isTranscript: isTranscript,
       isStreaming: isStreaming ?? this.isStreaming,
+      isSystem: isSystem,
     );
   }
 }

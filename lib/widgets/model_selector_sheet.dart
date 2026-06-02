@@ -1,6 +1,22 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
+
+/// Snapshot of the sheet's view-state. Pushed by the chat screen through a
+/// [ValueListenable] so the bottom sheet can react to models arriving
+/// (or to the load timing out) after it was opened.
+class ModelSelectorState {
+  final List<ws.OsiaModel> models;
+  final bool isLoading;
+  final String? errorMessage;
+
+  const ModelSelectorState({
+    required this.models,
+    required this.isLoading,
+    this.errorMessage,
+  });
+}
 
 /// Bottom sheet that displays the list of models reported by the server.
 ///
@@ -8,19 +24,35 @@ import '../theme.dart';
 /// picks one; returns null on dismiss.
 Future<String?> showModelSelector({
   required BuildContext context,
-  required List<ws.OsiaModel> models,
+  required ValueListenable<ModelSelectorState> stateListenable,
   required String? currentModel,
-  required bool isLoading,
 }) {
   return showModalBottomSheet<String>(
     context: context,
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
-    builder: (ctx) => _ModelSelectorSheet(
-      models: models,
-      currentModel: currentModel,
-      isLoading: isLoading,
-    ),
+    builder: (ctx) {
+      // The modal route already slides the sheet up; riding the same
+      // animation with a fade gives the smooth slide + fade open/close.
+      final routeAnim =
+          ModalRoute.of(ctx)?.animation ?? kAlwaysCompleteAnimation;
+      return FadeTransition(
+        opacity: CurvedAnimation(
+          parent: routeAnim,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        ),
+        child: ValueListenableBuilder<ModelSelectorState>(
+          valueListenable: stateListenable,
+          builder: (ctx, state, _) => _ModelSelectorSheet(
+            models: state.models,
+            currentModel: currentModel,
+            isLoading: state.isLoading,
+            errorMessage: state.errorMessage,
+          ),
+        ),
+      );
+    },
   );
 }
 
@@ -28,11 +60,13 @@ class _ModelSelectorSheet extends StatelessWidget {
   final List<ws.OsiaModel> models;
   final String? currentModel;
   final bool isLoading;
+  final String? errorMessage;
 
   const _ModelSelectorSheet({
     required this.models,
     required this.currentModel,
     required this.isLoading,
+    this.errorMessage,
   });
 
   @override
@@ -77,7 +111,22 @@ class _ModelSelectorSheet extends StatelessWidget {
               ),
             ),
             Flexible(
-              child: _buildBody(palette),
+              // Smooth the height change + cross-fade when the body flips
+              // from spinner to model list (or to an error message).
+              child: AnimatedSize(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  child: KeyedSubtree(
+                    key: ValueKey(_bodyKind),
+                    child: _buildBody(palette),
+                  ),
+                ),
+              ),
             ),
             const SizedBox(height: 8),
           ],
@@ -86,12 +135,33 @@ class _ModelSelectorSheet extends StatelessWidget {
     );
   }
 
+  /// Discriminates which body variant is showing so the AnimatedSwitcher
+  /// only animates on real state flips, not on every rebuild.
+  String get _bodyKind {
+    if (isLoading && models.isEmpty) return 'loading';
+    if (errorMessage != null && models.isEmpty) return 'error';
+    if (models.isEmpty) return 'empty';
+    return 'list';
+  }
+
   Widget _buildBody(OsiaPalette palette) {
+    // Loading but no cached list to fall back on — spinner.
     if (isLoading && models.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 36),
         child: Center(
           child: CircularProgressIndicator(color: palette.accent),
+        ),
+      );
+    }
+    // Error and no cached list to fall back on — explicit message.
+    if (errorMessage != null && models.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+        child: Text(
+          errorMessage!,
+          style: TextStyle(color: palette.textMuted, fontSize: 13),
+          textAlign: TextAlign.center,
         ),
       );
     }

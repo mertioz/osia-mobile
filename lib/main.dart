@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'services/storage_service.dart';
 import 'screens/chat_screen.dart';
@@ -6,6 +7,13 @@ import 'theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Sweep any stale temp files left behind by previous picker sessions so
+  // the plugin's internal cache stays in a clean state.
+  FilePicker.platform.clearTemporaryFiles().then((cleared) {
+    debugPrint('[OSIA] FilePicker.clearTemporaryFiles -> $cleared');
+  }).catchError((Object e) {
+    debugPrint('[OSIA] FilePicker.clearTemporaryFiles failed: $e');
+  });
   runApp(const OsiaApp());
 }
 
@@ -73,13 +81,51 @@ class _OsiaAppState extends State<OsiaApp> {
             builder: (context, child) =>
                 OsiaTheme(palette: palette, child: child ?? const SizedBox()),
             home: _buildHome(palette),
-            routes: {
-              '/settings': (_) => SettingsScreen(
-                    storage: _storage,
-                    themeController: _themeController,
-                  ),
-              '/chat': (_) => ChatScreen(storage: _storage),
-            },
+            onGenerateRoute: _generateRoute,
+          ),
+        );
+      },
+    );
+  }
+
+  /// Named routes, each wrapped in a smooth slide-up + fade transition.
+  /// Same destinations as before — only the transition changed.
+  Route<dynamic>? _generateRoute(RouteSettings settings) {
+    switch (settings.name) {
+      case '/settings':
+        return _slideFadeRoute(
+          SettingsScreen(
+            storage: _storage,
+            themeController: _themeController,
+          ),
+          settings,
+        );
+      case '/chat':
+        return _slideFadeRoute(ChatScreen(storage: _storage), settings);
+    }
+    return null;
+  }
+
+  static Route<dynamic> _slideFadeRoute(Widget page, RouteSettings settings) {
+    return PageRouteBuilder<dynamic>(
+      settings: settings,
+      transitionDuration: const Duration(milliseconds: 280),
+      reverseTransitionDuration: const Duration(milliseconds: 240),
+      pageBuilder: (_, _, _) => page,
+      transitionsBuilder: (_, animation, _, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.06),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
           ),
         );
       },
