@@ -136,11 +136,13 @@ class OsiaModel {
   final String id;
   final String label;
   final String? description;
+  final String? provider;
 
   const OsiaModel({
     required this.id,
     required this.label,
     this.description,
+    this.provider,
   });
 
   factory OsiaModel.fromJson(dynamic raw) {
@@ -153,7 +155,9 @@ class OsiaModel {
       final label =
           (m['label'] ?? m['name'] ?? m['id'] ?? m['model'] ?? id).toString();
       final desc = m['description']?.toString();
-      return OsiaModel(id: id, label: label, description: desc);
+      final provider = m['provider']?.toString();
+      return OsiaModel(
+          id: id, label: label, description: desc, provider: provider);
     }
     final s = raw?.toString() ?? '';
     return OsiaModel(id: s, label: s);

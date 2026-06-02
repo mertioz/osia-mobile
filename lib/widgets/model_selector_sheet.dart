@@ -175,13 +175,18 @@ class _ModelSelectorSheet extends StatelessWidget {
         ),
       );
     }
+    final entries = _buildEntries();
     return ListView.separated(
       shrinkWrap: true,
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
-      itemCount: models.length,
+      itemCount: entries.length,
       separatorBuilder: (context, _) => const SizedBox(height: 2),
       itemBuilder: (context, index) {
-        final m = models[index];
+        final entry = entries[index];
+        if (entry.providerName != null) {
+          return _ProviderHeader(name: entry.providerName!, palette: palette);
+        }
+        final m = entry.model!;
         final isActive = m.id == currentModel;
         return _ModelTile(
           model: m,
@@ -190,6 +195,93 @@ class _ModelSelectorSheet extends StatelessWidget {
           onTap: () => Navigator.of(context).pop(m.id),
         );
       },
+    );
+  }
+
+  /// Flattens [models] into list entries: one section header per provider
+  /// (groups ordered by first appearance) followed by that provider's models.
+  /// Falls back to a flat list when no model carries provider info.
+  List<_SheetEntry> _buildEntries() {
+    final hasProviders =
+        models.any((m) => (m.provider ?? '').trim().isNotEmpty);
+    if (!hasProviders) {
+      return [for (final m in models) _SheetEntry.item(m)];
+    }
+    final groups = <String, List<ws.OsiaModel>>{};
+    for (final m in models) {
+      groups.putIfAbsent(_providerName(m.provider), () => []).add(m);
+    }
+    return [
+      for (final group in groups.entries) ...[
+        _SheetEntry.section(group.key),
+        for (final m in group.value) _SheetEntry.item(m),
+      ],
+    ];
+  }
+
+  /// Display names for the providers reported by the server; unknown
+  /// providers fall back to their uppercased raw id.
+  static const Map<String, String> _providerLabels = {
+    'anthropic': 'ANTHROPIC',
+    'openai': 'OPENAI',
+    'google': 'GOOGLE',
+    'groq': 'GROQ',
+    'ollama': 'LOCAL',
+    'xai': 'XAI',
+    'deepseek': 'DEEPSEEK',
+  };
+
+  String _providerName(String? provider) {
+    final key = (provider ?? '').trim().toLowerCase();
+    if (key.isEmpty) return 'AUTRES';
+    return _providerLabels[key] ?? key.toUpperCase();
+  }
+}
+
+/// A row in the sheet's model list: either a provider section header
+/// (when [providerName] is set) or a selectable model (when [model] is set).
+class _SheetEntry {
+  final String? providerName;
+  final ws.OsiaModel? model;
+
+  const _SheetEntry.section(this.providerName) : model = null;
+  const _SheetEntry.item(this.model) : providerName = null;
+}
+
+/// Thin section divider labelled with the provider name — small uppercase
+/// accent-colored text centered between two subtle horizontal lines.
+class _ProviderHeader extends StatelessWidget {
+  final String name;
+  final OsiaPalette palette;
+
+  const _ProviderHeader({required this.name, required this.palette});
+
+  @override
+  Widget build(BuildContext context) {
+    final line = Container(
+      height: 1,
+      color: palette.accent.withValues(alpha: 0.18),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 14, 8, 6),
+      child: Row(
+        children: [
+          Expanded(child: line),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              name,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 1.2,
+                color: palette.accent,
+              ),
+            ),
+          ),
+          Expanded(child: line),
+        ],
+      ),
     );
   }
 }
