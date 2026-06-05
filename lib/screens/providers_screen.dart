@@ -306,6 +306,7 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                         _CronScreen(
                           wsService: widget.wsService,
                           jobs: config.cronJobs,
+                          timeFormat: _timeFormat,
                         ),
                       ),
                     ),
@@ -938,7 +939,11 @@ class _ProviderRow extends StatelessWidget {
 class _CronScreen extends StatefulWidget {
   final ws.WebSocketService wsService;
   final List<Map<String, dynamic>> jobs;
-  const _CronScreen({required this.wsService, required this.jobs});
+  // Current time format ('12h'/'24h'), resolved by the parent. Display-only:
+  // the schedule strings saved to the PC stay canonical 24h.
+  final String timeFormat;
+  const _CronScreen(
+      {required this.wsService, required this.jobs, required this.timeFormat});
 
   @override
   State<_CronScreen> createState() => _CronScreenState();
@@ -969,7 +974,9 @@ class _CronScreenState extends State<_CronScreen> {
   Future<void> _edit({int? index}) async {
     final existing = index != null ? _jobs[index] : null;
     final result = await Navigator.of(context).push<Map<String, dynamic>>(
-      slideFadeRoute(_CronEditScreen(initialJob: existing)),
+      slideFadeRoute(
+        _CronEditScreen(initialJob: existing, timeFormat: widget.timeFormat),
+      ),
     );
     if (result == null) return;
     setState(() {
@@ -1013,6 +1020,7 @@ class _CronScreenState extends State<_CronScreen> {
                     job: _jobs[i],
                     palette: palette,
                     strings: strings,
+                    timeFormat: widget.timeFormat,
                     onToggle: (v) => _toggle(i, v),
                     onDelete: () => _delete(i),
                     onTap: () => _edit(index: i),
@@ -1037,6 +1045,7 @@ class _CronRow extends StatelessWidget {
   final Map<String, dynamic> job;
   final OsiaPalette palette;
   final OsiaStrings strings;
+  final String timeFormat;
   final ValueChanged<bool> onToggle;
   final VoidCallback onDelete;
   final VoidCallback onTap;
@@ -1044,6 +1053,7 @@ class _CronRow extends StatelessWidget {
     required this.job,
     required this.palette,
     required this.strings,
+    required this.timeFormat,
     required this.onToggle,
     required this.onDelete,
     required this.onTap,
@@ -1083,7 +1093,7 @@ class _CronRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      _cronSummary(schedule, strings),
+                      _cronSummary(schedule, strings, timeFormat),
                       style: TextStyle(fontSize: 12, color: palette.accent),
                     ),
                   ],
@@ -1118,7 +1128,9 @@ class _CronRow extends StatelessWidget {
 /// string the PC's `osia.cron` parser expects.
 class _CronEditScreen extends StatefulWidget {
   final Map<String, dynamic>? initialJob;
-  const _CronEditScreen({this.initialJob});
+  // Display-only time format ('12h'/'24h'); the picker still stores 24h.
+  final String timeFormat;
+  const _CronEditScreen({this.initialJob, required this.timeFormat});
 
   @override
   State<_CronEditScreen> createState() => _CronEditScreenState();
@@ -1329,7 +1341,9 @@ class _CronEditScreenState extends State<_CronEditScreen> {
         _PickerButton(
           icon: Icons.access_time_rounded,
           label: strings.cronTime,
-          value: _dailyTime == null ? null : _hmOfDay(_dailyTime!),
+          value: _dailyTime == null
+              ? null
+              : _formatCronTime(_hmOfDay(_dailyTime!), widget.timeFormat),
           palette: palette,
           onTap: () => _pickTime(false),
         )
@@ -1375,7 +1389,9 @@ class _CronEditScreenState extends State<_CronEditScreen> {
             child: _PickerButton(
               icon: Icons.access_time_rounded,
               label: strings.cronTime,
-              value: _onceTime == null ? null : _hmOfDay(_onceTime!),
+              value: _onceTime == null
+                  ? null
+                  : _formatCronTime(_hmOfDay(_onceTime!), widget.timeFormat),
               palette: palette,
               onTap: () => _pickTime(true),
             ),
@@ -1484,21 +1500,23 @@ _CronSpec? _parseCron(String schedule) {
   return null;
 }
 
-/// Human-readable, localized one-line summary of a schedule string.
-String _cronSummary(String schedule, OsiaStrings s) {
+/// Human-readable, localized one-line summary of a schedule string. Times are
+/// shown in the user's [timeFormat] ('12h'/'24h').
+String _cronSummary(String schedule, OsiaStrings s, String timeFormat) {
   final spec = _parseCron(schedule);
   if (spec == null) return schedule.trim().isEmpty ? '—' : schedule;
   if (spec.isOnce) {
     return s.cronOnce(
       '${_d4(spec.year!)}-${_d2(spec.month!)}-${_d2(spec.day!)}',
-      _hm(spec.hour, spec.minute),
+      _formatCronTime(_hm(spec.hour, spec.minute), timeFormat),
     );
   }
   return switch (spec.unit) {
     _RepeatUnit.minutes => s.cronEveryMinutes(spec.interval),
     _RepeatUnit.hours => s.cronEveryHours(spec.interval),
     _RepeatUnit.days => s.cronEveryDays(spec.interval),
-    _RepeatUnit.daily => s.cronDailyAt(_hm(spec.hour, spec.minute)),
+    _RepeatUnit.daily =>
+      s.cronDailyAt(_formatCronTime(_hm(spec.hour, spec.minute), timeFormat)),
   };
 }
 
@@ -1507,6 +1525,20 @@ String _d4(int n) => n.toString().padLeft(4, '0');
 String _hm(int h, int m) => '${_d2(h)}:${_d2(m)}';
 String _hmOfDay(TimeOfDay t) => _hm(t.hour, t.minute);
 String _dateStr(DateTime d) => '${_d4(d.year)}-${_d2(d.month)}-${_d2(d.day)}';
+
+/// Render a canonical 24h `HH:MM` cron time for display in the user's chosen
+/// format. With [timeFormat] '12h' converts to `h:MM AM/PM`; for any other
+/// value (default '24h') the string is returned unchanged. Falls back to the
+/// input on parse failure. Display-only — saved schedules stay canonical 24h.
+String _formatCronTime(String timeStr, String timeFormat) {
+  if (timeFormat != '12h') return timeStr;
+  final m = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(timeStr.trim());
+  if (m == null) return timeStr;
+  final h = int.parse(m.group(1)!);
+  final period = h < 12 ? 'AM' : 'PM';
+  final h12 = h % 12 == 0 ? 12 : h % 12;
+  return '$h12:${m.group(2)!} $period';
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // AI hierarchy
