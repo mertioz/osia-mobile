@@ -180,6 +180,210 @@ class ModelsListMessage extends OsiaMessage {
   const ModelsListMessage({required this.models, this.current});
 }
 
+// ── Full config snapshot (mirror of the PC settings) ──────────────────────
+//
+// `ConfigData` and `ConfigSkill` are deliberately NOT part of the sealed
+// [OsiaMessage] hierarchy: chat_screen.dart switches over OsiaMessage
+// exhaustively (no default), so introducing a new sealed subtype would break
+// its compile. Config is instead delivered on its own [configStream], which
+// keeps the streaming/message path used by the chat screen untouched.
+
+/// One skill file as reported by the server (`~/.osia/skills/<name>.md`).
+class ConfigSkill {
+  /// Filename including the `.md` suffix, e.g. `weather.md`.
+  final String name;
+  final bool enabled;
+
+  /// The Markdown prose of the skill.
+  final String text;
+
+  const ConfigSkill({
+    required this.name,
+    required this.enabled,
+    required this.text,
+  });
+
+  factory ConfigSkill.fromJson(Map<String, dynamic> json) => ConfigSkill(
+        name: (json['name'] ?? '').toString(),
+        enabled: json['enabled'] == true,
+        text: (json['text'] ?? '').toString(),
+      );
+}
+
+/// The full configuration snapshot sent by the server in response to
+/// `{"type":"get_config"}` as `{"type":"config","config":{...}}`.
+///
+/// Mirrors the PC's settings. Note the server never ships raw API keys — it
+/// exposes only [apiKeysSet] (which providers have a key configured). The two
+/// AI-hierarchy fallback chains arrive under their flat names
+/// (`heavy_chain` / `medium_chain`) as ordered `"provider:model"` strings.
+class ConfigData {
+  /// `{provider: hasKey}` — which providers currently have a key on the PC.
+  final Map<String, bool> apiKeysSet;
+
+  /// Scheduled tasks. Each entry keeps its raw shape
+  /// (`{task, schedule, enabled, conversation_id?}`) so it round-trips
+  /// losslessly when written back via `set_setting cron_jobs`.
+  final List<Map<String, dynamic>> cronJobs;
+
+  /// Ordered `"provider:model"` fallback chain for heavy tasks.
+  final List<String> heavyChain;
+
+  /// Ordered `"provider:model"` fallback chain for medium tasks.
+  final List<String> mediumChain;
+
+  /// Master switch for the AI task hierarchy.
+  final bool aiHierarchyEnabled;
+
+  /// The personality document (`~/.osia/personality.md`).
+  final String personality;
+
+  /// All skill files, in server order.
+  final List<ConfigSkill> skills;
+
+  /// Raw mirror of the PC's `settings.json` values, for pre-filling toggles
+  /// that have no dedicated typed field above (e.g. `time_format`,
+  /// `heartbeat_enabled`, `heartbeat_interval_seconds`). The server may nest
+  /// these under a `settings` key or inline them at the config top level — we
+  /// accept either. Values keep their JSON types (bool / int / String).
+  final Map<String, dynamic> settings;
+
+  const ConfigData({
+    required this.apiKeysSet,
+    required this.cronJobs,
+    required this.heavyChain,
+    required this.mediumChain,
+    required this.aiHierarchyEnabled,
+    required this.personality,
+    required this.skills,
+    required this.settings,
+  });
+
+  factory ConfigData.fromJson(Map<String, dynamic> config) {
+    Map<String, bool> readKeysSet(dynamic raw) {
+      final out = <String, bool>{};
+      if (raw is Map) {
+        raw.forEach((k, v) => out[k.toString()] = v == true);
+      }
+      return out;
+    }
+
+    List<String> readChain(dynamic raw) => raw is List
+        ? raw.whereType<String>().where((s) => s.isNotEmpty).toList()
+        : <String>[];
+
+    List<Map<String, dynamic>> readJobs(dynamic raw) => raw is List
+        ? raw
+            .whereType<Map>()
+            .map((e) => e.cast<String, dynamic>())
+            .toList()
+        : <Map<String, dynamic>>[];
+
+    List<ConfigSkill> readSkills(dynamic raw) => raw is List
+        ? raw
+            .whereType<Map>()
+            .map((e) => ConfigSkill.fromJson(e.cast<String, dynamic>()))
+            .toList()
+        : <ConfigSkill>[];
+
+    Map<String, dynamic> readSettings(Map<String, dynamic> cfg) {
+      final nested = cfg['settings'];
+      if (nested is Map) return nested.cast<String, dynamic>();
+      // Server inlines settings at the config top level — expose the whole
+      // snapshot so individual keys (time_format, heartbeat_*) stay reachable.
+      return Map<String, dynamic>.from(cfg);
+    }
+
+    return ConfigData(
+      apiKeysSet: readKeysSet(config['api_keys_set']),
+      cronJobs: readJobs(config['cron_jobs']),
+      heavyChain: readChain(config['heavy_chain']),
+      mediumChain: readChain(config['medium_chain']),
+      aiHierarchyEnabled: config['ai_hierarchy_enabled'] == true,
+      personality: (config['personality'] ?? '').toString(),
+      skills: readSkills(config['skills']),
+      settings: readSettings(config),
+    );
+  }
+}
+
+// ── API keys & heartbeat (own streams, like config) ──────────────────────
+//
+// Like [ConfigData], [ApiKeysMessage] and [HeartbeatDataMessage] are
+// deliberately NOT part of the sealed [OsiaMessage] hierarchy. chat_screen.dart
+// switches over OsiaMessage exhaustively with no `default`, so adding a sealed
+// subtype would break its compile (and CLAUDE.md forbids touching it). Each
+// rides its own dedicated stream instead, exactly like config.
+
+/// Raw API keys per provider, sent by the PC in reply to
+/// `{"type":"get_api_keys"}` as `{"type":"api_keys","keys":{provider:key}}`.
+///
+/// Unlike `ConfigData.apiKeysSet` (booleans only), this carries the actual key
+/// strings so an editor can pre-fill its field. Delivered on
+/// [WebSocketService.apiKeysStream].
+class ApiKeysMessage {
+  /// `{provider: key}` — the real keys currently stored on the PC.
+  final Map<String, String> keys;
+  const ApiKeysMessage(this.keys);
+
+  factory ApiKeysMessage.fromJson(Map<String, dynamic> json) {
+    final out = <String, String>{};
+    final raw = json['keys'];
+    if (raw is Map) {
+      raw.forEach((k, v) {
+        if (v != null) out[k.toString()] = v.toString();
+      });
+    }
+    return ApiKeysMessage(out);
+  }
+}
+
+/// One live system-metrics push from the PC, sent as
+/// `{"type":"heartbeat_data", ...}` while heartbeat monitoring is enabled.
+///
+/// Delivered on [WebSocketService.heartbeatStream]. Every metric is nullable —
+/// CPU/RAM/disk are percentages (0–100); temperatures are in °C and only
+/// present when the PC can read them.
+class HeartbeatDataMessage {
+  final double? cpuPercent;
+  final double? ramPercent;
+  final double? diskPercent;
+  final double? cpuTemp;
+  final double? gpuTemp;
+  const HeartbeatDataMessage({
+    this.cpuPercent,
+    this.ramPercent,
+    this.diskPercent,
+    this.cpuTemp,
+    this.gpuTemp,
+  });
+
+  factory HeartbeatDataMessage.fromJson(Map<String, dynamic> json) {
+    // Read the first present alias and coerce to double, accepting numbers or
+    // numeric strings. Returns null when none of the aliases are present.
+    double? pick(List<String> keys) {
+      for (final k in keys) {
+        final v = json[k];
+        if (v is num) return v.toDouble();
+        if (v is String) {
+          final parsed = double.tryParse(v);
+          if (parsed != null) return parsed;
+        }
+      }
+      return null;
+    }
+
+    return HeartbeatDataMessage(
+      cpuPercent: pick(['cpu_percent', 'cpu', 'cpu_pct']),
+      ramPercent: pick(
+          ['ram_percent', 'ram', 'memory_percent', 'mem_percent', 'memory']),
+      diskPercent: pick(['disk_percent', 'disk', 'disk_pct']),
+      cpuTemp: pick(['cpu_temp', 'cpu_temp_c', 'cpu_temperature']),
+      gpuTemp: pick(['gpu_temp', 'gpu_temp_c', 'gpu_temperature']),
+    );
+  }
+}
+
 // ── WebSocket service ─────────────────────────────────────────────────────
 
 /// Manages the WebSocket connection to the OSIA PC server.
@@ -196,6 +400,15 @@ class ModelsListMessage extends OsiaMessage {
 class WebSocketService {
   final String ip;
   final String token;
+
+  /// Whether the service silently reconnects after an unexpected close.
+  ///
+  /// The chat screen wants this (a flaky network shouldn't kill the
+  /// session). The connection screen's token *probe* sets it to `false`:
+  /// there, a server-initiated close is the definitive "token rejected"
+  /// signal and must surface immediately instead of being masked by an
+  /// endless connect/close/reconnect loop.
+  final bool autoReconnect;
 
   WebSocketChannel? _channel;
   Timer? _reconnectTimer;
@@ -216,6 +429,15 @@ class WebSocketService {
   final StreamController<String> _errorCtrl =
       StreamController<String>.broadcast();
 
+  final StreamController<ConfigData> _configCtrl =
+      StreamController<ConfigData>.broadcast();
+
+  final StreamController<ApiKeysMessage> _apiKeysCtrl =
+      StreamController<ApiKeysMessage>.broadcast();
+
+  final StreamController<HeartbeatDataMessage> _heartbeatCtrl =
+      StreamController<HeartbeatDataMessage>.broadcast();
+
   /// Stream of connection state changes.
   Stream<ConnectionState> get connectionStream => _connectionCtrl.stream;
 
@@ -224,6 +446,18 @@ class WebSocketService {
 
   /// Stream of human-readable connection error messages, for UI surfacing.
   Stream<String> get errorStream => _errorCtrl.stream;
+
+  /// Stream of full config snapshots (one per `get_config` reply). Kept off
+  /// [messageStream] so the chat screen's sealed-message switch is untouched.
+  Stream<ConfigData> get configStream => _configCtrl.stream;
+
+  /// Stream of raw API-key snapshots (one per `get_api_keys` reply). Kept off
+  /// [messageStream] for the same reason as [configStream].
+  Stream<ApiKeysMessage> get apiKeysStream => _apiKeysCtrl.stream;
+
+  /// Stream of live system-metrics pushes (`heartbeat_data`). Kept off
+  /// [messageStream] for the same reason as [configStream].
+  Stream<HeartbeatDataMessage> get heartbeatStream => _heartbeatCtrl.stream;
 
   /// Current connection state.
   ConnectionState _state = ConnectionState.disconnected;
@@ -248,7 +482,11 @@ class WebSocketService {
 
   // ── Constructor ──────────────────────────────────────────────────────
 
-  WebSocketService({required this.ip, required this.token});
+  WebSocketService({
+    required this.ip,
+    required this.token,
+    this.autoReconnect = true,
+  });
 
   // ── Public API ───────────────────────────────────────────────────────
 
@@ -324,6 +562,55 @@ class WebSocketService {
     _send({'type': 'restart_server'});
   }
 
+  /// Save (or clear) the API key for a provider on the PC. An empty [key]
+  /// clears the stored key. The server persists it to its provider config.
+  void sendSetApiKey(String provider, String key) {
+    _send({'type': 'set_api_key', 'provider': provider, 'key': key});
+  }
+
+  /// Set a single whitelisted settings.json key/value pair on the PC
+  /// (e.g. `liveapi_enabled`). [value] may be a bool, string, number, or a
+  /// JSON-serializable list/map (e.g. `cron_jobs`, `heavy_chain`).
+  void sendSetSetting(String key, Object? value) {
+    _send({'type': 'set_setting', 'key': key, 'value': value});
+  }
+
+  /// Ask the PC for the full configuration snapshot. The reply arrives on
+  /// [configStream] as a [ConfigData].
+  void sendGetConfig() {
+    _send({'type': 'get_config'});
+  }
+
+  /// Ask the PC for the raw API keys, to pre-fill the provider editors. The
+  /// reply arrives on [apiKeysStream] as an [ApiKeysMessage].
+  void sendGetApiKeys() {
+    _send({'type': 'get_api_keys'});
+  }
+
+  /// Persist the personality document (`~/.osia/personality.md`) on the PC.
+  void sendSetPersonality(String text) {
+    _send({'type': 'set_personality', 'text': text});
+  }
+
+  /// Update an existing skill's prose and/or its enabled flag. Both are
+  /// optional — pass only what changed (a lone toggle or a lone text edit).
+  void sendSetSkill(String name, {String? text, bool? enabled}) {
+    final msg = <String, dynamic>{'type': 'set_skill', 'name': name};
+    if (text != null) msg['text'] = text;
+    if (enabled != null) msg['enabled'] = enabled;
+    _send(msg);
+  }
+
+  /// Create a new skill `<name>.md` from the template (starts enabled).
+  void sendCreateSkill(String name) {
+    _send({'type': 'create_skill', 'name': name});
+  }
+
+  /// Delete a skill and drop its enabled flag on the PC.
+  void sendDeleteSkill(String name) {
+    _send({'type': 'delete_skill', 'name': name});
+  }
+
   /// Upload a file as base64 bytes. The server saves it to disk and
   /// injects its path into the next user turn. When [isImage] is true,
   /// the same base64 payload is repeated under `image_base64` so the
@@ -351,6 +638,9 @@ class WebSocketService {
     _connectionCtrl.close();
     _messageCtrl.close();
     _errorCtrl.close();
+    _configCtrl.close();
+    _apiKeysCtrl.close();
+    _heartbeatCtrl.close();
   }
 
   /// Strip any scheme, path, or port the user may have pasted into the
@@ -546,6 +836,21 @@ class WebSocketService {
           debugPrint(
               '[OSIA WS] models_list: ${list.length} model(s), current=$current');
           _emit(ModelsListMessage(models: list, current: current));
+        case 'config':
+          // Full config snapshot. Delivered on its own [configStream] (NOT
+          // through the paced message queue) so it can't interleave with or
+          // disturb response-chunk streaming.
+          final cfg = json['config'];
+          if (cfg is Map) {
+            final data = ConfigData.fromJson(cfg.cast<String, dynamic>());
+            debugPrint(
+                '[OSIA WS] config received: ${data.skills.length} skill(s), '
+                '${data.cronJobs.length} cron job(s), '
+                'heavy=${data.heavyChain.length} medium=${data.mediumChain.length}');
+            if (!_configCtrl.isClosed) _configCtrl.add(data);
+          } else {
+            debugPrint('[OSIA WS] config message had no config payload');
+          }
         case 'conversation_history':
           final raw = json['messages'];
           final list = raw is List
@@ -561,6 +866,18 @@ class WebSocketService {
             id: json['id']?.toString(),
             messages: list,
           ));
+        case 'api_keys':
+          // Raw provider keys for pre-filling editors. Delivered on its own
+          // [apiKeysStream] (NOT the paced message queue) so it can't disturb
+          // response-chunk streaming.
+          final keysMsg = ApiKeysMessage.fromJson(json);
+          debugPrint(
+              '[OSIA WS] api_keys received: ${keysMsg.keys.length} key(s)');
+          if (!_apiKeysCtrl.isClosed) _apiKeysCtrl.add(keysMsg);
+        case 'heartbeat_data':
+          // Live system metrics. Own [heartbeatStream], same rationale.
+          final hb = HeartbeatDataMessage.fromJson(json);
+          if (!_heartbeatCtrl.isClosed) _heartbeatCtrl.add(hb);
         default:
           debugPrint(
               '[OSIA WS] unhandled message type="$type" keys=${json.keys.toList()}');
@@ -576,7 +893,13 @@ class WebSocketService {
   }
 
   void _onDone() {
-    debugPrint('[OSIA WS] Connection closed.');
+    // The close code/reason (if any) helps tell an auth rejection from a
+    // network drop when reading logs.
+    final code = _channel?.closeCode;
+    final reason = _channel?.closeReason;
+    debugPrint(
+        '[OSIA WS] Connection closed (code=$code, reason="$reason", '
+        'intentional=$_intentionalClose, autoReconnect=$autoReconnect).');
     _channel = null;
     _setState(ConnectionState.disconnected);
     if (!_intentionalClose) {
@@ -585,6 +908,13 @@ class WebSocketService {
   }
 
   void _scheduleReconnect() {
+    // A probe (autoReconnect == false) must NOT reconnect: the disconnect it
+    // just saw is the answer it was waiting for. Reconnecting would hide a
+    // rejected token behind a perpetual "Connecting…" loop.
+    if (!autoReconnect) {
+      debugPrint('[OSIA WS] autoReconnect disabled — staying disconnected.');
+      return;
+    }
     _reconnectTimer?.cancel();
 
     final delayMs =
