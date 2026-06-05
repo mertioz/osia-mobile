@@ -200,29 +200,17 @@ class _ConnectionScreenState extends State<ConnectionScreen>
 
   Widget _buildLogo(OsiaPalette palette) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Container(
-          width: 84,
-          height: 84,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: palette.accent.withValues(alpha: 0.10),
-            border: Border.all(
-              color: palette.accent.withValues(alpha: 0.35),
-              width: 1,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: palette.accent.withValues(alpha: 0.18),
-                blurRadius: 40,
-                spreadRadius: 4,
-              ),
-            ],
-          ),
-          child: Icon(
-            Icons.graphic_eq_rounded,
-            size: 38,
-            color: palette.accent,
+        // The logo mark, shown directly — no disc, no glow. The asset is a
+        // tightly-cropped, centred square so BoxFit.contain keeps it centred.
+        SizedBox(
+          width: 104,
+          height: 104,
+          child: Image.asset(
+            'assets/osia_logo_mark.png',
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.medium,
           ),
         ),
         const SizedBox(height: 22),

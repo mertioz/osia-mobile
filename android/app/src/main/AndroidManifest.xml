@@ -14,7 +14,7 @@
     <!-- File attachment: partial photo access opt-in for Android 14+ -->
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED"/>
     <application
-        android:label="OSIA Mobile"
+        android:label="OSIA"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

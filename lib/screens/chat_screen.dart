@@ -852,20 +852,16 @@ class _ChatScreenState extends State<ChatScreen> {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: palette.accent.withValues(alpha: 0.08),
-              border: Border.all(
-                  color: palette.accent.withValues(alpha: 0.3), width: 1),
-            ),
-            child: Icon(
-              Icons.auto_awesome_rounded,
-              size: 30,
-              color: palette.accent.withValues(alpha: 0.85),
+          // OSIA logo, shown directly — no disc, no glow. Centred square asset.
+          SizedBox(
+            width: 64,
+            height: 64,
+            child: Image.asset(
+              'assets/osia_logo_mark.png',
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.medium,
             ),
           ),
           const SizedBox(height: 16),

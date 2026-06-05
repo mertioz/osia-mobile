@@ -26,6 +26,24 @@ dev_dependencies:
     sdk: flutter
 
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+# App icon generation. Sources are square crops derived from assets/osia_logo.png
+# (see assets/osia_icon*.png). Regenerate with: dart run flutter_launcher_icons
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/osia_icon.png"
+  # iOS forbids transparency in icons — flatten the alpha onto white.
+  remove_alpha_ios: true
+  background_color_ios: "#FFFFFF"
+  # Android adaptive icon: purple swirl (padded for the safe zone) on white.
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/osia_icon_foreground.png"
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/osia_logo.png
+    - assets/osia_logo_mark.png
