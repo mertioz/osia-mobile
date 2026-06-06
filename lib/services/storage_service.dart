@@ -1,9 +1,16 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Service for persisting sensitive settings: server host and auth token.
 ///
 /// Uses [FlutterSecureStorage] so keys are stored in the platform keychain
 /// (Android Keystore / iOS Keychain).
+///
+/// Reads are resilient to keystore changes (app reinstall / Android Keystore
+/// rotation), which can leave previously-encrypted values undecryptable and
+/// make the plugin throw a [PlatformException] (BadPaddingException /
+/// BAD_DECRYPT). Every read goes through [_safeRead], which drops the
+/// corrupted entry and returns a default instead of crashing the caller.
 class StorageService {
   static const _keyTailscaleIp = 'osia_tailscale_ip';
   static const _keyToken = 'osia_token';
@@ -11,6 +18,7 @@ class StorageService {
   static const _keySelectedModel = 'osia_selected_model';
   static const _keyLanguage = 'osia_language';
   static const _keyAutoTts = 'osia_auto_tts';
+  static const _keyLiveApi = 'osia_liveapi_enabled';
 
   /// Default server host used by the connection screen — the app always
   /// connects to the public OSIA endpoint; only the token is asked for.
@@ -19,7 +27,36 @@ class StorageService {
   final FlutterSecureStorage _storage;
 
   StorageService({FlutterSecureStorage? storage})
-      : _storage = storage ?? const FlutterSecureStorage();
+      : _storage = storage ??
+            const FlutterSecureStorage(
+              // resetOnError makes the Android plugin auto-drop entries it can
+              // no longer decrypt (keystore change) instead of throwing — a
+              // native backstop to the Dart-level [_safeRead] guard below.
+              aOptions: AndroidOptions(resetOnError: true),
+            );
+
+  /// Read a value from secure storage, tolerating decryption failures.
+  ///
+  /// When the platform keystore changes (app reinstall, Android Keystore
+  /// rotation) a previously-encrypted value can no longer be decrypted and the
+  /// plugin throws a [PlatformException] (BadPaddingException / BAD_DECRYPT).
+  /// Rather than letting that propagate — which froze the chat screen on a
+  /// blank loading spinner — we swallow the error, delete the corrupted entry
+  /// and fall back to [defaultValue].
+  Future<String?> _safeRead(String key, {String? defaultValue}) async {
+    try {
+      return await _storage.read(key: key);
+    } catch (e) {
+      debugPrint(
+          '[OSIA Storage] read("$key") failed: $e — dropping corrupted entry');
+      try {
+        await _storage.delete(key: key);
+      } catch (_) {
+        // Best-effort cleanup; ignore if the delete itself fails.
+      }
+      return defaultValue;
+    }
+  }
 
   // ── Tailscale IP ──────────────────────────────────────────────────────
 
@@ -30,7 +67,7 @@ class StorageService {
 
   /// Read the saved Tailscale IP, or `null` if never set.
   Future<String?> getTailscaleIp() async {
-    return await _storage.read(key: _keyTailscaleIp);
+    return _safeRead(_keyTailscaleIp);
   }
 
   // ── Auth token ────────────────────────────────────────────────────────
@@ -42,7 +79,7 @@ class StorageService {
 
   /// Read the saved token, or `null` if never set.
   Future<String?> getToken() async {
-    return await _storage.read(key: _keyToken);
+    return _safeRead(_keyToken);
   }
 
   // ── Theme ────────────────────────────────────────────────────────────
@@ -52,7 +89,7 @@ class StorageService {
   }
 
   Future<String?> getThemeKey() async {
-    return await _storage.read(key: _keyThemeKey);
+    return _safeRead(_keyThemeKey);
   }
 
   // ── Language ─────────────────────────────────────────────────────────
@@ -64,7 +101,7 @@ class StorageService {
   /// Read the saved language code, or `null` if the user never picked one
   /// (first launch — the device locale is used instead).
   Future<String?> getLanguageCode() async {
-    return await _storage.read(key: _keyLanguage);
+    return _safeRead(_keyLanguage);
   }
 
   // ── Auto-TTS ─────────────────────────────────────────────────────────
@@ -77,8 +114,25 @@ class StorageService {
   /// Whether OSIA reads responses aloud automatically. Defaults to true
   /// when the user never touched the toggle.
   Future<bool> getAutoTts() async {
-    final raw = await _storage.read(key: _keyAutoTts);
+    final raw = await _safeRead(_keyAutoTts);
     return raw != 'false';
+  }
+
+  // ── Live API ─────────────────────────────────────────────────────────
+
+  /// Remember whether the voice-to-voice Live API is enabled. This only
+  /// mirrors the user's last choice locally so the toggle restores its
+  /// state on launch; the authoritative value lives in the PC's
+  /// settings.json (pushed via `set_setting`).
+  Future<void> setLiveApiEnabled(bool enabled) async {
+    await _storage.write(key: _keyLiveApi, value: enabled ? 'true' : 'false');
+  }
+
+  /// Whether the Live API is enabled. Defaults to false (off) when the
+  /// user never touched the toggle.
+  Future<bool> getLiveApiEnabled() async {
+    final raw = await _safeRead(_keyLiveApi);
+    return raw == 'true';
   }
 
   // ── Selected model ───────────────────────────────────────────────────
@@ -88,7 +142,7 @@ class StorageService {
   }
 
   Future<String?> getSelectedModel() async {
-    return await _storage.read(key: _keySelectedModel);
+    return _safeRead(_keySelectedModel);
   }
 
   Future<void> clearSelectedModel() async {

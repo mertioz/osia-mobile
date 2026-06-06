@@ -128,16 +128,21 @@ class _OsiaAppState extends State<OsiaApp> {
           settings,
         );
       case '/chat':
-        return slideFadeRoute(_buildChatScreen(), settings);
+        // The connection screen passes its live, validated connection here so
+        // the chat screen reuses it instead of opening a new one.
+        final handoff =
+            settings.arguments is ChatHandoff ? settings.arguments as ChatHandoff : null;
+        return slideFadeRoute(_buildChatScreen(handoff: handoff), settings);
     }
     return null;
   }
 
-  ChatScreen _buildChatScreen() {
+  ChatScreen _buildChatScreen({ChatHandoff? handoff}) {
     return ChatScreen(
       storage: _storage,
       themeController: _themeController,
       languageController: _languageController,
+      handoff: handoff,
     );
   }
 
