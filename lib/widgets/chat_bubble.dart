@@ -23,6 +23,12 @@ class ChatBubble extends StatefulWidget {
   /// shown when this is non-null (i.e. on completed assistant bubbles).
   final VoidCallback? onSpeak;
 
+  /// Optional widget rendered inline at the very end of the streaming text
+  /// (after the blinking cursor) — e.g. a mid-stream thinking indicator.
+  /// Only used while [isStreaming] is true; ignored otherwise. Non-breaking:
+  /// existing call sites that omit it keep their current behaviour.
+  final Widget? inlineTrailing;
+
   const ChatBubble({
     super.key,
     required this.text,
@@ -31,6 +37,7 @@ class ChatBubble extends StatefulWidget {
     this.isStreaming = false,
     this.isSystem = false,
     this.onSpeak,
+    this.inlineTrailing,
   });
 
   @override
@@ -122,6 +129,13 @@ class _ChatBubbleState extends State<ChatBubble>
                   alignment: PlaceholderAlignment.middle,
                   child: _BlinkingCursor(color: palette.accent),
                 ),
+                // Inline mid-stream indicator (e.g. the mini thinking dots),
+                // sitting just after the cursor at the end of the text flow.
+                if (widget.inlineTrailing != null)
+                  WidgetSpan(
+                    alignment: PlaceholderAlignment.middle,
+                    child: widget.inlineTrailing!,
+                  ),
               ],
             ),
             style: textStyle,

@@ -512,6 +512,20 @@ class _ChatScreenState extends State<ChatScreen> {
   bool get _canSend =>
       _textCtrl.text.trim().isNotEmpty || _pendingFileBytes != null;
 
+  /// True when OSIA pauses to think *mid-stream*: the thinking flag is set
+  /// while a streaming assistant bubble already holds some text. Mirrors the
+  /// requested `_isThinking && _streamingMessage.isNotEmpty` — here the
+  /// "streaming message" is the entry at [_streamingIndex]. Drives the inline
+  /// [_MiniThinkingDots]; distinct from the full pre-stream [ThinkingIndicator].
+  bool get _isThinkingMidStream {
+    final idx = _streamingIndex;
+    return _thinking &&
+        idx != null &&
+        idx >= 0 &&
+        idx < _entries.length &&
+        _entries[idx].content.isNotEmpty;
+  }
+
   void _sendText() {
     final text = _textCtrl.text.trim();
     final filename = _pendingFilename;
@@ -926,10 +940,17 @@ class _ChatScreenState extends State<ChatScreen> {
                         // multi-line text) on every device.
                         padding:
                             EdgeInsets.fromLTRB(0, 12, 0, listBottomPadding),
-                        itemCount:
-                            _entries.length + (_thinking ? 1 : 0),
+                        itemCount: _entries.length +
+                            (_thinking && !_isThinkingMidStream ? 1 : 0),
                         itemBuilder: (context, index) {
-                          if (_thinking && index == _entries.length) {
+                          // The full thinking indicator is the trailing item
+                          // only before streaming starts. Once a streaming
+                          // bubble exists, a mid-stream pause is shown inline
+                          // via [_MiniThinkingDots] on that bubble instead, so
+                          // we skip the standalone one to avoid showing two.
+                          if (_thinking &&
+                              !_isThinkingMidStream &&
+                              index == _entries.length) {
                             return const ThinkingIndicator();
                           }
                           final entry = _entries[index];
@@ -945,6 +966,13 @@ class _ChatScreenState extends State<ChatScreen> {
                             isTranscript: entry.isTranscript,
                             isStreaming: entry.isStreaming,
                             isSystem: entry.isSystem,
+                            // Mid-stream pause: tiny dots inline at the end of
+                            // the streaming text (separate from the full
+                            // ThinkingIndicator). Only on the streaming bubble.
+                            inlineTrailing:
+                                entry.isStreaming && _isThinkingMidStream
+                                    ? const _MiniThinkingDots()
+                                    : null,
                             onSpeak: isAssistant
                                 ? () => _speakMessage(entry.content)
                                 : null,
@@ -1325,4 +1353,87 @@ class ChatHandoff {
   final ws.WebSocketService service;
   final List<ws.OsiaMessage> bufferedMessages;
   const ChatHandoff({required this.service, required this.bufferedMessages});
+}
+
+/// Tiny three-dot indicator appended inline at the end of a streaming bubble
+/// when OSIA pauses to think mid-stream (see
+/// [_ChatScreenState._isThinkingMidStream]). Each dot is a 6px violet circle
+/// that fades and scales on a staggered loop. Deliberately distinct from the
+/// full [ThinkingIndicator] shown before streaming begins.
+class _MiniThinkingDots extends StatefulWidget {
+  const _MiniThinkingDots();
+
+  @override
+  State<_MiniThinkingDots> createState() => _MiniThinkingDotsState();
+}
+
+class _MiniThinkingDotsState extends State<_MiniThinkingDots>
+    with SingleTickerProviderStateMixin {
+  /// OSIA's voice violet — fixed, independent of the active theme.
+  static const Color _violet = Color(0xFFC4B5F5);
+  static const double _dotSize = 6;
+  static const double _gap = 3;
+  static const int _dotCount = 3;
+
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      // Small gap so the dots don't crowd the blinking cursor / last glyph.
+      padding: const EdgeInsets.only(left: 4),
+      child: AnimatedBuilder(
+        animation: _ctrl,
+        builder: (context, _) {
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(_dotCount, (i) {
+              // Each dot is offset along the loop so they pulse in sequence.
+              // Dart's `%` keeps a positive result here, so the negative
+              // stagger wraps cleanly into [0, 1).
+              final phase = (_ctrl.value - i * 0.18) % 1.0;
+              // Triangle wave 0 → 1 → 0 over the loop, eased for a soft pulse.
+              final tri = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
+              final eased =
+                  Curves.easeInOut.transform(tri.clamp(0.0, 1.0).toDouble());
+              final opacity = 0.3 + 0.7 * eased;
+              final scale = 0.6 + 0.4 * eased;
+              return Padding(
+                padding: EdgeInsets.only(left: i == 0 ? 0 : _gap),
+                child: Opacity(
+                  opacity: opacity,
+                  child: Transform.scale(
+                    scale: scale,
+                    child: Container(
+                      width: _dotSize,
+                      height: _dotSize,
+                      decoration: const BoxDecoration(
+                        color: _violet,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          );
+        },
+      ),
+    );
+  }
 }
