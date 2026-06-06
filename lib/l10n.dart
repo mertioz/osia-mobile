@@ -129,6 +129,7 @@ class OsiaStrings {
   final String visionAssociated;
   final String visionProvider;
   final String visionModel;
+  final String visionHint;
 
   // ── Common (config sections) ──
   final String add;
@@ -315,6 +316,7 @@ class OsiaStrings {
     required this.visionAssociated,
     required this.visionProvider,
     required this.visionModel,
+    required this.visionHint,
     required this.add,
     required this.edit,
     required this.close,
@@ -543,6 +545,8 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   visionAssociated: 'Paired vision model',
   visionProvider: 'Vision provider',
   visionModel: 'Vision model',
+  visionHint:
+      'Useful if your main model does not handle images (e.g. DeepSeek, Groq, Llama, Mistral).',
   add: 'Add',
   edit: 'Edit',
   close: 'Close',
@@ -723,6 +727,8 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   visionAssociated: 'Modèle vision associé',
   visionProvider: 'Fournisseur vision',
   visionModel: 'Modèle vision',
+  visionHint:
+      'Utile si votre modèle principal ne gère pas les images (ex: DeepSeek, Groq, Llama, Mistral).',
   add: 'Ajouter',
   edit: 'Modifier',
   close: 'Fermer',
@@ -898,6 +904,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   visionAssociated: '配套视觉模型',
   visionProvider: '视觉提供商',
   visionModel: '视觉模型',
+  visionHint: '如果您的主模型不支持图像（例如 DeepSeek、Groq、Llama、Mistral），此功能很有用。',
   add: '添加',
   edit: '编辑',
   close: '关闭',
@@ -1072,6 +1079,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   visionAssociated: '連携ビジョンモデル',
   visionProvider: 'ビジョンプロバイダー',
   visionModel: 'ビジョンモデル',
+  visionHint: 'メインモデルが画像を扱えない場合に便利です（例：DeepSeek、Groq、Llama、Mistral）。',
   add: '追加',
   edit: '編集',
   close: '閉じる',
@@ -1254,6 +1262,8 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   visionAssociated: 'Verknüpftes Vision-Modell',
   visionProvider: 'Vision-Anbieter',
   visionModel: 'Vision-Modell',
+  visionHint:
+      'Nützlich, wenn Ihr Hauptmodell keine Bilder verarbeiten kann (z. B. DeepSeek, Groq, Llama, Mistral).',
   add: 'Hinzufügen',
   edit: 'Bearbeiten',
   close: 'Schließen',
@@ -1434,6 +1444,8 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   visionAssociated: 'Modelo de visión asociado',
   visionProvider: 'Proveedor de visión',
   visionModel: 'Modelo de visión',
+  visionHint:
+      'Útil si tu modelo principal no admite imágenes (p. ej. DeepSeek, Groq, Llama, Mistral).',
   add: 'Añadir',
   edit: 'Editar',
   close: 'Cerrar',

@@ -377,31 +377,22 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                             wsService: widget.wsService,
                             apiKeysSet: config.apiKeysSet,
                             apiKeys: _apiKeys,
+                            // Vision companion (WOR-25): rendered as a
+                            // sub-section inside the AI providers screen, only
+                            // when the selected main model can't process images.
+                            // Inert for the other categories.
+                            showVisionCard: category == ProviderCategory.ai &&
+                                showVisionCard,
+                            visionModels: visionModels,
+                            visionProvider:
+                                (config.settings['vision_provider'] ?? '')
+                                    .toString(),
+                            visionModel: (config.settings['vision_model'] ?? '')
+                                .toString(),
                           ),
                         ),
                       ),
                       const SizedBox(height: 12),
-                      // ── Vision companion (WOR-25) ──
-                      // Directly under the AI providers tile, and only when the
-                      // selected main model can't see images. Lets the user pair
-                      // a vision-capable provider + model (persisted via
-                      // set_setting vision_provider/vision_model) and set that
-                      // provider's key. Hidden entirely when the main model
-                      // already supports vision.
-                      if (category == ProviderCategory.ai && showVisionCard) ...[
-                        _VisionCompanionCard(
-                          wsService: widget.wsService,
-                          visionModels: visionModels,
-                          initialProvider:
-                              (config.settings['vision_provider'] ?? '')
-                                  .toString(),
-                          initialModel:
-                              (config.settings['vision_model'] ?? '').toString(),
-                          apiKeysSet: config.apiKeysSet,
-                          apiKeys: _apiKeys,
-                        ),
-                        const SizedBox(height: 12),
-                      ],
                     ],
 
                     // ── Scheduled tasks (cron) ──
@@ -715,6 +706,17 @@ class _VisionCompanionCardState extends State<_VisionCompanionCard> {
               ),
             ],
           ),
+          const SizedBox(height: 6),
+          // Hint (mirrors the PC's sub-label): clarifies when pairing a vision
+          // model helps — i.e. when the main model is text-only.
+          Text(
+            strings.visionHint,
+            style: const TextStyle(
+              fontSize: 12,
+              height: 1.35,
+              color: Color(0xFF9D9AAD),
+            ),
+          ),
           const SizedBox(height: 16),
           // Provider
           _FieldLabel(strings.visionProvider, palette),
@@ -905,11 +907,25 @@ class _ProviderListScreen extends StatelessWidget {
   /// the keys haven't arrived yet (the editor then just shows a placeholder).
   final Map<String, String> apiKeys;
 
+  /// Vision companion (WOR-25). When [showVisionCard] is true — the AI category
+  /// and a selected main model that can't process images — a "paired vision
+  /// model" sub-section renders below the provider list. The remaining fields
+  /// feed it: the vision-capable models, and the current `vision_provider` /
+  /// `vision_model` for pre-selection. All inert (card unbuilt) otherwise.
+  final bool showVisionCard;
+  final List<ws.OsiaModel> visionModels;
+  final String visionProvider;
+  final String visionModel;
+
   const _ProviderListScreen({
     required this.category,
     required this.wsService,
     required this.apiKeysSet,
     required this.apiKeys,
+    this.showVisionCard = false,
+    this.visionModels = const [],
+    this.visionProvider = '',
+    this.visionModel = '',
   });
 
   bool _isKeySet(ProviderEntry entry) =>
@@ -935,36 +951,57 @@ class _ProviderListScreen extends StatelessWidget {
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-          child: _OsiaCard(
-            palette: palette,
-            child: Column(
-              children: [
-                for (var i = 0; i < providers.length; i++) ...[
-                  if (i > 0)
-                    Divider(
-                      height: 1,
-                      color: palette.border.withValues(alpha: 0.5),
-                      indent: 16,
-                    ),
-                  _ProviderRow(
-                    entry: providers[i],
-                    localLabel: strings.localLabel,
-                    keyConfigured: _isKeySet(providers[i]),
-                    palette: palette,
-                    onTap: () => Navigator.of(context).push(
-                      slideFadeRoute(
-                        _ProviderConfigScreen(
-                          entry: providers[i],
-                          wsService: wsService,
-                          keyConfigured: _isKeySet(providers[i]),
-                          initialKey: _keyFor(providers[i]),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _OsiaCard(
+                palette: palette,
+                child: Column(
+                  children: [
+                    for (var i = 0; i < providers.length; i++) ...[
+                      if (i > 0)
+                        Divider(
+                          height: 1,
+                          color: palette.border.withValues(alpha: 0.5),
+                          indent: 16,
+                        ),
+                      _ProviderRow(
+                        entry: providers[i],
+                        localLabel: strings.localLabel,
+                        keyConfigured: _isKeySet(providers[i]),
+                        palette: palette,
+                        onTap: () => Navigator.of(context).push(
+                          slideFadeRoute(
+                            _ProviderConfigScreen(
+                              entry: providers[i],
+                              wsService: wsService,
+                              keyConfigured: _isKeySet(providers[i]),
+                              initialKey: _keyFor(providers[i]),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                ],
+                    ],
+                  ],
+                ),
+              ),
+              // ── Vision companion (WOR-25) ──
+              // A clearly separated sub-section under the AI providers list,
+              // shown only when the selected main model can't process images.
+              // Same provider + model + key controls as before — relocated here
+              // from the providers landing screen.
+              if (showVisionCard) ...[
+                const SizedBox(height: 20),
+                _VisionCompanionCard(
+                  wsService: wsService,
+                  visionModels: visionModels,
+                  initialProvider: visionProvider,
+                  initialModel: visionModel,
+                  apiKeysSet: apiKeysSet,
+                  apiKeys: apiKeys,
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),
