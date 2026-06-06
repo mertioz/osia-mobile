@@ -125,6 +125,13 @@ class OsiaStrings {
   final String removeApiKey;
   final String apiKeyRemoved;
 
+  // ── API fallback keys (WOR-29) ──
+  final String fallbackKeys;
+  final String addFallbackKey;
+  final String editFallbackKey;
+  final String deleteFallbackKey;
+  final String fallbackKeyIndex; // {n}
+
   // ── Vision companion model (WOR-25) ──
   final String visionAssociated;
   final String visionProvider;
@@ -313,6 +320,11 @@ class OsiaStrings {
     required this.apiKeyReplaceHint,
     required this.removeApiKey,
     required this.apiKeyRemoved,
+    required this.fallbackKeys,
+    required this.addFallbackKey,
+    required this.editFallbackKey,
+    required this.deleteFallbackKey,
+    required this.fallbackKeyIndex,
     required this.visionAssociated,
     required this.visionProvider,
     required this.visionModel,
@@ -542,6 +554,11 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   apiKeyReplaceHint: 'Enter a new key to replace it',
   removeApiKey: 'Remove key',
   apiKeyRemoved: 'API key removed',
+  fallbackKeys: 'Fallback keys',
+  addFallbackKey: 'Add fallback key',
+  editFallbackKey: 'Edit fallback key',
+  deleteFallbackKey: 'Delete fallback key',
+  fallbackKeyIndex: 'Key {n}',
   visionAssociated: 'Paired vision model',
   visionProvider: 'Vision provider',
   visionModel: 'Vision model',
@@ -724,6 +741,11 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   apiKeyReplaceHint: 'Saisissez une nouvelle clé pour la remplacer',
   removeApiKey: 'Supprimer la clé',
   apiKeyRemoved: 'Clé API supprimée',
+  fallbackKeys: 'Clés de secours',
+  addFallbackKey: 'Ajouter une clé de secours',
+  editFallbackKey: 'Modifier la clé de secours',
+  deleteFallbackKey: 'Supprimer la clé de secours',
+  fallbackKeyIndex: 'Clé {n}',
   visionAssociated: 'Modèle vision associé',
   visionProvider: 'Fournisseur vision',
   visionModel: 'Modèle vision',
@@ -901,6 +923,11 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   apiKeyReplaceHint: '输入新密钥以替换',
   removeApiKey: '移除密钥',
   apiKeyRemoved: 'API 密钥已移除',
+  fallbackKeys: '备用密钥',
+  addFallbackKey: '添加备用密钥',
+  editFallbackKey: '编辑备用密钥',
+  deleteFallbackKey: '删除备用密钥',
+  fallbackKeyIndex: '密钥 {n}',
   visionAssociated: '配套视觉模型',
   visionProvider: '视觉提供商',
   visionModel: '视觉模型',
@@ -1076,6 +1103,11 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   apiKeyReplaceHint: '置き換えるには新しいキーを入力してください',
   removeApiKey: 'キーを削除',
   apiKeyRemoved: 'API キーを削除しました',
+  fallbackKeys: 'フォールバックキー',
+  addFallbackKey: 'フォールバックキーを追加',
+  editFallbackKey: 'フォールバックキーを編集',
+  deleteFallbackKey: 'フォールバックキーを削除',
+  fallbackKeyIndex: 'キー {n}',
   visionAssociated: '連携ビジョンモデル',
   visionProvider: 'ビジョンプロバイダー',
   visionModel: 'ビジョンモデル',
@@ -1259,6 +1291,11 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   apiKeyReplaceHint: 'Neuen Schlüssel eingeben, um ihn zu ersetzen',
   removeApiKey: 'Schlüssel entfernen',
   apiKeyRemoved: 'API-Schlüssel entfernt',
+  fallbackKeys: 'Ersatzschlüssel',
+  addFallbackKey: 'Ersatzschlüssel hinzufügen',
+  editFallbackKey: 'Ersatzschlüssel bearbeiten',
+  deleteFallbackKey: 'Ersatzschlüssel löschen',
+  fallbackKeyIndex: 'Schlüssel {n}',
   visionAssociated: 'Verknüpftes Vision-Modell',
   visionProvider: 'Vision-Anbieter',
   visionModel: 'Vision-Modell',
@@ -1441,6 +1478,11 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   apiKeyReplaceHint: 'Introduce una nueva clave para reemplazarla',
   removeApiKey: 'Eliminar clave',
   apiKeyRemoved: 'Clave API eliminada',
+  fallbackKeys: 'Claves de respaldo',
+  addFallbackKey: 'Añadir clave de respaldo',
+  editFallbackKey: 'Editar clave de respaldo',
+  deleteFallbackKey: 'Eliminar clave de respaldo',
+  fallbackKeyIndex: 'Clave {n}',
   visionAssociated: 'Modelo de visión asociado',
   visionProvider: 'Proveedor de visión',
   visionModel: 'Modelo de visión',

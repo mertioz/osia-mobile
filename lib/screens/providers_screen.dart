@@ -205,6 +205,24 @@ IconData _categoryIcon(ProviderCategory category) {
   }
 }
 
+/// Coerce the server's `api_key_fallbacks` blob (`{provider: [key, ...]}`, part
+/// of the config snapshot — WOR-29) into a typed map. Tolerates nulls and
+/// unexpected shapes, and drops empty key strings.
+Map<String, List<String>> _readFallbacks(Object? raw) {
+  final out = <String, List<String>>{};
+  if (raw is Map) {
+    raw.forEach((key, value) {
+      if (value is List) {
+        out[key.toString()] = value
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+    });
+  }
+  return out;
+}
+
 // ── Landing screen: the four categories ─────────────────────────────────
 
 class ProvidersScreen extends StatefulWidget {
@@ -313,6 +331,12 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
         !_modelHasVision(_providerForModel(mainModel, _models), mainModel) &&
         visionModels.isNotEmpty;
 
+    // Fallback API keys (WOR-29): per-provider ordered backup keys shipped in
+    // the config snapshot. Threaded into the AI providers list so each provider
+    // editor can manage its own list.
+    final apiKeyFallbacks =
+        _readFallbacks(config?.settings['api_key_fallbacks']);
+
     return Scaffold(
       backgroundColor: palette.background,
       appBar: AppBar(
@@ -377,6 +401,9 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                             wsService: widget.wsService,
                             apiKeysSet: config.apiKeysSet,
                             apiKeys: _apiKeys,
+                            // Fallback keys (WOR-29) — only the AI providers
+                            // screen renders the editor (see _ProviderListScreen).
+                            apiKeyFallbacks: apiKeyFallbacks,
                             // Vision companion (WOR-25): rendered as a
                             // sub-section inside the AI providers screen, only
                             // when the selected main model can't process images.
@@ -907,6 +934,12 @@ class _ProviderListScreen extends StatelessWidget {
   /// the keys haven't arrived yet (the editor then just shows a placeholder).
   final Map<String, String> apiKeys;
 
+  /// Per-provider fallback API keys (WOR-29), `{provider: [key, ...]}` from the
+  /// config snapshot. Only the AI providers screen surfaces the editor — each
+  /// AI provider's config screen gets a "fallback keys" sub-section seeded from
+  /// this map. Empty / unused for the other categories.
+  final Map<String, List<String>> apiKeyFallbacks;
+
   /// Vision companion (WOR-25). When [showVisionCard] is true — the AI category
   /// and a selected main model that can't process images — a "paired vision
   /// model" sub-section renders below the provider list. The remaining fields
@@ -922,6 +955,7 @@ class _ProviderListScreen extends StatelessWidget {
     required this.wsService,
     required this.apiKeysSet,
     required this.apiKeys,
+    this.apiKeyFallbacks = const {},
     this.showVisionCard = false,
     this.visionModels = const [],
     this.visionProvider = '',
@@ -977,6 +1011,14 @@ class _ProviderListScreen extends StatelessWidget {
                               wsService: wsService,
                               keyConfigured: _isKeySet(providers[i]),
                               initialKey: _keyFor(providers[i]),
+                              // Fallback keys (WOR-29): only in the AI flow, and
+                              // only for providers that take a key (not local).
+                              showFallbackKeys:
+                                  category == ProviderCategory.ai &&
+                                      providers[i].apiProvider != null,
+                              fallbackKeys: apiKeyFallbacks[
+                                      providers[i].apiProvider] ??
+                                  const [],
                             ),
                           ),
                         ),
@@ -1024,11 +1066,19 @@ class _ProviderConfigScreen extends StatefulWidget {
   /// is set yet (or not yet received) — the field then shows a placeholder.
   final String? initialKey;
 
+  /// Fallback keys (WOR-29). When [showFallbackKeys] is true (AI providers flow,
+  /// non-local provider) a "fallback keys" sub-section renders below the main
+  /// key editor; [fallbackKeys] seeds its list from the config snapshot.
+  final bool showFallbackKeys;
+  final List<String> fallbackKeys;
+
   const _ProviderConfigScreen({
     required this.entry,
     required this.wsService,
     required this.keyConfigured,
     this.initialKey,
+    this.showFallbackKeys = false,
+    this.fallbackKeys = const [],
   });
 
   @override
@@ -1343,6 +1393,366 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
             ),
           ),
         ],
+        // ── Fallback keys (WOR-29) ──
+        // Backup keys the agent rotates to when the primary is rate-limited or
+        // exhausted. A self-contained, optimistically-updated sub-section.
+        if (widget.showFallbackKeys) ...[
+          const SizedBox(height: 28),
+          _FallbackKeysSection(
+            wsService: widget.wsService,
+            provider: widget.entry.apiProvider!,
+            initialKeys: widget.fallbackKeys,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// ── API fallback keys (WOR-29) ──────────────────────────────────────────
+
+/// Per-provider editor for the ordered list of backup API keys
+/// (`settings.json` `api_key_fallbacks[provider]`). The agent rotates through
+/// these when the primary key is rate-limited or exhausted. Rendered as a
+/// sub-section under a provider's key editor, inside the AI-providers flow.
+///
+/// Each key is masked by default (eye toggle to reveal), editable in place, or
+/// removable behind a confirmation. "Add" appends a new key. Every action
+/// updates the local list optimistically and writes to the PC over the
+/// WebSocket: `set_api_fallback_key` (index ≥ 0 replaces a slot, -1 appends)
+/// and `delete_api_fallback_key`.
+class _FallbackKeysSection extends StatefulWidget {
+  final ws.WebSocketService wsService;
+  final String provider;
+  final List<String> initialKeys;
+
+  const _FallbackKeysSection({
+    required this.wsService,
+    required this.provider,
+    required this.initialKeys,
+  });
+
+  @override
+  State<_FallbackKeysSection> createState() => _FallbackKeysSectionState();
+}
+
+class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
+  /// Local, optimistically-updated copy of the provider's fallback keys.
+  late List<String> _keys;
+
+  /// Indices currently shown in clear text (the rest stay masked).
+  final Set<int> _revealed = {};
+
+  /// Which slot the inline editor targets: null = closed, -1 = adding a new
+  /// key, ≥ 0 = editing that slot. Only one editor is open at a time.
+  int? _editIndex;
+  final TextEditingController _editCtrl = TextEditingController();
+  bool _editObscured = true;
+  bool _editHasText = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _keys = List<String>.from(widget.initialKeys);
+  }
+
+  @override
+  void dispose() {
+    _editCtrl.dispose();
+    super.dispose();
+  }
+
+  void _openEditor(int index) {
+    final initial = index >= 0 ? _keys[index] : '';
+    setState(() {
+      _editIndex = index;
+      _editObscured = true;
+      _editCtrl.text = initial;
+      _editHasText = initial.trim().isNotEmpty;
+    });
+  }
+
+  void _closeEditor() {
+    FocusScope.of(context).unfocus();
+    setState(() => _editIndex = null);
+  }
+
+  void _saveEditor() {
+    final index = _editIndex;
+    if (index == null) return;
+    final key = _editCtrl.text.trim();
+    if (key.isEmpty) return;
+    setState(() {
+      if (index == -1) {
+        _keys.add(key);
+      } else if (index >= 0 && index < _keys.length) {
+        _keys[index] = key;
+      }
+      _editIndex = null;
+    });
+    // -1 appends on the server; an in-range index replaces that slot.
+    widget.wsService.sendSetApiFallbackKey(widget.provider, index, key);
+    // Refresh the snapshot so the landing reflects the change on the next visit.
+    widget.wsService.sendGetConfig();
+    FocusScope.of(context).unfocus();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(OsiaL10n.of(context).apiKeySaved)),
+    );
+  }
+
+  Future<void> _delete(int index) async {
+    final strings = OsiaL10n.of(context);
+    final palette = OsiaTheme.of(context);
+    // Confirm before deleting — the key is wiped from the PC.
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(strings.deleteFallbackKey),
+        content: Text(
+          strings.fallbackKeyIndex.replaceFirst('{n}', '${index + 1}'),
+          style: TextStyle(color: palette.textMuted, fontSize: 13.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child:
+                Text(strings.cancel, style: TextStyle(color: palette.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(strings.delete, style: TextStyle(color: palette.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _keys.removeAt(index);
+      // Row indices shift after a removal — drop reveal state so a masked row
+      // can't surface the wrong key in clear text.
+      _revealed.clear();
+      _editIndex = null;
+    });
+    widget.wsService.sendDeleteApiFallbackKey(widget.provider, index);
+    widget.wsService.sendGetConfig();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(strings.apiKeyRemoved)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionLabel(label: strings.fallbackKeys, palette: palette),
+        if (_keys.isNotEmpty)
+          _OsiaCard(
+            palette: palette,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < _keys.length; i++) ...[
+                  if (i > 0)
+                    Divider(
+                      height: 20,
+                      color: palette.border.withValues(alpha: 0.5),
+                    ),
+                  _editIndex == i
+                      ? _buildEditor(palette, strings, i)
+                      : _buildKeyRow(palette, strings, i),
+                ],
+              ],
+            ),
+          ),
+        const SizedBox(height: 10),
+        // "Add a fallback key" — an inline editor opens in place of the button.
+        _editIndex == -1
+            ? _OsiaCard(
+                palette: palette,
+                child: _buildEditor(palette, strings, -1),
+              )
+            : _AddButton(
+                label: strings.addFallbackKey,
+                palette: palette,
+                onTap: () => _openEditor(-1),
+              ),
+      ],
+    );
+  }
+
+  /// One stored key: index chip, masked/revealed value, and reveal/edit/delete
+  /// actions.
+  Widget _buildKeyRow(OsiaPalette palette, OsiaStrings strings, int i) {
+    final revealed = _revealed.contains(i);
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+          decoration: BoxDecoration(
+            color: palette.surfaceElevated,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: palette.border, width: 0.6),
+          ),
+          child: Text(
+            strings.fallbackKeyIndex.replaceFirst('{n}', '${i + 1}'),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: palette.textMuted,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            // Mask with a fixed run of dots so the key's length never leaks.
+            revealed ? _keys[i] : '••••••••••••',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 14,
+              color: palette.textPrimary,
+              letterSpacing: revealed ? 0 : 2,
+            ),
+          ),
+        ),
+        _MiniIconButton(
+          icon: revealed
+              ? Icons.visibility_off_rounded
+              : Icons.visibility_rounded,
+          tooltip: revealed ? strings.hideApiKey : strings.showApiKey,
+          palette: palette,
+          onTap: () => setState(() =>
+              revealed ? _revealed.remove(i) : _revealed.add(i)),
+        ),
+        _MiniIconButton(
+          icon: Icons.edit_rounded,
+          tooltip: strings.editFallbackKey,
+          palette: palette,
+          onTap: () => _openEditor(i),
+        ),
+        _MiniIconButton(
+          icon: Icons.delete_outline_rounded,
+          tooltip: strings.deleteFallbackKey,
+          palette: palette,
+          danger: true,
+          onTap: () => _delete(i),
+        ),
+      ],
+    );
+  }
+
+  /// Inline add/edit field for a fallback key ([index] == -1 when adding).
+  Widget _buildEditor(OsiaPalette palette, OsiaStrings strings, int index) {
+    final isNew = index == -1;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _FieldLabel(
+          isNew ? strings.addFallbackKey : strings.editFallbackKey,
+          palette,
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _editCtrl,
+          obscureText: _editObscured,
+          autocorrect: false,
+          enableSuggestions: false,
+          autofocus: true,
+          textInputAction: TextInputAction.done,
+          onChanged: (v) {
+            final has = v.trim().isNotEmpty;
+            if (has != _editHasText) setState(() => _editHasText = has);
+          },
+          onSubmitted: (_) => _editHasText ? _saveEditor() : null,
+          cursorColor: palette.accent,
+          style: TextStyle(color: palette.textPrimary, fontSize: 15),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: palette.surfaceElevated,
+            hintText: strings.apiKeyHint,
+            hintStyle: TextStyle(color: palette.textMuted, fontSize: 14),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(color: palette.border),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(color: palette.border),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(color: palette.accent, width: 1.4),
+            ),
+            suffixIcon: IconButton(
+              tooltip: _editObscured ? strings.showApiKey : strings.hideApiKey,
+              onPressed: () => setState(() => _editObscured = !_editObscured),
+              icon: Icon(
+                _editObscured
+                    ? Icons.visibility_rounded
+                    : Icons.visibility_off_rounded,
+                size: 18,
+                color: palette.textMuted,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 46,
+                child: OutlinedButton(
+                  onPressed: _closeEditor,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: palette.textMuted,
+                    side: BorderSide(color: palette.border),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    textStyle: const TextStyle(
+                        fontSize: 14.5, fontWeight: FontWeight.w500),
+                  ),
+                  child: Text(strings.cancel),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: SizedBox(
+                height: 46,
+                child: ElevatedButton(
+                  onPressed: _editHasText ? _saveEditor : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: palette.accent,
+                    foregroundColor:
+                        palette.isDark ? palette.background : Colors.white,
+                    disabledBackgroundColor:
+                        palette.accent.withValues(alpha: 0.4),
+                    disabledForegroundColor:
+                        (palette.isDark ? palette.background : Colors.white)
+                            .withValues(alpha: 0.7),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    textStyle: const TextStyle(
+                        fontSize: 14.5, fontWeight: FontWeight.w600),
+                  ),
+                  child: Text(strings.save),
+                ),
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }

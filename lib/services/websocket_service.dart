@@ -639,6 +639,31 @@ class WebSocketService {
     _send({'type': 'delete_api_key', 'provider': provider});
   }
 
+  /// Set (or replace) a fallback API key for a provider — one slot in the
+  /// ordered backup-key list the server keeps under `settings.json`
+  /// `api_key_fallbacks[provider]` (the agent rotates through these when the
+  /// primary key is rate-limited/exhausted). An [index] of -1 appends a new
+  /// key; an in-range index replaces that slot. (WOR-29)
+  void sendSetApiFallbackKey(String provider, int index, String key) {
+    _send({
+      'type': 'set_api_fallback_key',
+      'provider': provider,
+      'index': index,
+      'key': key,
+    });
+  }
+
+  /// Remove the fallback API key at [index] from a provider's backup-key list.
+  /// The server drops the provider entry entirely once its last key is gone.
+  /// (WOR-29)
+  void sendDeleteApiFallbackKey(String provider, int index) {
+    _send({
+      'type': 'delete_api_fallback_key',
+      'provider': provider,
+      'index': index,
+    });
+  }
+
   /// Set a single whitelisted settings.json key/value pair on the PC
   /// (e.g. `liveapi_enabled`). [value] may be a bool, string, number, or a
   /// JSON-serializable list/map (e.g. `cron_jobs`, `heavy_chain`).
