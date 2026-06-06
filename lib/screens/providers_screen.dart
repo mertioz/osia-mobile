@@ -975,7 +975,11 @@ class _CronScreenState extends State<_CronScreen> {
     final existing = index != null ? _jobs[index] : null;
     final result = await Navigator.of(context).push<Map<String, dynamic>>(
       slideFadeRoute(
-        _CronEditScreen(initialJob: existing, timeFormat: widget.timeFormat),
+        _CronEditScreen(
+          initialJob: existing,
+          timeFormat: widget.timeFormat,
+          wsService: widget.wsService,
+        ),
       ),
     );
     if (result == null) return;
@@ -1130,7 +1134,14 @@ class _CronEditScreen extends StatefulWidget {
   final Map<String, dynamic>? initialJob;
   // Display-only time format ('12h'/'24h'); the picker still stores 24h.
   final String timeFormat;
-  const _CronEditScreen({this.initialJob, required this.timeFormat});
+  // Live connection — used to fetch the conversation list for the "linked
+  // conversation" picker (WOR-24). Read-only here; no writes happen until save.
+  final ws.WebSocketService wsService;
+  const _CronEditScreen({
+    this.initialJob,
+    required this.timeFormat,
+    required this.wsService,
+  });
 
   @override
   State<_CronEditScreen> createState() => _CronEditScreenState();
@@ -1147,6 +1158,14 @@ class _CronEditScreenState extends State<_CronEditScreen> {
   // Carried through unchanged (the row toggle owns the on/off state).
   bool _enabled = true;
 
+  // ── Linked conversation (WOR-24) ──
+  // Selected conversation id, or null for "new conversation". Pre-filled from
+  // the job's existing conversation_id and written back on save.
+  String? _conversationId;
+  // The list fetched from the PC; null while still loading (drives the loader).
+  List<ws.ConversationItem>? _conversations;
+  StreamSubscription<ws.ConversationsListMessage>? _convSub;
+
   @override
   void initState() {
     super.initState();
@@ -1154,6 +1173,9 @@ class _CronEditScreenState extends State<_CronEditScreen> {
     if (job != null) {
       _taskCtrl.text = (job['task'] ?? '').toString();
       _enabled = job['enabled'] == true;
+      // Pre-fill the linked conversation (null/empty → "new conversation").
+      final cid = job['conversation_id'];
+      if (cid is String && cid.isNotEmpty) _conversationId = cid;
       final spec = _parseCron((job['schedule'] ?? '').toString());
       if (spec != null) {
         if (spec.isOnce) {
@@ -1169,10 +1191,17 @@ class _CronEditScreenState extends State<_CronEditScreen> {
         }
       }
     }
+    // Subscribe BEFORE requesting so the (broadcast, non-replaying) reply can't
+    // slip through before we're listening, then pull the conversation list.
+    _convSub = widget.wsService.conversationsListStream.listen((msg) {
+      if (mounted) setState(() => _conversations = msg.conversations);
+    });
+    widget.wsService.sendGetConversations();
   }
 
   @override
   void dispose() {
+    _convSub?.cancel();
     _taskCtrl.dispose();
     _intervalCtrl.dispose();
     super.dispose();
@@ -1243,11 +1272,15 @@ class _CronEditScreenState extends State<_CronEditScreen> {
       return;
     }
     final job = <String, dynamic>{
-      // Preserve conversation_id and any other server-side fields.
+      // Preserve any other server-side fields; conversation_id below overrides
+      // the preserved value with the user's current selection (WOR-24).
       ...?widget.initialJob,
       'task': task,
       'schedule': schedule,
       'enabled': _enabled,
+      // null when "Aucune (nouvelle conversation)" is chosen — matches the PC's
+      // `{..., "conversation_id": null}` job shape.
+      'conversation_id': _conversationId,
     };
     Navigator.of(context).pop(job);
   }
@@ -1293,6 +1326,8 @@ class _CronEditScreenState extends State<_CronEditScreen> {
                 ..._buildRepeat(palette, strings)
               else
                 ..._buildOnce(palette, strings),
+              const SizedBox(height: 24),
+              _buildConversationField(palette, strings),
               const SizedBox(height: 28),
               _PrimaryButton(
                   label: strings.save, onTap: _save, palette: palette),
@@ -1407,6 +1442,106 @@ class _CronEditScreenState extends State<_CronEditScreen> {
         _RepeatUnit.days => s.cronUnitDays,
         _RepeatUnit.daily => s.cronModeDaily,
       };
+
+  /// "Linked conversation" picker (WOR-24): a loader until the PC's list lands,
+  /// then a dropdown of "None (new conversation)" + every conversation by title.
+  Widget _buildConversationField(OsiaPalette palette, OsiaStrings strings) {
+    final convs = _conversations;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _FieldLabel(strings.cronLinkedConversation, palette),
+        const SizedBox(height: 8),
+        if (convs == null)
+          // Still in flight — small inline loader so nothing is picked "blind".
+          _OsiaCard(
+            palette: palette,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: palette.accent),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  strings.cronLoadingConversations,
+                  style: TextStyle(fontSize: 14, color: palette.textMuted),
+                ),
+              ],
+            ),
+          )
+        else
+          _OsiaCard(
+            palette: palette,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String?>(
+                value: _conversationId,
+                isExpanded: true,
+                dropdownColor: palette.surfaceElevated,
+                borderRadius: BorderRadius.circular(14),
+                icon: Icon(Icons.keyboard_arrow_down_rounded,
+                    color: palette.accent),
+                style: TextStyle(color: palette.textPrimary, fontSize: 14.5),
+                items: _conversationItems(convs, strings, palette),
+                onChanged: (v) => setState(() => _conversationId = v),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Build the dropdown items: a leading "None" (null value) entry, then each
+  /// conversation by title. A stored id that is no longer in the list (deleted
+  /// conversation) is kept as a trailing entry so the dropdown stays valid and
+  /// the link isn't silently dropped — mirrors the hierarchy editor.
+  List<DropdownMenuItem<String?>> _conversationItems(
+      List<ws.ConversationItem> convs,
+      OsiaStrings strings,
+      OsiaPalette palette) {
+    final items = <DropdownMenuItem<String?>>[
+      DropdownMenuItem<String?>(
+        value: null,
+        child: Text(
+          strings.cronNoConversation,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 14.5, color: palette.textPrimary),
+        ),
+      ),
+    ];
+    for (final c in convs) {
+      // A conversation with no id can't be linked, and two empty-id entries
+      // would give the dropdown two items with the same value '' — which
+      // violates DropdownButton's "exactly one item per value" invariant the
+      // moment one is selected. Skip them outright.
+      if (c.id.isEmpty) continue;
+      final title = c.title.trim().isEmpty ? strings.untitled : c.title;
+      items.add(DropdownMenuItem<String?>(
+        value: c.id,
+        child: Text(
+          title,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 14.5, color: palette.textPrimary),
+        ),
+      ));
+    }
+    final id = _conversationId;
+    if (id != null && !convs.any((c) => c.id == id)) {
+      items.add(DropdownMenuItem<String?>(
+        value: id,
+        child: Text(
+          strings.untitled,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 14.5, color: palette.textMuted),
+        ),
+      ));
+    }
+    return items;
+  }
 }
 
 // ── Cron schedule parsing/formatting (mirrors osia.cron) ────────────────

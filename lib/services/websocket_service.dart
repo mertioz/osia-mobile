@@ -398,6 +398,36 @@ class NewChatMessage {
   const NewChatMessage();
 }
 
+/// One conversation entry (id + title) for the cron editor's "linked
+/// conversation" picker (WOR-24). Carries only what the picker needs — distinct
+/// from the richer [Conversation] used by the chat sidebar.
+class ConversationItem {
+  final String id;
+  final String title;
+  const ConversationItem(this.id, this.title);
+
+  factory ConversationItem.fromJson(Map<String, dynamic> json) =>
+      ConversationItem(
+        (json['id'] ?? '').toString(),
+        (json['title'] ?? '').toString(),
+      );
+}
+
+/// Compact id+title conversation list sent by the PC in reply to
+/// `{"type":"get_conversations"}` as
+/// `{"type":"conversations_list","conversations":[{id,title}, ...]}` (WOR-24).
+///
+/// Like [ConfigData], [ApiKeysMessage], [HeartbeatDataMessage] and
+/// [NewChatMessage], this is deliberately NOT part of the sealed [OsiaMessage]
+/// hierarchy: chat_screen.dart switches over OsiaMessage exhaustively with no
+/// `default`, so adding a sealed subtype would break its compile (and CLAUDE.md
+/// forbids touching that path). It rides its own
+/// [WebSocketService.conversationsListStream] instead.
+class ConversationsListMessage {
+  final List<ConversationItem> conversations;
+  const ConversationsListMessage(this.conversations);
+}
+
 // ── WebSocket service ─────────────────────────────────────────────────────
 
 /// Manages the WebSocket connection to the OSIA PC server.
@@ -455,6 +485,9 @@ class WebSocketService {
   final StreamController<NewChatMessage> _newChatCtrl =
       StreamController<NewChatMessage>.broadcast();
 
+  final StreamController<ConversationsListMessage> _conversationsListCtrl =
+      StreamController<ConversationsListMessage>.broadcast();
+
   /// Stream of connection state changes.
   Stream<ConnectionState> get connectionStream => _connectionCtrl.stream;
 
@@ -479,6 +512,11 @@ class WebSocketService {
   /// Stream of "new chat" signals (`new_chat`, WOR-10). Kept off
   /// [messageStream] for the same reason as [configStream].
   Stream<NewChatMessage> get newChatStream => _newChatCtrl.stream;
+
+  /// Stream of compact conversation lists (`conversations_list`, WOR-24). Kept
+  /// off [messageStream] for the same reason as [configStream].
+  Stream<ConversationsListMessage> get conversationsListStream =>
+      _conversationsListCtrl.stream;
 
   /// Current connection state.
   ConnectionState _state = ConnectionState.disconnected;
@@ -613,6 +651,13 @@ class WebSocketService {
     _send({'type': 'get_api_keys'});
   }
 
+  /// Ask the PC for a compact id+title list of stored conversations, to fill
+  /// the cron editor's "linked conversation" picker (WOR-24). The reply arrives
+  /// on [conversationsListStream] as a [ConversationsListMessage].
+  void sendGetConversations() {
+    _send({'type': 'get_conversations'});
+  }
+
   /// Persist the personality document (`~/.osia/personality.md`) on the PC.
   void sendSetPersonality(String text) {
     _send({'type': 'set_personality', 'text': text});
@@ -668,6 +713,7 @@ class WebSocketService {
     _apiKeysCtrl.close();
     _heartbeatCtrl.close();
     _newChatCtrl.close();
+    _conversationsListCtrl.close();
   }
 
   /// Strip any scheme, path, or port the user may have pasted into the
@@ -912,6 +958,23 @@ class WebSocketService {
           debugPrint('[OSIA WS] new_chat received');
           if (!_newChatCtrl.isClosed) {
             _newChatCtrl.add(const NewChatMessage());
+          }
+        case 'conversations_list':
+          // Compact id+title list for the cron editor's linked-conversation
+          // picker (WOR-24). Delivered on its own [conversationsListStream]
+          // (NOT the paced message queue) so it can't disturb response-chunk
+          // streaming.
+          final rawList = json['conversations'];
+          final convs = rawList is List
+              ? rawList
+                  .whereType<Map>()
+                  .map((e) =>
+                      ConversationItem.fromJson(e.cast<String, dynamic>()))
+                  .toList()
+              : <ConversationItem>[];
+          debugPrint('[OSIA WS] conversations_list: ${convs.length} item(s)');
+          if (!_conversationsListCtrl.isClosed) {
+            _conversationsListCtrl.add(ConversationsListMessage(convs));
           }
         default:
           debugPrint(

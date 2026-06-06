@@ -163,6 +163,9 @@ class OsiaStrings {
   final String cronEveryDaysTemplate; // {n}
   final String cronDailyAtTemplate; // {t}
   final String cronOnceTemplate; // {d} {t}
+  final String cronLinkedConversation;
+  final String cronNoConversation;
+  final String cronLoadingConversations;
 
   // ── AI hierarchy ──
   final String hierarchyTitle;
@@ -337,6 +340,9 @@ class OsiaStrings {
     required this.cronEveryDaysTemplate,
     required this.cronDailyAtTemplate,
     required this.cronOnceTemplate,
+    required this.cronLinkedConversation,
+    required this.cronNoConversation,
+    required this.cronLoadingConversations,
     required this.hierarchyTitle,
     required this.hierarchySubtitle,
     required this.hierarchyEnable,
@@ -560,6 +566,9 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   cronEveryDaysTemplate: 'Every {n} d',
   cronDailyAtTemplate: 'Daily at {t}',
   cronOnceTemplate: 'Once · {d} {t}',
+  cronLinkedConversation: 'Linked conversation',
+  cronNoConversation: 'None (new conversation)',
+  cronLoadingConversations: 'Loading…',
   hierarchyTitle: 'AI Hierarchy',
   hierarchySubtitle:
       'Order the models OSIA tries for each task type. The first reachable one is used. When off, your selected model is always used.',
@@ -734,6 +743,9 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   cronEveryDaysTemplate: 'Tous les {n} j',
   cronDailyAtTemplate: 'Chaque jour à {t}',
   cronOnceTemplate: 'Une fois · {d} {t}',
+  cronLinkedConversation: 'Conversation liée',
+  cronNoConversation: 'Aucune (nouvelle conversation)',
+  cronLoadingConversations: 'Chargement…',
   hierarchyTitle: 'Hiérarchie IA',
   hierarchySubtitle:
       "Ordonnez les modèles qu'OSIA essaie pour chaque type de tâche. Le premier disponible est utilisé. Si désactivé, votre modèle sélectionné est toujours utilisé.",
@@ -902,6 +914,9 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   cronEveryDaysTemplate: '每 {n} 天',
   cronDailyAtTemplate: '每天 {t}',
   cronOnceTemplate: '一次 · {d} {t}',
+  cronLinkedConversation: '关联对话',
+  cronNoConversation: '无（新对话）',
+  cronLoadingConversations: '加载中…',
   hierarchyTitle: 'AI 层级',
   hierarchySubtitle:
       '为每种任务类型排列 OSIA 尝试的模型顺序。使用第一个可用的模型。关闭时，始终使用您选择的模型。',
@@ -1070,6 +1085,9 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   cronEveryDaysTemplate: '{n} 日ごと',
   cronDailyAtTemplate: '毎日 {t}',
   cronOnceTemplate: '一度 · {d} {t}',
+  cronLinkedConversation: '関連する会話',
+  cronNoConversation: 'なし（新しい会話）',
+  cronLoadingConversations: '読み込み中…',
   hierarchyTitle: 'AI 階層',
   hierarchySubtitle:
       'タスクの種類ごとに OSIA が試すモデルの順序を決めます。最初に利用可能なものが使われます。オフのときは選択中のモデルが常に使われます。',
@@ -1247,6 +1265,9 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   cronEveryDaysTemplate: 'Alle {n} Tage',
   cronDailyAtTemplate: 'Täglich um {t}',
   cronOnceTemplate: 'Einmal · {d} {t}',
+  cronLinkedConversation: 'Verknüpfte Unterhaltung',
+  cronNoConversation: 'Keine (neue Unterhaltung)',
+  cronLoadingConversations: 'Wird geladen…',
   hierarchyTitle: 'KI-Hierarchie',
   hierarchySubtitle:
       'Ordnen Sie die Modelle, die OSIA je Aufgabentyp versucht. Das erste erreichbare wird verwendet. Wenn aus, wird immer Ihr gewähltes Modell genutzt.',
@@ -1421,6 +1442,9 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   cronEveryDaysTemplate: 'Cada {n} d',
   cronDailyAtTemplate: 'Cada día a las {t}',
   cronOnceTemplate: 'Una vez · {d} {t}',
+  cronLinkedConversation: 'Conversación vinculada',
+  cronNoConversation: 'Ninguna (nueva conversación)',
+  cronLoadingConversations: 'Cargando…',
   hierarchyTitle: 'Jerarquía de IA',
   hierarchySubtitle:
       'Ordena los modelos que OSIA prueba para cada tipo de tarea. Se usa el primero disponible. Si está desactivada, siempre se usa tu modelo seleccionado.',
