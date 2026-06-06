@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -212,12 +213,17 @@ class AudioService {
       await _player.setFilePath(tempFile.path);
       await _player.play();
 
-      // Clean up after playback completes
-      _player.processingStateStream.listen((state) {
+      // Clean up after playback completes. The subscription is held in a
+      // local and cancelled inside its own callback once the file is gone —
+      // otherwise every TTS play would leak a listener on the long-lived
+      // player's processingStateStream.
+      late final StreamSubscription<ProcessingState> sub;
+      sub = _player.processingStateStream.listen((state) {
         if (state == ProcessingState.completed) {
           try {
             tempFile.delete();
           } catch (_) {}
+          sub.cancel();
         }
       });
     } catch (e) {

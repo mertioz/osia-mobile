@@ -7,6 +7,7 @@ import '../l10n.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
+import 'chat_screen.dart' show ChatHandoff;
 
 /// Minimal, premium connection screen — the first thing the user sees on
 /// first launch (and after disconnecting).
@@ -29,6 +30,9 @@ class _ConnectionScreenState extends State<ConnectionScreen>
   final TextEditingController _tokenCtrl = TextEditingController();
 
   bool _connecting = false;
+  // The token field is obscured by default; the eye toggle in its suffix
+  // flips this so the user can verify what they pasted/typed.
+  bool _obscureToken = true;
   String? _error;
 
   // Entrance animation — same rhythm as the rest of the app (easeOutCubic).
@@ -36,12 +40,40 @@ class _ConnectionScreenState extends State<ConnectionScreen>
   late final Animation<double> _fade;
   late final Animation<Offset> _slide;
 
-  // Temporary service used only to verify the token before saving it.
+  // Service used to verify the token. On success we DON'T close it — the
+  // same authenticated socket is handed to the chat screen (see
+  // [_finishConnection]) so the app never closes and reopens a connection.
   ws.WebSocketService? _probe;
   StreamSubscription? _probeConnSub;
+  StreamSubscription? _probeMsgSub;
   StreamSubscription? _probeErrSub;
   Timer? _probeTimeout;
   Timer? _probeGrace;
+
+  // True once the probe's socket has opened (and auth was sent) at least
+  // once this attempt — lets us tell a network failure (never connected)
+  // from an auth rejection (connected, then the server hung up).
+  bool _probeReachedConnected = false;
+  // Latch so the spinner resolves to exactly one outcome (chat or error),
+  // even if success and failure signals race.
+  bool _resolved = false;
+
+  // Server frames seen during validation, buffered so the chat screen can
+  // replay them. The server pushes the initial conversations/active/history/
+  // models burst right after auth; the chat screen subscribes only after the
+  // hand-off and would otherwise miss it.
+  final List<ws.OsiaMessage> _bufferedMessages = [];
+  // Set once the live connection has been handed to the chat screen: from
+  // then on this screen must NOT dispose the service (the chat screen owns
+  // it now), only its own subscriptions.
+  bool _handedOff = false;
+
+  // No verdict from the server within this window → give up and tell the
+  // user to check their token.
+  static const Duration _verifyTimeout = Duration(seconds: 10);
+  // How long the socket must stay open after auth (with no rejecting close)
+  // before we treat a silent server as a valid token.
+  static const Duration _verifyGrace = Duration(milliseconds: 1500);
 
   @override
   void initState() {
@@ -60,7 +92,17 @@ class _ConnectionScreenState extends State<ConnectionScreen>
 
   @override
   void dispose() {
-    _disposeProbe();
+    if (_handedOff) {
+      // The live socket now belongs to the chat screen — tear down only our
+      // own subscriptions/timers, never the service itself.
+      _probeTimeout?.cancel();
+      _probeGrace?.cancel();
+      _probeConnSub?.cancel();
+      _probeMsgSub?.cancel();
+      _probeErrSub?.cancel();
+    } else {
+      _disposeProbe();
+    }
     _enterCtrl.dispose();
     _tokenCtrl.dispose();
     super.dispose();
@@ -73,6 +115,8 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     _probeGrace = null;
     _probeConnSub?.cancel();
     _probeConnSub = null;
+    _probeMsgSub?.cancel();
+    _probeMsgSub = null;
     _probeErrSub?.cancel();
     _probeErrSub = null;
     _probe?.dispose();
@@ -104,53 +148,159 @@ class _ConnectionScreenState extends State<ConnectionScreen>
       _error = null;
     });
 
+    // Fresh attempt: drop any leftover probe and reset the latches.
+    _disposeProbe();
+    _resolved = false;
+    _probeReachedConnected = false;
+    _handedOff = false;
+    _bufferedMessages.clear();
+
+    debugPrint('[OSIA Connect] Verifying token (length ${token.length}) '
+        'against ${StorageService.defaultHost}…');
+
+    // This validated connection is reused by the chat screen — on success we
+    // hand the live socket over instead of closing and reopening it — so it
+    // uses the same autoReconnect:true as a normal chat session (a mid-chat
+    // network blip shouldn't kill it). A rejected token still surfaces
+    // immediately: the disconnected-after-connected branch below resolves the
+    // attempt and disposes the probe before any reconnect timer can fire, so
+    // there is no "infinite Connecting" loop.
     final probe = ws.WebSocketService(
       ip: StorageService.defaultHost,
       token: token,
     );
     _probe = probe;
 
-    // Hard backstop: a bad token never accumulates a stable connection
-    // (the server keeps closing the socket and the probe keeps retrying),
-    // so after 15 s without success we report failure.
-    _probeTimeout = Timer(const Duration(seconds: 15), () {
+    // Backstop: if the server neither accepts nor rejects us in time, stop
+    // the spinner and tell the user to check the token.
+    _probeTimeout = Timer(_verifyTimeout, () {
+      debugPrint('[OSIA Connect] No verdict after '
+          '${_verifyTimeout.inSeconds}s → failure.');
       _failConnection(strings.connectionFailed);
     });
 
     _probeConnSub = probe.connectionStream.listen((state) {
+      debugPrint('[OSIA Connect] probe state → $state '
+          '(reachedConnected=$_probeReachedConnected)');
       if (state == ws.ConnectionState.connected) {
-        // Socket is open and auth was sent. The token is considered good
-        // once the connection stays up for a continuous grace period (a
-        // bad token gets its socket closed by the server well within it).
-        // Transient drops just restart the clock — the probe's built-in
-        // reconnect brings the socket back on flaky networks.
+        _probeReachedConnected = true;
+        // Socket is open and auth was sent. Treat the token as good once
+        // the connection survives a short grace window without the server
+        // closing it (a real data frame, handled below, confirms it
+        // sooner). A bad token's socket is closed well within the window.
         _probeGrace?.cancel();
-        _probeGrace = Timer(const Duration(milliseconds: 1200), () {
-          if (_probe == probe && probe.state == ws.ConnectionState.connected) {
+        _probeGrace = Timer(_verifyGrace, () {
+          if (_resolved) return;
+          if (_probe == probe &&
+              probe.state == ws.ConnectionState.connected) {
+            debugPrint(
+                '[OSIA Connect] Stayed connected through grace → success.');
             _finishConnection(token);
           }
         });
+      } else if (state == ws.ConnectionState.disconnected &&
+          _probeReachedConnected) {
+        // We were open and authenticated, then the server hung up: that is
+        // an auth rejection — a valid token's socket stays up.
+        debugPrint('[OSIA Connect] Server closed the socket after auth '
+            '→ token rejected.');
+        _failConnection(strings.invalidToken);
       }
     });
 
-    _probeErrSub = probe.errorStream.listen((_) {
-      // Network-level failure (unreachable, timeout, refused) — report
-      // immediately rather than waiting out the backstop.
-      _failConnection(strings.connectionFailed);
+    _probeMsgSub = probe.messageStream.listen((msg) {
+      // Buffer every server frame so the chat screen can replay the initial
+      // burst (conversations list, active conversation, history, models)
+      // after the hand-off — it subscribes too late to receive these live.
+      if (_bufferedMessages.isEmpty) {
+        debugPrint('[OSIA Connect] First server frame after auth: '
+            '${msg.runtimeType} → token is valid.');
+      }
+      _bufferedMessages.add(msg);
+
+      // These frames are only ever sent to an authenticated client, so the
+      // first one proves the token is valid — enter the chat right away
+      // instead of waiting out the grace window.
+      if (msg is ws.ConversationsMessage ||
+          msg is ws.ModelsListMessage ||
+          msg is ws.ActiveConversationMessage ||
+          msg is ws.ConversationHistoryMessage) {
+        debugPrint('[OSIA Connect] Authenticated frame (${msg.runtimeType}) '
+            '→ success.');
+        _finishConnection(token);
+      }
+    });
+
+    _probeErrSub = probe.errorStream.listen((err) {
+      debugPrint('[OSIA Connect] probe error: $err '
+          '(reachedConnected=$_probeReachedConnected)');
+      // Before the socket ever opened this is a reachability problem; after,
+      // it's the server refusing us.
+      _failConnection(_probeReachedConnected
+          ? strings.invalidToken
+          : strings.connectionFailed);
     });
 
     probe.connect();
   }
 
   Future<void> _finishConnection(String token) async {
-    _disposeProbe();
-    await widget.storage.setTailscaleIp(StorageService.defaultHost);
-    await widget.storage.setToken(token);
-    if (!mounted) return;
-    Navigator.of(context).pushReplacementNamed('/chat');
+    if (_resolved) return;
+    _resolved = true;
+    final probe = _probe;
+    debugPrint('[OSIA Connect] SUCCESS — keeping the live connection open to '
+        'hand it to the chat screen.');
+
+    // Stop the validation machinery but KEEP the socket open: the same
+    // authenticated connection is reused by the chat screen, so we never
+    // close+reopen (the gap that left the chat stuck "Connecting"). The
+    // message listener stays alive to keep buffering frames until the chat
+    // screen subscribes; the connection/error listeners are detached so a
+    // transient event during navigation can't tear the socket down.
+    _probeTimeout?.cancel();
+    _probeTimeout = null;
+    _probeGrace?.cancel();
+    _probeGrace = null;
+    _probeConnSub?.cancel();
+    _probeConnSub = null;
+    _probeErrSub?.cancel();
+    _probeErrSub = null;
+
+    try {
+      await widget.storage.setTailscaleIp(StorageService.defaultHost);
+      await widget.storage.setToken(token);
+    } catch (e) {
+      // Persisting shouldn't fail, but if it does don't strand the user on
+      // a dead spinner — tear the probe down and surface it so they can retry.
+      debugPrint('[OSIA Connect] Failed to persist credentials: $e');
+      _disposeProbe();
+      if (!mounted) return;
+      setState(() {
+        _connecting = false;
+        _resolved = false;
+        _error = OsiaL10n.of(context).connectionFailed;
+      });
+      return;
+    }
+    if (probe == null || !mounted) return;
+    // Past this point the chat screen owns the socket — dispose() must not
+    // close it.
+    _handedOff = true;
+    debugPrint('[OSIA Connect] Navigating to /chat with the live connection '
+        '(${_bufferedMessages.length} buffered frame(s)).');
+    Navigator.of(context).pushReplacementNamed(
+      '/chat',
+      arguments: ChatHandoff(
+        service: probe,
+        bufferedMessages: _bufferedMessages,
+      ),
+    );
   }
 
   void _failConnection(String message) {
+    if (_resolved) return;
+    _resolved = true;
+    debugPrint('[OSIA Connect] FAILURE — "$message"');
     _disposeProbe();
     if (!mounted) return;
     setState(() {
@@ -183,6 +333,8 @@ class _ConnectionScreenState extends State<ConnectionScreen>
                       _buildLogo(palette),
                       const SizedBox(height: 48),
                       _buildTokenField(palette, strings),
+                      const SizedBox(height: 10),
+                      _buildTokenHint(palette, strings),
                       const SizedBox(height: 12),
                       _buildError(palette),
                       const SizedBox(height: 12),
@@ -232,7 +384,7 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     return TextField(
       controller: _tokenCtrl,
       enabled: !_connecting,
-      obscureText: true,
+      obscureText: _obscureToken,
       autocorrect: false,
       enableSuggestions: false,
       textInputAction: TextInputAction.go,
@@ -264,14 +416,60 @@ class _ConnectionScreenState extends State<ConnectionScreen>
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide(color: palette.border),
         ),
-        suffixIcon: IconButton(
-          onPressed: _connecting ? null : _pasteToken,
-          icon: Icon(
-            Icons.content_paste_rounded,
-            size: 18,
-            color: palette.textMuted,
-          ),
+        suffixIcon: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Show/hide toggle for the obscured token.
+            IconButton(
+              onPressed: _connecting
+                  ? null
+                  : () => setState(() => _obscureToken = !_obscureToken),
+              icon: Icon(
+                _obscureToken
+                    ? Icons.visibility_rounded
+                    : Icons.visibility_off_rounded,
+                size: 18,
+                color: palette.textMuted,
+              ),
+            ),
+            IconButton(
+              onPressed: _connecting ? null : _pasteToken,
+              icon: Icon(
+                Icons.content_paste_rounded,
+                size: 18,
+                color: palette.textMuted,
+              ),
+            ),
+          ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildTokenHint(OsiaPalette palette, OsiaStrings strings) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.info_outline_rounded,
+            size: 13,
+            color: palette.textMuted.withValues(alpha: 0.8),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              strings.tokenHint,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                color: palette.textMuted,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

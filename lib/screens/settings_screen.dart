@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n.dart';
+import '../nav.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 import 'legal_screen.dart';
+import 'providers_screen.dart';
 
 /// Placeholder donation URL — to be replaced with the real one later.
 const String _kDonationUrl = 'https://osia.space/donate';
@@ -40,17 +42,20 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-enum _RestartState { idle, reconnecting, reconnected }
+enum _RestartState { idle, restarting }
 
 class _SettingsScreenState extends State<SettingsScreen> {
   _RestartState _restartState = _RestartState.idle;
   ws.ConnectionState _connState = ws.ConnectionState.disconnected;
   StreamSubscription? _connSub;
+  StreamSubscription? _restartStatusSub;
   Timer? _restartTimeout;
-  Timer? _reconnectedReset;
 
   /// Whether OSIA reads responses aloud automatically (ON by default).
   bool _autoTts = true;
+
+  /// Whether the voice-to-voice Live API is enabled (OFF by default).
+  bool _liveApi = false;
 
   @override
   void initState() {
@@ -58,26 +63,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.storage.getAutoTts().then((enabled) {
       if (mounted) setState(() => _autoTts = enabled);
     });
+    widget.storage.getLiveApiEnabled().then((enabled) {
+      if (mounted) setState(() => _liveApi = enabled);
+    });
     _connState = widget.wsService.state;
+    // Track connection state only to enable/disable the restart tile; the
+    // restart outcome itself is now confirmed by a status ack (see
+    // [_restartServer]), not by watching for a reconnection.
     _connSub = widget.wsService.connectionStream.listen((state) {
       if (!mounted) return;
       setState(() => _connState = state);
-      if (_restartState == _RestartState.reconnecting &&
-          state == ws.ConnectionState.connected) {
-        _restartTimeout?.cancel();
-        setState(() => _restartState = _RestartState.reconnected);
-        _reconnectedReset = Timer(const Duration(seconds: 3), () {
-          if (mounted) setState(() => _restartState = _RestartState.idle);
-        });
-      }
     });
   }
 
   @override
   void dispose() {
     _connSub?.cancel();
+    _restartStatusSub?.cancel();
     _restartTimeout?.cancel();
-    _reconnectedReset?.cancel();
     super.dispose();
   }
 
@@ -101,20 +104,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.storage.setAutoTts(enabled);
   }
 
+  void _onToggleLiveApi(bool enabled) {
+    setState(() => _liveApi = enabled);
+    widget.storage.setLiveApiEnabled(enabled);
+    // Push the choice to the PC; it disables STT/TTS while Live API is on.
+    widget.wsService.sendSetSetting('liveapi_enabled', enabled);
+  }
+
+  void _openProviders() {
+    Navigator.of(context).push(
+      slideFadeRoute(ProvidersScreen(wsService: widget.wsService)),
+    );
+  }
+
   void _restartServer() {
-    if (_restartState == _RestartState.reconnecting) return;
+    if (_restartState == _RestartState.restarting) return;
     // The restart command can only be delivered over a live socket; the
     // tile is disabled when disconnected, but guard anyway.
     if (widget.wsService.state != ws.ConnectionState.connected) return;
     widget.wsService.sendRestartServer();
-    setState(() => _restartState = _RestartState.reconnecting);
-    // Safety net: if the server never comes back, stop showing the spinner.
-    _restartTimeout?.cancel();
-    _restartTimeout = Timer(const Duration(seconds: 90), () {
-      if (mounted && _restartState == _RestartState.reconnecting) {
-        setState(() => _restartState = _RestartState.idle);
+    setState(() => _restartState = _RestartState.restarting);
+
+    // The server confirms the restart with a status frame (content
+    // "done"/"error"), which surfaces as a [ws.StatusMessage] on the existing
+    // message stream — no protocol change needed. Subscribe only for the
+    // duration of the restart so unrelated status frames are ignored.
+    _restartStatusSub?.cancel();
+    _restartStatusSub = widget.wsService.messageStream.listen((msg) {
+      if (msg is! ws.StatusMessage) return;
+      if (msg.content == 'done') {
+        _finishRestart(success: true);
+      } else if (msg.content == 'error') {
+        _finishRestart(success: false);
       }
     });
+
+    // Backstop: no acknowledgement within 10s → treat it as a failure.
+    _restartTimeout?.cancel();
+    _restartTimeout = Timer(const Duration(seconds: 10), () {
+      _finishRestart(success: false);
+    });
+  }
+
+  /// Resolve a pending restart exactly once: stop the spinner and show a
+  /// success or error snackbar. Guarded so a racing ack and timeout can't
+  /// fire it twice.
+  void _finishRestart({required bool success}) {
+    if (_restartState != _RestartState.restarting) return;
+    _restartTimeout?.cancel();
+    _restartTimeout = null;
+    _restartStatusSub?.cancel();
+    _restartStatusSub = null;
+    if (!mounted) return;
+    setState(() => _restartState = _RestartState.idle);
+    final strings = OsiaL10n.of(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          success ? strings.serverRestarted : strings.serverRestartFailed,
+        ),
+      ),
+    );
   }
 
   Future<void> _disconnect() async {
@@ -241,6 +291,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   value: _autoTts,
                   onChanged: _onToggleAutoTts,
                   palette: palette,
+                ),
+              ),
+
+              // ── APIs & Providers ─────────────────────────────────────
+              _SectionHeader(label: strings.providersTitle, palette: palette),
+              _SectionCard(
+                palette: palette,
+                padding: EdgeInsets.zero,
+                child: Column(
+                  children: [
+                    _NavTile(
+                      icon: Icons.tune_rounded,
+                      title: strings.configureProviders,
+                      onTap: _openProviders,
+                      palette: palette,
+                    ),
+                    Divider(
+                      height: 1,
+                      color: palette.border.withValues(alpha: 0.5),
+                      indent: 56,
+                    ),
+                    _ToggleTile(
+                      icon: Icons.graphic_eq_rounded,
+                      title: strings.liveApi,
+                      subtitle: strings.liveApiNotice,
+                      value: _liveApi,
+                      onChanged: _onToggleLiveApi,
+                      palette: palette,
+                    ),
+                  ],
                 ),
               ),
 
@@ -612,13 +692,12 @@ class _RestartServerTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (Widget leading, String title, String subtitle) = switch (state) {
+    final (Widget leading, String title) = switch (state) {
       _RestartState.idle => (
         Icon(Icons.restart_alt_rounded, size: 18, color: palette.accent),
         strings.restartServer,
-        strings.restartServerSubtitle,
       ),
-      _RestartState.reconnecting => (
+      _RestartState.restarting => (
         SizedBox(
           width: 18,
           height: 18,
@@ -628,16 +707,6 @@ class _RestartServerTile extends StatelessWidget {
           ),
         ),
         strings.reconnecting,
-        strings.restartServerSubtitle,
-      ),
-      _RestartState.reconnected => (
-        const Icon(
-          Icons.check_circle_rounded,
-          size: 18,
-          color: Color(0xFF22C55E),
-        ),
-        strings.reconnected,
-        strings.restartServerSubtitle,
       ),
     };
 
@@ -677,7 +746,7 @@ class _RestartServerTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      subtitle,
+                      strings.restartServerSubtitle,
                       style: TextStyle(fontSize: 12, color: palette.textMuted),
                     ),
                   ],

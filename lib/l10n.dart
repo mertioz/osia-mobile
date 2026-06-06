@@ -44,6 +44,7 @@ class OsiaStrings {
   final String tokenRequired;
   final String connectionFailed;
   final String invalidToken;
+  final String tokenHint;
 
   // ── Chat screen ──
   final String conversations;
@@ -96,6 +97,8 @@ class OsiaStrings {
   final String restartServerSubtitle;
   final String reconnecting;
   final String reconnected;
+  final String serverRestarted;
+  final String serverRestartFailed;
   final String disconnect;
   final String disconnectSubtitle;
   final String disconnectConfirmTitle;
@@ -248,6 +251,7 @@ class OsiaStrings {
     required this.tokenRequired,
     required this.connectionFailed,
     required this.invalidToken,
+    required this.tokenHint,
     required this.conversations,
     required this.newChat,
     required this.noConversationsYet,
@@ -294,6 +298,8 @@ class OsiaStrings {
     required this.restartServerSubtitle,
     required this.reconnecting,
     required this.reconnected,
+    required this.serverRestarted,
+    required this.serverRestartFailed,
     required this.disconnect,
     required this.disconnectSubtitle,
     required this.disconnectConfirmTitle,
@@ -479,6 +485,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   tokenRequired: 'Please enter your token.',
   connectionFailed: 'Connection failed. Check your token and try again.',
   invalidToken: 'Invalid token. Check it and try again.',
+  tokenHint: 'Your token is in the OSIA settings on your PC',
   conversations: 'Conversations',
   newChat: 'New chat',
   noConversationsYet: 'No conversations yet',
@@ -527,6 +534,8 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   restartServerSubtitle: 'Restart the OSIA server remotely.',
   reconnecting: 'Reconnecting…',
   reconnected: 'Reconnected',
+  serverRestarted: 'Server restarted',
+  serverRestartFailed: 'Could not restart the server. Try again.',
   disconnect: 'Disconnect',
   disconnectSubtitle: 'Clears your token and returns to the connection screen.',
   disconnectConfirmTitle: 'Disconnect?',
@@ -664,6 +673,7 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   tokenRequired: 'Veuillez entrer votre token.',
   connectionFailed: 'Échec de la connexion. Vérifiez votre token et réessayez.',
   invalidToken: 'Token invalide. Vérifiez-le et réessayez.',
+  tokenHint: 'Votre token se trouve dans les paramètres OSIA sur votre PC',
   conversations: 'Conversations',
   newChat: 'Nouveau chat',
   noConversationsYet: 'Aucune conversation pour le moment',
@@ -712,6 +722,8 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   restartServerSubtitle: 'Redémarre le serveur OSIA à distance.',
   reconnecting: 'Reconnexion…',
   reconnected: 'Reconnecté',
+  serverRestarted: 'Serveur redémarré',
+  serverRestartFailed: 'Échec du redémarrage du serveur. Réessayez.',
   disconnect: 'Se déconnecter',
   disconnectSubtitle: "Efface votre token et retourne à l'écran de connexion.",
   disconnectConfirmTitle: 'Se déconnecter ?',
@@ -851,6 +863,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   tokenRequired: '请输入您的令牌。',
   connectionFailed: '连接失败。请检查您的令牌后重试。',
   invalidToken: '令牌无效。请检查后重试。',
+  tokenHint: '您的令牌位于您电脑上的 OSIA 设置中',
   conversations: '对话',
   newChat: '新对话',
   noConversationsYet: '暂无对话',
@@ -897,6 +910,8 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   restartServerSubtitle: '远程重启 OSIA 服务器。',
   reconnecting: '重新连接中…',
   reconnected: '已重新连接',
+  serverRestarted: '服务器已重启',
+  serverRestartFailed: '服务器重启失败。请重试。',
   disconnect: '断开连接',
   disconnectSubtitle: '清除您的令牌并返回连接页面。',
   disconnectConfirmTitle: '断开连接？',
@@ -1031,6 +1046,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   tokenRequired: 'トークンを入力してください。',
   connectionFailed: '接続に失敗しました。トークンを確認してもう一度お試しください。',
   invalidToken: 'トークンが無効です。確認してもう一度お試しください。',
+  tokenHint: 'トークンは PC の OSIA 設定にあります',
   conversations: '会話',
   newChat: '新しいチャット',
   noConversationsYet: 'まだ会話がありません',
@@ -1077,6 +1093,8 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   restartServerSubtitle: 'OSIA サーバーをリモートで再起動します。',
   reconnecting: '再接続中…',
   reconnected: '再接続しました',
+  serverRestarted: 'サーバーを再起動しました',
+  serverRestartFailed: 'サーバーの再起動に失敗しました。もう一度お試しください。',
   disconnect: '切断',
   disconnectSubtitle: 'トークンを消去し、接続画面に戻ります。',
   disconnectConfirmTitle: '切断しますか？',
@@ -1213,6 +1231,7 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
       'Verbindung fehlgeschlagen. Überprüfen Sie Ihr Token und versuchen Sie es erneut.',
   invalidToken:
       'Ungültiges Token. Überprüfen Sie es und versuchen Sie es erneut.',
+  tokenHint: 'Ihr Token finden Sie in den OSIA-Einstellungen auf Ihrem PC',
   conversations: 'Unterhaltungen',
   newChat: 'Neuer Chat',
   noConversationsYet: 'Noch keine Unterhaltungen',
@@ -1262,6 +1281,9 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   restartServerSubtitle: 'Startet den OSIA-Server aus der Ferne neu.',
   reconnecting: 'Wiederverbinden…',
   reconnected: 'Wieder verbunden',
+  serverRestarted: 'Server neu gestartet',
+  serverRestartFailed:
+      'Neustart des Servers fehlgeschlagen. Bitte versuchen Sie es erneut.',
   disconnect: 'Trennen',
   disconnectSubtitle:
       'Löscht Ihr Token und kehrt zum Verbindungsbildschirm zurück.',
@@ -1402,6 +1424,7 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   connectionFailed:
       'Error de conexión. Comprueba tu token e inténtalo de nuevo.',
   invalidToken: 'Token no válido. Compruébalo e inténtalo de nuevo.',
+  tokenHint: 'Tu token está en los ajustes de OSIA en tu PC',
   conversations: 'Conversaciones',
   newChat: 'Nuevo chat',
   noConversationsYet: 'Aún no hay conversaciones',
@@ -1450,6 +1473,8 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   restartServerSubtitle: 'Reinicia el servidor OSIA de forma remota.',
   reconnecting: 'Reconectando…',
   reconnected: 'Reconectado',
+  serverRestarted: 'Servidor reiniciado',
+  serverRestartFailed: 'No se pudo reiniciar el servidor. Inténtalo de nuevo.',
   disconnect: 'Desconectar',
   disconnectSubtitle: 'Borra tu token y vuelve a la pantalla de conexión.',
   disconnectConfirmTitle: '¿Desconectar?',
