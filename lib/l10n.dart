@@ -125,6 +125,11 @@ class OsiaStrings {
   final String removeApiKey;
   final String apiKeyRemoved;
 
+  // ── Vision companion model (WOR-25) ──
+  final String visionAssociated;
+  final String visionProvider;
+  final String visionModel;
+
   // ── Common (config sections) ──
   final String add;
   final String edit;
@@ -307,6 +312,9 @@ class OsiaStrings {
     required this.apiKeyReplaceHint,
     required this.removeApiKey,
     required this.apiKeyRemoved,
+    required this.visionAssociated,
+    required this.visionProvider,
+    required this.visionModel,
     required this.add,
     required this.edit,
     required this.close,
@@ -532,6 +540,9 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   apiKeyReplaceHint: 'Enter a new key to replace it',
   removeApiKey: 'Remove key',
   apiKeyRemoved: 'API key removed',
+  visionAssociated: 'Paired vision model',
+  visionProvider: 'Vision provider',
+  visionModel: 'Vision model',
   add: 'Add',
   edit: 'Edit',
   close: 'Close',
@@ -709,6 +720,9 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   apiKeyReplaceHint: 'Saisissez une nouvelle clé pour la remplacer',
   removeApiKey: 'Supprimer la clé',
   apiKeyRemoved: 'Clé API supprimée',
+  visionAssociated: 'Modèle vision associé',
+  visionProvider: 'Fournisseur vision',
+  visionModel: 'Modèle vision',
   add: 'Ajouter',
   edit: 'Modifier',
   close: 'Fermer',
@@ -881,6 +895,9 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   apiKeyReplaceHint: '输入新密钥以替换',
   removeApiKey: '移除密钥',
   apiKeyRemoved: 'API 密钥已移除',
+  visionAssociated: '配套视觉模型',
+  visionProvider: '视觉提供商',
+  visionModel: '视觉模型',
   add: '添加',
   edit: '编辑',
   close: '关闭',
@@ -1052,6 +1069,9 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   apiKeyReplaceHint: '置き換えるには新しいキーを入力してください',
   removeApiKey: 'キーを削除',
   apiKeyRemoved: 'API キーを削除しました',
+  visionAssociated: '連携ビジョンモデル',
+  visionProvider: 'ビジョンプロバイダー',
+  visionModel: 'ビジョンモデル',
   add: '追加',
   edit: '編集',
   close: '閉じる',
@@ -1231,6 +1251,9 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   apiKeyReplaceHint: 'Neuen Schlüssel eingeben, um ihn zu ersetzen',
   removeApiKey: 'Schlüssel entfernen',
   apiKeyRemoved: 'API-Schlüssel entfernt',
+  visionAssociated: 'Verknüpftes Vision-Modell',
+  visionProvider: 'Vision-Anbieter',
+  visionModel: 'Vision-Modell',
   add: 'Hinzufügen',
   edit: 'Bearbeiten',
   close: 'Schließen',
@@ -1408,6 +1431,9 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   apiKeyReplaceHint: 'Introduce una nueva clave para reemplazarla',
   removeApiKey: 'Eliminar clave',
   apiKeyRemoved: 'Clave API eliminada',
+  visionAssociated: 'Modelo de visión asociado',
+  visionProvider: 'Proveedor de visión',
+  visionModel: 'Modelo de visión',
   add: 'Añadir',
   edit: 'Editar',
   close: 'Cerrar',

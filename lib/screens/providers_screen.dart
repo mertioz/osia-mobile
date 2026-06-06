@@ -40,6 +40,78 @@ const Map<String, String> _kProviderNames = {
   'ollama': 'Local (Ollama)',
 };
 
+// ── Vision capability (WOR-25) ──────────────────────────────────────────
+//
+// Mirrors of the PC's `osia.models` helpers so the mobile vision-companion UI
+// classifies models identically. Vision-capable: Anthropic Claude, Google
+// Gemini, xAI Grok and the OpenAI GPT-4o/4.1/5.x/o-series families. Text-only:
+// DeepSeek, Groq-hosted Llama/Qwen/Kimi/GPT-OSS, Mistral.
+
+/// Canonical provider display order for the vision-companion pickers (mirrors
+/// the AI-providers list / the PC's `_AI_PROVIDER_ORDER`).
+const List<String> _kVisionProviderOrder = [
+  'anthropic',
+  'openai',
+  'google',
+  'deepseek',
+  'xai',
+  'groq',
+  'ollama',
+];
+
+/// Whether `(provider, model)` can process images/screenshots — the heuristic
+/// half of the PC's `osia.models.model_has_vision`. The mobile only ever asks
+/// about models the server actually exposes, so the registry's exact-match
+/// pass isn't needed: the provider/name rules below decide every selector model
+/// identically (GPT-4o/Gemini/Claude/Grok → true; DeepSeek/Groq/Llama/Mistral →
+/// false).
+bool _modelHasVision(String provider, String model) {
+  if (model.isEmpty) return false;
+  final prov = provider.toLowerCase();
+  final lid = model.toLowerCase();
+  if (prov == 'anthropic' || prov == 'google' || prov == 'xai') return true;
+  if (lid.contains('claude') || lid.contains('gemini') || lid.contains('grok')) {
+    return true;
+  }
+  if (prov == 'openai') {
+    const tags = ['gpt-4o', 'gpt-4.1', 'gpt-5', 'gpt-4-turbo', 'o1', 'o3', 'o4'];
+    return tags.any((t) => lid.contains(t));
+  }
+  return false;
+}
+
+/// Provider id for a model, preferring an exact match in [models] (the server's
+/// `models_list`) and falling back to the same name heuristic as the PC's
+/// `osia.models.provider_for_model`. Used to resolve the selected main model's
+/// provider before the vision check.
+String _providerForModel(String modelId, List<ws.OsiaModel> models) {
+  for (final m in models) {
+    if (m.id == modelId) return m.provider ?? '';
+  }
+  final lower = modelId.toLowerCase();
+  if (lower.contains('claude')) return 'anthropic';
+  if (lower.startsWith('meta-llama/') ||
+      lower.startsWith('moonshotai/') ||
+      lower.startsWith('qwen/') ||
+      lower.startsWith('groq/') ||
+      lower.startsWith('playai/') ||
+      lower.contains('gpt-oss') ||
+      lower.contains('kimi') ||
+      lower.endsWith('-versatile') ||
+      lower.endsWith('-instant')) {
+    return 'groq';
+  }
+  if (lower.contains('gpt') ||
+      lower.startsWith('o1') ||
+      lower.startsWith('o3')) {
+    return 'openai';
+  }
+  if (lower.contains('deepseek')) return 'deepseek';
+  if (lower.contains('gemini')) return 'google';
+  if (lower.contains('grok')) return 'xai';
+  return 'ollama';
+}
+
 // ── Provider model ──────────────────────────────────────────────────────
 
 /// The four provider categories shown on the landing screen.
@@ -226,6 +298,21 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
     final strings = OsiaL10n.of(context);
     final config = _config;
 
+    // ── Vision companion (WOR-25) ──
+    // The selected main model, and whether it can already process images. When
+    // it can't, the vision-companion card is shown under the AI tile so the
+    // user can pair a vision-capable model. Companions are the vision-capable
+    // entries of the server's model list (`models_list` ships them regardless
+    // of which providers have a key, so the dropdown is populated even when only
+    // a text-only provider is configured).
+    final mainModel =
+        (config?.settings['selected_model'] ?? '').toString().trim();
+    final visionModels =
+        _models.where((m) => _modelHasVision(m.provider ?? '', m.id)).toList();
+    final showVisionCard = mainModel.isNotEmpty &&
+        !_modelHasVision(_providerForModel(mainModel, _models), mainModel) &&
+        visionModels.isNotEmpty;
+
     return Scaffold(
       backgroundColor: palette.background,
       appBar: AppBar(
@@ -294,6 +381,27 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
+                      // ── Vision companion (WOR-25) ──
+                      // Directly under the AI providers tile, and only when the
+                      // selected main model can't see images. Lets the user pair
+                      // a vision-capable provider + model (persisted via
+                      // set_setting vision_provider/vision_model) and set that
+                      // provider's key. Hidden entirely when the main model
+                      // already supports vision.
+                      if (category == ProviderCategory.ai && showVisionCard) ...[
+                        _VisionCompanionCard(
+                          wsService: widget.wsService,
+                          visionModels: visionModels,
+                          initialProvider:
+                              (config.settings['vision_provider'] ?? '')
+                                  .toString(),
+                          initialModel:
+                              (config.settings['vision_model'] ?? '').toString(),
+                          apiKeysSet: config.apiKeysSet,
+                          apiKeys: _apiKeys,
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                     ],
 
                     // ── Scheduled tasks (cron) ──
@@ -388,6 +496,396 @@ class _LoadingBody extends StatelessWidget {
             style: TextStyle(fontSize: 13.5, color: palette.textMuted),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Vision companion card (WOR-25) ──────────────────────────────────────
+
+/// Inline card shown under the AI providers tile when the selected main model
+/// can't process images. Mirrors the desktop's vision-companion row: pick a
+/// vision-capable provider + model (persisted via `set_setting`
+/// vision_provider / vision_model) and set that provider's API key — the same
+/// per-provider key store the main editors use, written with `set_api_key`.
+class _VisionCompanionCard extends StatefulWidget {
+  final ws.WebSocketService wsService;
+
+  /// Vision-capable companions, already filtered from the server's model list
+  /// via [_modelHasVision].
+  final List<ws.OsiaModel> visionModels;
+
+  /// Current `vision_provider` / `vision_model` from the config snapshot, used
+  /// to pre-select the dropdowns.
+  final String initialProvider;
+  final String initialModel;
+
+  /// `{provider: hasKey}` for the "configured" check and `{provider: key}` to
+  /// pre-fill the key field.
+  final Map<String, bool> apiKeysSet;
+  final Map<String, String> apiKeys;
+
+  const _VisionCompanionCard({
+    required this.wsService,
+    required this.visionModels,
+    required this.initialProvider,
+    required this.initialModel,
+    required this.apiKeysSet,
+    required this.apiKeys,
+  });
+
+  @override
+  State<_VisionCompanionCard> createState() => _VisionCompanionCardState();
+}
+
+class _VisionCompanionCardState extends State<_VisionCompanionCard> {
+  final TextEditingController _keyCtrl = TextEditingController();
+  late String _provider;
+  late String _model;
+  bool _obscured = true;
+  bool _hasText = false;
+  // The last value we wrote into the key field programmatically. Lets an
+  // incoming api_keys refresh re-prefill the field only while the user hasn't
+  // edited it (i.e. the current text still equals what we set).
+  String _prefilledKey = '';
+
+  /// Vision models grouped by provider.
+  Map<String, List<ws.OsiaModel>> get _byProvider {
+    final map = <String, List<ws.OsiaModel>>{};
+    for (final m in widget.visionModels) {
+      map.putIfAbsent(m.provider ?? '', () => <ws.OsiaModel>[]).add(m);
+    }
+    return map;
+  }
+
+  /// Providers with at least one vision model, in canonical order (any unknown
+  /// provider appended last, defensively).
+  List<String> get _providers {
+    final by = _byProvider;
+    final ordered = <String>[
+      for (final p in _kVisionProviderOrder)
+        if (by.containsKey(p)) p,
+    ];
+    for (final p in by.keys) {
+      if (!ordered.contains(p)) ordered.add(p);
+    }
+    return ordered;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final providers = _providers;
+    _provider = providers.contains(widget.initialProvider)
+        ? widget.initialProvider
+        : (providers.isNotEmpty ? providers.first : '');
+    _model = _resolveModel(_provider, widget.initialModel);
+    // Pre-fill the key BEFORE attaching the listener, so this initial set
+    // doesn't fire _onKeyChanged (which calls setState) during initState.
+    final key = widget.apiKeys[_provider] ?? '';
+    _keyCtrl.text = key;
+    _prefilledKey = key;
+    _hasText = key.trim().isNotEmpty;
+    _keyCtrl.addListener(_onKeyChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _VisionCompanionCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A fresh models_list can change the companion set — keep the selection
+    // valid so the dropdowns never hold an absent value.
+    if (!identical(oldWidget.visionModels, widget.visionModels)) {
+      final providers = _providers;
+      final p = providers.contains(_provider)
+          ? _provider
+          : (providers.isNotEmpty ? providers.first : '');
+      final m = _resolveModel(p, _model);
+      if (p != _provider || m != _model) {
+        setState(() {
+          _provider = p;
+          _model = m;
+        });
+      }
+    }
+    // Re-prefill the key once the real keys arrive (or after a save refreshes
+    // the snapshot), but never clobber an in-progress edit.
+    if (!identical(oldWidget.apiKeys, widget.apiKeys) &&
+        _keyCtrl.text == _prefilledKey) {
+      final key = widget.apiKeys[_provider] ?? '';
+      if (key != _keyCtrl.text) {
+        setState(() {
+          _keyCtrl.text = key;
+          _prefilledKey = key;
+          _hasText = key.trim().isNotEmpty;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _keyCtrl.removeListener(_onKeyChanged);
+    _keyCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onKeyChanged() {
+    final has = _keyCtrl.text.trim().isNotEmpty;
+    if (has != _hasText) setState(() => _hasText = has);
+  }
+
+  /// [preferred] if it belongs to [provider]'s vision models, else that
+  /// provider's first model (or '' when the provider has none).
+  String _resolveModel(String provider, String preferred) {
+    final models = _byProvider[provider] ?? const <ws.OsiaModel>[];
+    if (models.any((m) => m.id == preferred)) return preferred;
+    return models.isNotEmpty ? models.first.id : '';
+  }
+
+  void _onProviderChanged(String provider) {
+    final model = _resolveModel(provider, '');
+    final key = widget.apiKeys[provider] ?? '';
+    setState(() {
+      _provider = provider;
+      _model = model;
+      _keyCtrl.text = key;
+      _prefilledKey = key;
+      _hasText = key.trim().isNotEmpty;
+    });
+    // Mirror the desktop: switching provider resets the paired model to that
+    // provider's first vision model, and both are persisted.
+    widget.wsService.sendSetSetting('vision_provider', provider);
+    widget.wsService.sendSetSetting('vision_model', model);
+  }
+
+  void _onModelChanged(String model) {
+    setState(() => _model = model);
+    widget.wsService.sendSetSetting('vision_model', model);
+  }
+
+  void _saveKey() {
+    final key = _keyCtrl.text.trim();
+    if (_provider.isEmpty || key.isEmpty) return;
+    widget.wsService.sendSetApiKey(_provider, key);
+    // Refresh the snapshot so the "configured" check reflects the new key.
+    widget.wsService.sendGetConfig();
+    FocusScope.of(context).unfocus();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(OsiaL10n.of(context).apiKeySaved)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+
+    final providers = _providers;
+    final byProvider = _byProvider;
+    // Clamp the rendered values so DropdownButton always finds its value among
+    // the items (its "exactly one match" invariant).
+    final provider = providers.contains(_provider)
+        ? _provider
+        : (providers.isNotEmpty ? providers.first : '');
+    final models = byProvider[provider] ?? const <ws.OsiaModel>[];
+    final modelId = models.any((m) => m.id == _model)
+        ? _model
+        : (models.isNotEmpty ? models.first.id : '');
+    final keyConfigured = widget.apiKeysSet[provider] ?? false;
+
+    return _OsiaCard(
+      palette: palette,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Heading
+          Row(
+            children: [
+              Icon(Icons.visibility_rounded, size: 18, color: palette.accent),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  strings.visionAssociated,
+                  style: TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600,
+                    color: palette.textPrimary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Provider
+          _FieldLabel(strings.visionProvider, palette),
+          const SizedBox(height: 8),
+          _dropdown<String>(
+            palette: palette,
+            value: provider.isNotEmpty ? provider : null,
+            items: [
+              for (final p in providers)
+                DropdownMenuItem(
+                  value: p,
+                  child: Text(
+                    _kProviderNames[p] ?? p,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        TextStyle(fontSize: 14.5, color: palette.textPrimary),
+                  ),
+                ),
+            ],
+            onChanged: (v) {
+              if (v != null && v != _provider) _onProviderChanged(v);
+            },
+          ),
+          const SizedBox(height: 14),
+          // Model
+          _FieldLabel(strings.visionModel, palette),
+          const SizedBox(height: 8),
+          _dropdown<String>(
+            palette: palette,
+            value: modelId.isNotEmpty ? modelId : null,
+            items: [
+              for (final m in models)
+                DropdownMenuItem(
+                  value: m.id,
+                  child: Text(
+                    m.label,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        TextStyle(fontSize: 14.5, color: palette.textPrimary),
+                  ),
+                ),
+            ],
+            onChanged: (v) {
+              if (v != null && v != _model) _onModelChanged(v);
+            },
+          ),
+          const SizedBox(height: 14),
+          // API key for the chosen vision provider
+          _FieldLabel(strings.apiKey, palette),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _keyCtrl,
+                  obscureText: _obscured,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _hasText ? _saveKey() : null,
+                  cursorColor: palette.accent,
+                  style: TextStyle(color: palette.textPrimary, fontSize: 15),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: palette.surfaceElevated,
+                    hintText: keyConfigured
+                        ? strings.apiKeyReplaceHint
+                        : strings.apiKeyHint,
+                    hintStyle:
+                        TextStyle(color: palette.textMuted, fontSize: 14),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 14),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: palette.border),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: palette.border),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide(color: palette.accent, width: 1.4),
+                    ),
+                    suffixIcon: IconButton(
+                      tooltip:
+                          _obscured ? strings.showApiKey : strings.hideApiKey,
+                      onPressed: () => setState(() => _obscured = !_obscured),
+                      icon: Icon(
+                        _obscured
+                            ? Icons.visibility_rounded
+                            : Icons.visibility_off_rounded,
+                        size: 18,
+                        color: palette.textMuted,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _hasText ? _saveKey : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: palette.accent,
+                    foregroundColor:
+                        palette.isDark ? palette.background : Colors.white,
+                    disabledBackgroundColor:
+                        palette.accent.withValues(alpha: 0.4),
+                    disabledForegroundColor:
+                        (palette.isDark ? palette.background : Colors.white)
+                            .withValues(alpha: 0.7),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    textStyle: const TextStyle(
+                        fontSize: 14.5, fontWeight: FontWeight.w600),
+                  ),
+                  child: Text(strings.save),
+                ),
+              ),
+            ],
+          ),
+          // "Configured" check — the chosen provider already has a key on the PC.
+          if (keyConfigured) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(Icons.check_circle_rounded,
+                    size: 15, color: palette.accent),
+                const SizedBox(width: 8),
+                Text(
+                  strings.apiKeyConfigured,
+                  style: TextStyle(fontSize: 12.5, color: palette.textMuted),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Styled dropdown matching the screen's inset fields (elevated fill so it
+  /// reads against the card's surface).
+  Widget _dropdown<T>({
+    required OsiaPalette palette,
+    required T? value,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?> onChanged,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: palette.surfaceElevated,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: palette.border),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          value: value,
+          isExpanded: true,
+          dropdownColor: palette.surfaceElevated,
+          borderRadius: BorderRadius.circular(14),
+          icon: Icon(Icons.keyboard_arrow_down_rounded, color: palette.accent),
+          style: TextStyle(color: palette.textPrimary, fontSize: 14.5),
+          items: items,
+          onChanged: onChanged,
+        ),
       ),
     );
   }
