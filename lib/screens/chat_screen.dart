@@ -26,11 +26,18 @@ class ChatScreen extends StatefulWidget {
   final ThemeController themeController;
   final LanguageController languageController;
 
+  /// A live, already-authenticated connection handed over by the connection
+  /// screen on first launch. When present it is reused as-is instead of
+  /// opening a new socket (see [_ChatScreenState._initConnection]). Null on
+  /// app relaunch and Settings round-trips, which build a fresh connection.
+  final ChatHandoff? handoff;
+
   const ChatScreen({
     super.key,
     required this.storage,
     required this.themeController,
     required this.languageController,
+    this.handoff,
   });
 
   @override
@@ -53,6 +60,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _msgSub;
   StreamSubscription? _connSub;
   StreamSubscription? _errSub;
+  StreamSubscription? _newChatSub;
   String? _connError;
   bool _initialized = false;
 
@@ -94,19 +102,40 @@ class _ChatScreenState extends State<ChatScreen> {
   // resulting TTS audio plays even when auto-TTS is off. Reset on playback.
   bool _speakRequested = false;
 
+  // The handed-over connection, consumed on the first _initConnection only —
+  // Settings round-trips rebuild a fresh one.
+  ChatHandoff? _pendingHandoff;
+
   @override
   void initState() {
     super.initState();
+    _pendingHandoff = widget.handoff;
     _initConnection();
   }
 
   Future<void> _initConnection() async {
-    final ip = await widget.storage.getTailscaleIp();
-    final token = await widget.storage.getToken();
-    _selectedModel = await widget.storage.getSelectedModel();
-    // Re-read on every (re)connection so a toggle change in Settings is
-    // picked up when the chat screen rebuilds its connection.
-    _autoTts = await widget.storage.getAutoTts();
+    final handoff = _pendingHandoff;
+    _pendingHandoff = null;
+
+    // Read persisted prefs defensively. A keystore change (app reinstall /
+    // Android Keystore rotation) can leave secure-storage values
+    // undecryptable, throwing a PlatformException. StorageService already
+    // swallows those per key, but guard here too so a storage failure can
+    // never block connection/chat init — fall back to sensible defaults.
+    String? ip;
+    String? token;
+    try {
+      ip = await widget.storage.getTailscaleIp();
+      token = await widget.storage.getToken();
+      _selectedModel = await widget.storage.getSelectedModel();
+      // Re-read on every (re)connection so a toggle change in Settings is
+      // picked up when the chat screen rebuilds its connection.
+      _autoTts = await widget.storage.getAutoTts();
+    } catch (e) {
+      debugPrint(
+          '[OSIA Chat] storage read failed during init: $e — using defaults');
+      _autoTts = true;
+    }
 
     if (ip == null || token == null || ip.isEmpty || token.isEmpty) {
       if (mounted) {
@@ -115,7 +144,11 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    _wsService = ws.WebSocketService(ip: ip, token: token);
+    // Reuse the validated, still-open socket the connection screen handed
+    // over, rather than opening a second connection (the close+reopen race
+    // left the chat stuck "Connecting"). Falls back to a fresh service for
+    // app relaunch / Settings round-trips.
+    _wsService = handoff?.service ?? ws.WebSocketService(ip: ip, token: token);
 
     _connSub = _wsService.connectionStream.listen((state) {
       if (mounted) {
@@ -136,11 +169,39 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _msgSub = _wsService.messageStream.listen(_onMessage);
 
+    // WOR-10: the PC can push a "new_chat" signal on its own stream (kept off
+    // the sealed-message switch). Mirror it by resetting the chat locally.
+    _newChatSub = _wsService.newChatStream.listen((_) => _onNewChat());
+
     _errSub = _wsService.errorStream.listen((err) {
       if (mounted) setState(() => _connError = err);
     });
 
-    _wsService.connect();
+    final reusing =
+        handoff != null && _wsService.state == ws.ConnectionState.connected;
+    if (reusing) {
+      // The socket is already open and authenticated, so the 'connected'
+      // event (and the initial server frames) fired before we subscribed.
+      // Replay the buffered frames the connection screen captured, then run
+      // the post-connect side-effects the live listener would have run.
+      final buffered = List<ws.OsiaMessage>.of(handoff.bufferedMessages);
+      debugPrint('[OSIA Chat] Reusing live connection — replaying '
+          '${buffered.length} buffered frame(s).');
+      for (final msg in buffered) {
+        _onMessage(msg);
+      }
+      _connState = ws.ConnectionState.connected;
+      _connError = null;
+      _wsService.sendGetModels();
+      if (_selectedModel != null && _selectedModel!.isNotEmpty) {
+        _wsService.sendSetModel(_selectedModel!);
+      }
+    } else {
+      // Fresh connection (relaunch, Settings round-trip, or a handed-over
+      // socket that dropped during navigation).
+      _wsService.connect();
+    }
+
     setState(() => _initialized = true);
   }
 
@@ -312,6 +373,27 @@ class _ChatScreenState extends State<ChatScreen> {
       _activeConversationTitle = null;
     });
     Navigator.of(context).maybePop();
+  }
+
+  /// Handle a `new_chat` push from the PC (WOR-10): reset the chat UI to a
+  /// fresh conversation locally. Unlike [_newConversation], it does NOT echo a
+  /// `new_conversation` back to the server (the PC already started the chat, so
+  /// echoing risks a loop) and doesn't touch navigation. Mirrors the local
+  /// clearing those methods perform.
+  void _onNewChat() {
+    if (!mounted) return;
+    setState(() {
+      // If a response was in flight, drop everything it sends after the reset
+      // (same guard as [_loadConversation] / [_newConversation]).
+      if (_awaitingResponse) {
+        _discardCurrentResponse = true;
+      }
+      _entries.clear();
+      _thinking = false;
+      _streamingIndex = null;
+      _activeConversationId = null;
+      _activeConversationTitle = null;
+    });
   }
 
   Future<void> _deleteConversation(ws.Conversation conv) async {
@@ -680,6 +762,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _msgSub?.cancel();
     _connSub?.cancel();
     _errSub?.cancel();
+    _newChatSub?.cancel();
     _wsService.dispose();
     setState(() {
       _initialized = false;
@@ -710,6 +793,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _msgSub?.cancel();
     _connSub?.cancel();
     _errSub?.cancel();
+    _newChatSub?.cancel();
     _wsService.dispose();
     _audioService.dispose();
     _textCtrl.dispose();
@@ -1166,4 +1250,18 @@ class _ChatEntry {
       isSystem: isSystem,
     );
   }
+}
+
+/// Carries a live, already-authenticated [ws.WebSocketService] from the
+/// connection screen to the chat screen, together with the server frames the
+/// connection screen buffered during token validation (the initial
+/// conversations / active conversation / history / models burst). Reusing the
+/// validated socket — instead of closing it and opening a new one — avoids the
+/// race that previously left the chat screen stuck "Connecting"; replaying the
+/// buffered frames means the chat screen doesn't miss the data it subscribed
+/// too late to receive live.
+class ChatHandoff {
+  final ws.WebSocketService service;
+  final List<ws.OsiaMessage> bufferedMessages;
+  const ChatHandoff({required this.service, required this.bufferedMessages});
 }

@@ -384,6 +384,20 @@ class HeartbeatDataMessage {
   }
 }
 
+/// A "start a new chat" signal pushed by the PC as `{"type":"new_chat"}`
+/// (WOR-10). Like [ConfigData], [ApiKeysMessage] and [HeartbeatDataMessage],
+/// this is deliberately NOT part of the sealed [OsiaMessage] hierarchy:
+/// chat_screen.dart switches over OsiaMessage exhaustively with no `default`,
+/// so adding a sealed subtype would break its compile (and CLAUDE.md forbids
+/// touching that path). It rides its own [WebSocketService.newChatStream]
+/// instead, exactly like config/api_keys/heartbeat.
+///
+/// The frame carries no payload today; the class exists so the stream has a
+/// typed event.
+class NewChatMessage {
+  const NewChatMessage();
+}
+
 // ── WebSocket service ─────────────────────────────────────────────────────
 
 /// Manages the WebSocket connection to the OSIA PC server.
@@ -438,6 +452,9 @@ class WebSocketService {
   final StreamController<HeartbeatDataMessage> _heartbeatCtrl =
       StreamController<HeartbeatDataMessage>.broadcast();
 
+  final StreamController<NewChatMessage> _newChatCtrl =
+      StreamController<NewChatMessage>.broadcast();
+
   /// Stream of connection state changes.
   Stream<ConnectionState> get connectionStream => _connectionCtrl.stream;
 
@@ -458,6 +475,10 @@ class WebSocketService {
   /// Stream of live system-metrics pushes (`heartbeat_data`). Kept off
   /// [messageStream] for the same reason as [configStream].
   Stream<HeartbeatDataMessage> get heartbeatStream => _heartbeatCtrl.stream;
+
+  /// Stream of "new chat" signals (`new_chat`, WOR-10). Kept off
+  /// [messageStream] for the same reason as [configStream].
+  Stream<NewChatMessage> get newChatStream => _newChatCtrl.stream;
 
   /// Current connection state.
   ConnectionState _state = ConnectionState.disconnected;
@@ -529,6 +550,11 @@ class WebSocketService {
   /// Ask the server to start a new conversation.
   void sendNewConversation() {
     _send({'type': 'new_conversation'});
+  }
+
+  /// Send the WOR-10 "new chat" signal (`{"type":"new_chat"}`) to the server.
+  void sendNewChat() {
+    _send({'type': 'new_chat'});
   }
 
   /// Ask the server to delete a conversation.
@@ -641,6 +667,7 @@ class WebSocketService {
     _configCtrl.close();
     _apiKeysCtrl.close();
     _heartbeatCtrl.close();
+    _newChatCtrl.close();
   }
 
   /// Strip any scheme, path, or port the user may have pasted into the
@@ -878,6 +905,14 @@ class WebSocketService {
           // Live system metrics. Own [heartbeatStream], same rationale.
           final hb = HeartbeatDataMessage.fromJson(json);
           if (!_heartbeatCtrl.isClosed) _heartbeatCtrl.add(hb);
+        case 'new_chat':
+          // "Start a new chat" signal (WOR-10). Delivered on its own
+          // [newChatStream] (NOT the paced message queue) so it can't disturb
+          // response-chunk streaming.
+          debugPrint('[OSIA WS] new_chat received');
+          if (!_newChatCtrl.isClosed) {
+            _newChatCtrl.add(const NewChatMessage());
+          }
         default:
           debugPrint(
               '[OSIA WS] unhandled message type="$type" keys=${json.keys.toList()}');
