@@ -632,6 +632,13 @@ class WebSocketService {
     _send({'type': 'set_api_key', 'provider': provider, 'key': key});
   }
 
+  /// Remove a provider's API key entirely from the PC's key store
+  /// (`config/api_keys.json`) — the dedicated delete path, distinct from
+  /// `sendSetApiKey(provider, '')`.
+  void sendDeleteApiKey(String provider) {
+    _send({'type': 'delete_api_key', 'provider': provider});
+  }
+
   /// Set a single whitelisted settings.json key/value pair on the PC
   /// (e.g. `liveapi_enabled`). [value] may be a bool, string, number, or a
   /// JSON-serializable list/map (e.g. `cron_jobs`, `heavy_chain`).

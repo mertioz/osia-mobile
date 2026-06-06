@@ -1040,10 +1040,15 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
   bool _obscured = true;
   // Drives the Save button's enabled state — only a non-empty key saves.
   bool _hasText = false;
+  // Local mirror of widget.keyConfigured so the "configured" badge can flip to
+  // unconfigured immediately after a delete (optimistic), before the next
+  // config snapshot lands.
+  late bool _configured;
 
   @override
   void initState() {
     super.initState();
+    _configured = widget.keyConfigured;
     // Pre-fill with the real key when the PC sent one. It stays masked until
     // the user taps the eye toggle; _hasText keeps the Save button enabled.
     final initial = widget.initialKey ?? '';
@@ -1103,17 +1108,48 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
     Navigator.of(context).pop();
   }
 
-  void _remove() {
+  Future<void> _remove() async {
     final provider = widget.entry.apiProvider;
     if (provider == null) return;
-    // An empty key clears the stored key on the PC.
-    widget.wsService.sendSetApiKey(provider, '');
-    widget.wsService.sendGetConfig();
     final strings = OsiaL10n.of(context);
+    final palette = OsiaTheme.of(context);
+    // Confirm before deleting — the key is wiped from the PC entirely.
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(strings.removeApiKey),
+        content: Text(
+          widget.entry.name,
+          style: TextStyle(color: palette.textMuted, fontSize: 13.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child:
+                Text(strings.cancel, style: TextStyle(color: palette.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(strings.delete, style: TextStyle(color: palette.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    // Dedicated delete path — removes the key entirely on the PC (not the
+    // set_api_key empty-string path).
+    widget.wsService.sendDeleteApiKey(provider);
+    // Refresh the snapshot so the landing's badges reflect the removal.
+    widget.wsService.sendGetConfig();
+    // Optimistic UI: clear the field and flip the "configured" badge now,
+    // staying on screen so the change is visible immediately.
+    setState(() {
+      _keyCtrl.clear();
+      _configured = false;
+    });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(strings.apiKeyRemoved)),
     );
-    Navigator.of(context).pop();
   }
 
   @override
@@ -1167,7 +1203,7 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // "Configured" banner — the PC has a key set for this provider.
-        if (widget.keyConfigured) ...[
+        if (_configured) ...[
           _OsiaCard(
             palette: palette,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1208,7 +1244,7 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
           decoration: InputDecoration(
             filled: true,
             fillColor: palette.surface,
-            hintText: widget.keyConfigured
+            hintText: _configured
                 ? strings.apiKeyReplaceHint
                 : strings.apiKeyHint,
             hintStyle: TextStyle(color: palette.textMuted, fontSize: 14.5),
@@ -1295,7 +1331,7 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
           ),
         ),
         // "Remove key" — only when a key is currently stored on the PC.
-        if (widget.keyConfigured) ...[
+        if (_configured) ...[
           const SizedBox(height: 8),
           TextButton.icon(
             onPressed: _remove,
