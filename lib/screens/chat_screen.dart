@@ -54,6 +54,12 @@ class _ChatScreenState extends State<ChatScreen> {
   // State
   final TextEditingController _textCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
+  // The floating input bar is drawn in a Stack on top of the message list, so
+  // the list reserves bottom padding equal to the bar's measured height to keep
+  // the last message from hiding behind it. Remeasured each frame because the
+  // bar grows with the attachment chip and multi-line text.
+  final GlobalKey _inputBarKey = GlobalKey();
+  double _inputBarHeight = 0;
   final List<_ChatEntry> _entries = [];
   bool _thinking = false;
   ws.ConnectionState _connState = ws.ConnectionState.disconnected;
@@ -472,6 +478,20 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  /// Measure the floating input bar so the message list can reserve exactly
+  /// enough bottom padding to keep the last message clear of it. Called after
+  /// every frame; only rebuilds when the height actually changes, so it
+  /// converges instead of looping.
+  void _measureInputBar() {
+    if (!mounted) return;
+    final box = _inputBarKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final h = box.size.height;
+    if ((h - _inputBarHeight).abs() > 0.5) {
+      setState(() => _inputBarHeight = h);
+    }
+  }
+
   bool get _canSend =>
       _textCtrl.text.trim().isNotEmpty || _pendingFileBytes != null;
 
@@ -815,6 +835,17 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
+    // Reserve space at the bottom of the message list for the floating input
+    // bar so the last message is never hidden behind it. `padding.bottom`
+    // matches the bar's own bottom offset so the reservation tracks the
+    // safe-area inset and the keyboard; `_inputBarHeight` is the bar's measured
+    // height (falls back to an approximate single-line height until the first
+    // measurement lands), plus a small gap above the bar.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measureInputBar());
+    final double bottomSafe = MediaQuery.of(context).padding.bottom;
+    final double inputBarReserve = _inputBarHeight > 0 ? _inputBarHeight : 112;
+    final double listBottomPadding = bottomSafe + 10 + inputBarReserve + 16;
+
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: palette.background,
@@ -865,7 +896,16 @@ class _ChatScreenState extends State<ChatScreen> {
                     ? _buildEmptyState(palette, strings)
                     : ListView.builder(
                         controller: _scrollCtrl,
-                        padding: const EdgeInsets.fromLTRB(0, 12, 0, 120),
+                        // Rubber-band overscroll on both iOS and Android;
+                        // AlwaysScrollable so even a short history can bounce.
+                        physics: const BouncingScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
+                        ),
+                        // Dynamic bottom inset so the last message clears the
+                        // floating input bar (which grows with attachments /
+                        // multi-line text) on every device.
+                        padding:
+                            EdgeInsets.fromLTRB(0, 12, 0, listBottomPadding),
                         itemCount:
                             _entries.length + (_thinking ? 1 : 0),
                         itemBuilder: (context, index) {
@@ -913,6 +953,7 @@ class _ChatScreenState extends State<ChatScreen> {
             right: 12,
             bottom: MediaQuery.of(context).padding.bottom + 10,
             child: GlassInputBar(
+              key: _inputBarKey,
               textController: _textCtrl,
               isRecording: _audioService.isRecording,
               hasText: _canSend,
