@@ -67,6 +67,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _connSub;
   StreamSubscription? _errSub;
   StreamSubscription? _newChatSub;
+  StreamSubscription? _configSub;
   String? _connError;
   bool _initialized = false;
 
@@ -79,6 +80,10 @@ class _ChatScreenState extends State<ChatScreen> {
   // Models
   List<ws.OsiaModel> _models = [];
   String? _selectedModel;
+  // Whether the PC's AI hierarchy is enabled. When true, the model selector
+  // sheet notes that the chosen model is overridden by the configured chain.
+  // Tracked via [configStream]; requested on connect.
+  bool _aiHierarchyEnabled = false;
   // Active notifier for the open model-selector sheet, if any. Lets the
   // chat screen push state updates (models arriving, load timing out) into
   // a sheet that's already on screen.
@@ -164,6 +169,8 @@ class _ChatScreenState extends State<ChatScreen> {
             _connError = null;
             // Ask for available models once the socket is up.
             _wsService.sendGetModels();
+            // Pull config too, so we know whether the AI hierarchy is on.
+            _wsService.sendGetConfig();
             // Replay our remembered selection so the server is in sync.
             if (_selectedModel != null && _selectedModel!.isNotEmpty) {
               _wsService.sendSetModel(_selectedModel!);
@@ -174,6 +181,15 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     _msgSub = _wsService.messageStream.listen(_onMessage);
+
+    // AI-hierarchy state arrives on its own config channel (kept off the
+    // sealed-message switch). Track it so the model selector can note when
+    // the chosen model is overridden by the configured chain.
+    _configSub = _wsService.configStream.listen((cfg) {
+      if (mounted) {
+        setState(() => _aiHierarchyEnabled = cfg.aiHierarchyEnabled);
+      }
+    });
 
     // WOR-10: the PC can push a "new_chat" signal on its own stream (kept off
     // the sealed-message switch). Mirror it by resetting the chat locally.
@@ -199,6 +215,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _connState = ws.ConnectionState.connected;
       _connError = null;
       _wsService.sendGetModels();
+      _wsService.sendGetConfig();
       if (_selectedModel != null && _selectedModel!.isNotEmpty) {
         _wsService.sendSetModel(_selectedModel!);
       }
@@ -750,6 +767,7 @@ class _ChatScreenState extends State<ChatScreen> {
         context: context,
         stateListenable: notifier,
         currentModel: _selectedModel,
+        hierarchyActive: _aiHierarchyEnabled,
       );
       if (chosen != null && chosen != _selectedModel) {
         setState(() => _selectedModel = chosen);
@@ -783,6 +801,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _connSub?.cancel();
     _errSub?.cancel();
     _newChatSub?.cancel();
+    _configSub?.cancel();
     _wsService.dispose();
     setState(() {
       _initialized = false;
@@ -814,6 +833,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _connSub?.cancel();
     _errSub?.cancel();
     _newChatSub?.cancel();
+    _configSub?.cancel();
     _wsService.dispose();
     _audioService.dispose();
     _textCtrl.dispose();

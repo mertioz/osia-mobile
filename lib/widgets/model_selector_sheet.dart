@@ -27,6 +27,7 @@ Future<String?> showModelSelector({
   required BuildContext context,
   required ValueListenable<ModelSelectorState> stateListenable,
   required String? currentModel,
+  required bool hierarchyActive,
 }) {
   return showModalBottomSheet<String>(
     context: context,
@@ -50,6 +51,7 @@ Future<String?> showModelSelector({
             currentModel: currentModel,
             isLoading: state.isLoading,
             errorMessage: state.errorMessage,
+            hierarchyActive: hierarchyActive,
           ),
         ),
       );
@@ -63,11 +65,16 @@ class _ModelSelectorSheet extends StatelessWidget {
   final bool isLoading;
   final String? errorMessage;
 
+  /// When true, the PC's AI hierarchy is on, so the chosen model is overridden
+  /// by the configured chain — the sheet shows an explanatory note.
+  final bool hierarchyActive;
+
   const _ModelSelectorSheet({
     required this.models,
     required this.currentModel,
     required this.isLoading,
     this.errorMessage,
+    required this.hierarchyActive,
   });
 
   @override
@@ -112,6 +119,21 @@ class _ModelSelectorSheet extends StatelessWidget {
                 ],
               ),
             ),
+            // When the AI hierarchy is active, the picked model is overridden
+            // by the configured chain — note it under the title.
+            if (hierarchyActive)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+                child: Text(
+                  strings.hierarchyActive,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: palette.accent,
+                  ),
+                ),
+              ),
             Flexible(
               // Smooth the height change + cross-fade when the body flips
               // from spinner to model list (or to an error message).

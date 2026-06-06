@@ -168,6 +168,7 @@ class OsiaStrings {
   final String hierarchyTitle;
   final String hierarchySubtitle;
   final String hierarchyEnable;
+  final String hierarchyActive;
   final String hierarchyHeavy;
   final String hierarchyHeavySub;
   final String hierarchyMedium;
@@ -339,6 +340,7 @@ class OsiaStrings {
     required this.hierarchyTitle,
     required this.hierarchySubtitle,
     required this.hierarchyEnable,
+    required this.hierarchyActive,
     required this.hierarchyHeavy,
     required this.hierarchyHeavySub,
     required this.hierarchyMedium,
@@ -562,6 +564,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   hierarchySubtitle:
       'Order the models OSIA tries for each task type. The first reachable one is used. When off, your selected model is always used.',
   hierarchyEnable: 'Enable hierarchy',
+  hierarchyActive: 'AI hierarchy active',
   hierarchyHeavy: 'Heavy tasks',
   hierarchyHeavySub: 'Code, debugging, complex reasoning, deep research.',
   hierarchyMedium: 'Medium tasks',
@@ -735,6 +738,7 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   hierarchySubtitle:
       "Ordonnez les modèles qu'OSIA essaie pour chaque type de tâche. Le premier disponible est utilisé. Si désactivé, votre modèle sélectionné est toujours utilisé.",
   hierarchyEnable: 'Activer la hiérarchie',
+  hierarchyActive: 'Hiérarchie IA active',
   hierarchyHeavy: 'Tâches lourdes',
   hierarchyHeavySub: 'Code, débogage, raisonnement complexe, recherche approfondie.',
   hierarchyMedium: 'Tâches moyennes',
@@ -902,6 +906,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   hierarchySubtitle:
       '为每种任务类型排列 OSIA 尝试的模型顺序。使用第一个可用的模型。关闭时，始终使用您选择的模型。',
   hierarchyEnable: '启用层级',
+  hierarchyActive: 'AI层级已启用',
   hierarchyHeavy: '重型任务',
   hierarchyHeavySub: '代码、调试、复杂推理、深度研究。',
   hierarchyMedium: '中型任务',
@@ -1069,6 +1074,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   hierarchySubtitle:
       'タスクの種類ごとに OSIA が試すモデルの順序を決めます。最初に利用可能なものが使われます。オフのときは選択中のモデルが常に使われます。',
   hierarchyEnable: '階層を有効化',
+  hierarchyActive: 'AIヒエラルキー有効',
   hierarchyHeavy: '重いタスク',
   hierarchyHeavySub: 'コード、デバッグ、複雑な推論、深いリサーチ。',
   hierarchyMedium: '中程度のタスク',
@@ -1245,6 +1251,7 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   hierarchySubtitle:
       'Ordnen Sie die Modelle, die OSIA je Aufgabentyp versucht. Das erste erreichbare wird verwendet. Wenn aus, wird immer Ihr gewähltes Modell genutzt.',
   hierarchyEnable: 'Hierarchie aktivieren',
+  hierarchyActive: 'KI-Hierarchie aktiv',
   hierarchyHeavy: 'Schwere Aufgaben',
   hierarchyHeavySub: 'Code, Debugging, komplexes Denken, tiefe Recherche.',
   hierarchyMedium: 'Mittlere Aufgaben',
@@ -1418,6 +1425,7 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   hierarchySubtitle:
       'Ordena los modelos que OSIA prueba para cada tipo de tarea. Se usa el primero disponible. Si está desactivada, siempre se usa tu modelo seleccionado.',
   hierarchyEnable: 'Activar jerarquía',
+  hierarchyActive: 'Jerarquía IA activa',
   hierarchyHeavy: 'Tareas pesadas',
   hierarchyHeavySub: 'Código, depuración, razonamiento complejo, investigación profunda.',
   hierarchyMedium: 'Tareas medianas',
