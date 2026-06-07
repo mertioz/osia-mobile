@@ -2717,9 +2717,20 @@ class _HierarchyScreenState extends State<_HierarchyScreen> {
           provider == 'ollama' || (_apiKeysSet[provider] ?? false);
       if (!configured) continue;
       final pname = _kProviderNames[provider] ?? provider;
-      out.add(_ModelChoice('$provider:${m.id}', '$pname · ${m.label}'));
+      out.add(_ModelChoice(
+        value: '$provider:${m.id}',
+        providerName: pname,
+        modelLabel: m.label,
+      ));
     }
-    out.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+    // Cluster by provider (so the grouped picker's section headers come out in
+    // a stable order) then by model name within each provider.
+    out.sort((a, b) {
+      final byProvider =
+          a.providerName.toLowerCase().compareTo(b.providerName.toLowerCase());
+      if (byProvider != 0) return byProvider;
+      return a.modelLabel.toLowerCase().compareTo(b.modelLabel.toLowerCase());
+    });
     return out;
   }
 
@@ -2895,11 +2906,19 @@ class _HierarchyScreenState extends State<_HierarchyScreen> {
   }
 }
 
-/// One selectable `(value, label)` model entry for the hierarchy dropdowns.
+/// One selectable model entry for the hierarchy picker. Carries the stored
+/// `"provider:model"` [value] plus the two pieces the grouped picker renders
+/// separately: the provider's display [providerName] (its section header) and
+/// the bare [modelLabel] (shown in full, never truncated, under that header).
 class _ModelChoice {
   final String value; // "provider:model"
-  final String label; // "Provider · Model"
-  const _ModelChoice(this.value, this.label);
+  final String providerName; // "Groq" / "Local (Ollama)" — section header
+  final String modelLabel; // "Llama 3.3 70B Versatile" — shown complete
+  const _ModelChoice({
+    required this.value,
+    required this.providerName,
+    required this.modelLabel,
+  });
 }
 
 class _HierarchyRow extends StatelessWidget {
@@ -2930,44 +2949,45 @@ class _HierarchyRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Keep the current value selectable even if its provider is no longer
-    // configured, so the chain isn't silently dropped on open.
-    final items = <DropdownMenuItem<String>>[];
-    final hasCurrent = choices.any((c) => c.value == value);
-    if (!hasCurrent && value.isNotEmpty) {
-      items.add(DropdownMenuItem(
-        value: value,
-        child: Text(displayLabel,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 13.5, color: palette.textPrimary)),
-      ));
-    }
-    for (final c in choices) {
-      items.add(DropdownMenuItem(
-        value: c.value,
-        child: Text(c.label,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 13.5, color: palette.textPrimary)),
-      ));
-    }
     return _OsiaCard(
       palette: palette,
       padding: const EdgeInsets.fromLTRB(12, 2, 4, 2),
       child: Row(
         children: [
           Expanded(
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: value.isNotEmpty ? value : null,
-                isExpanded: true,
-                dropdownColor: palette.surfaceElevated,
-                borderRadius: BorderRadius.circular(14),
-                icon: Icon(Icons.keyboard_arrow_down_rounded,
-                    color: palette.accent, size: 20),
-                items: items,
-                onChanged: (v) {
-                  if (v != null) onChanged(v);
-                },
+            // Tapping the current selection opens the grouped model picker
+            // (provider section headers + full model names). The closed-state
+            // display stays compact and may ellipsize — the picker shows every
+            // name in full.
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: choices.isEmpty
+                  ? null
+                  : () async {
+                      final picked = await _showHierarchyModelPicker(
+                        context: context,
+                        choices: choices,
+                        currentValue: value,
+                      );
+                      if (picked != null && picked != value) onChanged(picked);
+                    },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        displayLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 13.5, color: palette.textPrimary),
+                      ),
+                    ),
+                    Icon(Icons.keyboard_arrow_down_rounded,
+                        color: palette.accent, size: 20),
+                  ],
+                ),
               ),
             ),
           ),
@@ -2991,6 +3011,252 @@ class _HierarchyRow extends StatelessWidget {
             danger: true,
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Grouped model picker (shared by both hierarchy chains) ───────────────
+
+/// Modal bottom-sheet model picker for the AI-hierarchy chains. Mirrors the
+/// chat's model selector (lib/widgets/model_selector_sheet.dart): a violet
+/// provider section header over that provider's models, each shown with its
+/// COMPLETE name (wrapping rather than truncating) so long ids like
+/// "Llama 3.3 70B Versatile" stay distinguishable — replacing the old flat,
+/// provider-mixing dropdown. Returns the chosen "provider:model" value, or
+/// null on dismiss.
+Future<String?> _showHierarchyModelPicker({
+  required BuildContext context,
+  required List<_ModelChoice> choices,
+  required String currentValue,
+}) {
+  return showModalBottomSheet<String>(
+    context: context,
+    backgroundColor: Colors.transparent,
+    isScrollControlled: true,
+    builder: (ctx) {
+      // Ride the modal's slide-up with a fade, matching the chat sheet.
+      final routeAnim =
+          ModalRoute.of(ctx)?.animation ?? kAlwaysCompleteAnimation;
+      return FadeTransition(
+        opacity: CurvedAnimation(
+          parent: routeAnim,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        ),
+        child: _HierarchyModelPickerSheet(
+          choices: choices,
+          currentValue: currentValue,
+        ),
+      );
+    },
+  );
+}
+
+class _HierarchyModelPickerSheet extends StatelessWidget {
+  final List<_ModelChoice> choices;
+  final String currentValue;
+  const _HierarchyModelPickerSheet({
+    required this.choices,
+    required this.currentValue,
+  });
+
+  /// Flatten the choices into section-header + model rows, one group per
+  /// provider (groups already clustered by the caller's sort).
+  List<_PickerEntry> _entries() {
+    final groups = <String, List<_ModelChoice>>{};
+    for (final c in choices) {
+      groups.putIfAbsent(c.providerName, () => <_ModelChoice>[]).add(c);
+    }
+    return [
+      for (final group in groups.entries) ...[
+        _PickerEntry.section(group.key),
+        for (final c in group.value) _PickerEntry.item(c),
+      ],
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final entries = _entries();
+    return SafeArea(
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+        // Cap the height so a long grouped list scrolls inside the sheet.
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+        ),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: palette.border, width: 0.5),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 38,
+              height: 4,
+              decoration: BoxDecoration(
+                color: palette.border,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.account_tree_rounded,
+                      color: palette.accent, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    strings.availableModels,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: palette.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
+                itemCount: entries.length,
+                separatorBuilder: (context, _) => const SizedBox(height: 2),
+                itemBuilder: (context, index) {
+                  final entry = entries[index];
+                  if (entry.providerName != null) {
+                    return _PickerProviderHeader(
+                        name: entry.providerName!, palette: palette);
+                  }
+                  final c = entry.choice!;
+                  return _PickerModelTile(
+                    label: c.modelLabel,
+                    isActive: c.value == currentValue,
+                    palette: palette,
+                    onTap: () => Navigator.of(context).pop(c.value),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A row in the picker: a provider section header ([providerName] set) or a
+/// selectable model ([choice] set).
+class _PickerEntry {
+  final String? providerName;
+  final _ModelChoice? choice;
+  const _PickerEntry.section(this.providerName) : choice = null;
+  const _PickerEntry.item(this.choice) : providerName = null;
+}
+
+/// Provider section header — small uppercase violet (#c4b5f5 accent) label
+/// between two faint accent lines. Non-selectable; titles the picker's groups.
+class _PickerProviderHeader extends StatelessWidget {
+  final String name;
+  final OsiaPalette palette;
+  const _PickerProviderHeader({required this.name, required this.palette});
+
+  @override
+  Widget build(BuildContext context) {
+    final line = Container(
+      height: 1,
+      color: palette.accent.withValues(alpha: 0.18),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 14, 8, 6),
+      child: Row(
+        children: [
+          Expanded(child: line),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              name.toUpperCase(),
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 1.2,
+                color: palette.accent,
+              ),
+            ),
+          ),
+          Expanded(child: line),
+        ],
+      ),
+    );
+  }
+}
+
+/// One selectable model in the picker. Shows the model's COMPLETE name —
+/// wrapping to a second line instead of truncating — so long names stay
+/// readable. The active entry is accent-tinted with a trailing check.
+class _PickerModelTile extends StatelessWidget {
+  final String label;
+  final bool isActive;
+  final OsiaPalette palette;
+  final VoidCallback onTap;
+  const _PickerModelTile({
+    required this.label,
+    required this.isActive,
+    required this.palette,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: isActive
+                ? palette.accent.withValues(alpha: 0.10)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isActive
+                  ? palette.accent.withValues(alpha: 0.4)
+                  : Colors.transparent,
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.3,
+                    fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                    color: isActive ? palette.accent : palette.textPrimary,
+                  ),
+                ),
+              ),
+              if (isActive) ...[
+                const SizedBox(width: 10),
+                Icon(Icons.check_rounded, color: palette.accent, size: 18),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
