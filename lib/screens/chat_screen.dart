@@ -116,6 +116,22 @@ class _ChatScreenState extends State<ChatScreen> {
   // dropped until the matching status=done/error arrives.
   bool _discardCurrentResponse = false;
 
+  // ── Optimistic thinking + first-token watchdog ──────────────────────────
+  // Standalone UI state (deliberately NOT a sealed [ws.OsiaMessage] subtype):
+  // the thinking indicator is shown locally the instant the user taps send —
+  // before any network round-trip — to mask first-token latency. A 12s timer
+  // armed at send is cancelled the moment the FIRST response_chunk (time to
+  // first token) lands; if it elapses with no token, [_noResponse] flips and
+  // an inline "no response" + Réessayer tile replaces the thinking dots.
+  static const Duration _firstTokenTimeout = Duration(seconds: 12);
+  Timer? _firstTokenTimer;
+  // True once the watchdog fired with no first token — drives the retry tile.
+  // Mutually exclusive with [_thinking] (arming the error clears thinking).
+  bool _noResponse = false;
+  // The last text turn we sent, captured so "Réessayer" re-sends it verbatim
+  // (file + prompt) without the user retyping. Cleared on switch/new/reset.
+  _PendingTurn? _pendingTurn;
+
   // Auto-TTS preference (Settings → Voice). When false, audio frames that
   // arrive with a response are not played automatically.
   bool _autoTts = true;
@@ -258,8 +274,12 @@ class _ChatScreenState extends State<ChatScreen> {
       case ws.ResponseChunkMessage(:final content):
         if (content.isEmpty) break;
         if (_discardCurrentResponse) break;
+        // First token for this turn — stand down the no-response watchdog and
+        // transition the thinking dots seamlessly into the streaming bubble.
+        _cancelFirstTokenTimer();
         setState(() {
           _thinking = false;
+          _noResponse = false;
           final idx = _streamingIndex;
           if (idx == null) {
             _entries.add(_ChatEntry(
@@ -282,8 +302,12 @@ class _ChatScreenState extends State<ChatScreen> {
         _scrollToBottomAnimated();
       case ws.ResponseMessage(:final content):
         if (_discardCurrentResponse) break;
+        // A full reply (even with no preceding chunks) means the turn produced
+        // a response — never let the watchdog fire after this.
+        _cancelFirstTokenTimer();
         setState(() {
           _thinking = false;
+          _noResponse = false;
           final idx = _streamingIndex;
           if (idx != null) {
             // Final assembled reply — keep `isStreaming` true until
@@ -317,9 +341,15 @@ class _ChatScreenState extends State<ChatScreen> {
       case ws.StatusMessage(:final content):
         if (content == 'thinking') {
           if (_discardCurrentResponse) break;
-          setState(() => _thinking = true);
+          // Server confirms it's working — clear any stale no-response tile.
+          setState(() {
+            _thinking = true;
+            _noResponse = false;
+          });
           _scrollToBottomAnimated();
         } else if (content == 'done' || content == 'error') {
+          // The turn ended — the watchdog has nothing left to guard.
+          _cancelFirstTokenTimer();
           final wasDiscarding = _discardCurrentResponse;
           setState(() {
             _awaitingResponse = false;
@@ -346,6 +376,10 @@ class _ChatScreenState extends State<ChatScreen> {
         // The content we were waiting on has arrived — stand down the retry.
         _convLoadRetry?.cancel();
         _pendingConvLoadId = null;
+        // The view is being reset to this conversation's persisted state (also
+        // reached via the reconnect re-request), so a first-token watchdog for
+        // a possibly-lost in-flight turn must not linger.
+        _cancelFirstTokenTimer();
         setState(() {
           _entries
             ..clear()
@@ -354,6 +388,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   isUser: m.role == 'user',
                 )));
           _thinking = false;
+          _noResponse = false;
           _streamingIndex = null;
           if (id != null && id.isNotEmpty) _activeConversationId = id;
         });
@@ -390,6 +425,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _loadConversation(ws.Conversation conv) {
     _requestConversationContent(conv.id);
+    // The pending turn (and its watchdog) belonged to the conversation we're
+    // leaving — drop them so a late timeout can't fire on the new chat.
+    _cancelFirstTokenTimer();
+    _pendingTurn = null;
     setState(() {
       // If a response was in flight, drop everything it sends after the
       // switch so chunks meant for the old conversation never land on
@@ -399,6 +438,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       _entries.clear();
       _thinking = false;
+      _noResponse = false;
       _streamingIndex = null;
       _activeConversationId = conv.id;
       _activeConversationTitle = conv.title;
@@ -445,12 +485,15 @@ class _ChatScreenState extends State<ChatScreen> {
   void _newConversation() {
     _wsService.sendNewConversation();
     _cancelPendingConvLoad();
+    _cancelFirstTokenTimer();
+    _pendingTurn = null;
     setState(() {
       if (_awaitingResponse) {
         _discardCurrentResponse = true;
       }
       _entries.clear();
       _thinking = false;
+      _noResponse = false;
       _streamingIndex = null;
       _activeConversationId = null;
       _activeConversationTitle = null;
@@ -466,6 +509,8 @@ class _ChatScreenState extends State<ChatScreen> {
   void _onNewChat() {
     if (!mounted) return;
     _cancelPendingConvLoad();
+    _cancelFirstTokenTimer();
+    _pendingTurn = null;
     setState(() {
       // If a response was in flight, drop everything it sends after the reset
       // (same guard as [_loadConversation] / [_newConversation]).
@@ -474,6 +519,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       _entries.clear();
       _thinking = false;
+      _noResponse = false;
       _streamingIndex = null;
       _activeConversationId = null;
       _activeConversationTitle = null;
@@ -509,11 +555,20 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _wsService.sendDeleteConversation(conv.id);
     if (_pendingConvLoadId == conv.id) _cancelPendingConvLoad();
+    final deletingActive = _activeConversationId == conv.id;
+    if (deletingActive) {
+      // The emptied chat must not keep a watchdog or a retry payload for a
+      // turn that belonged to the now-deleted conversation.
+      _cancelFirstTokenTimer();
+      _pendingTurn = null;
+    }
     setState(() {
       _conversations =
           _conversations.where((c) => c.id != conv.id).toList();
-      if (_activeConversationId == conv.id) {
+      if (deletingActive) {
         _entries.clear();
+        _thinking = false;
+        _noResponse = false;
         _activeConversationId = null;
         _activeConversationTitle = null;
       }
@@ -588,6 +643,14 @@ class _ChatScreenState extends State<ChatScreen> {
         _entries[idx].content.isNotEmpty;
   }
 
+  /// Whether the standalone pre-stream [ThinkingIndicator] occupies the
+  /// trailing list slot: thinking, but not yet streaming (a mid-stream pause
+  /// is shown inline on the bubble via [_MiniThinkingDots] instead). When this
+  /// is false and [_noResponse] is true, that slot holds the retry tile
+  /// instead — the two are mutually exclusive (arming the error clears
+  /// [_thinking]).
+  bool get _showThinkingTrailer => _thinking && !_isThinkingMidStream;
+
   void _sendText() {
     final text = _textCtrl.text.trim();
     final filename = _pendingFilename;
@@ -613,6 +676,15 @@ class _ChatScreenState extends State<ChatScreen> {
             : strings.hereIsFile(filename ?? ''));
     _wsService.sendText(prompt);
 
+    // Remember this exact turn so a no-response timeout can re-send it verbatim
+    // without the user retyping (see [_retryLastTurn]).
+    _pendingTurn = _PendingTurn(
+      prompt: prompt,
+      filename: hasFile ? filename : null,
+      fileBytes: hasFile ? bytes : null,
+      isImage: isImage,
+    );
+
     _textCtrl.clear();
     setState(() {
       _pendingFilename = null;
@@ -620,10 +692,82 @@ class _ChatScreenState extends State<ChatScreen> {
       _pendingIsImage = false;
       _awaitingResponse = true;
       _discardCurrentResponse = false;
+      // Optimistic, local thinking indicator — shown immediately, before the
+      // first token, to mask network + agent-construction latency.
+      _thinking = true;
+      _noResponse = false;
     });
+    // Arm the 12s first-token watchdog (cancelled on the first chunk).
+    _armFirstTokenTimer();
     // A new turn supersedes any stale read-aloud request — never let an
     // old speak tap unlock this turn's response audio.
     _speakRequested = false;
+  }
+
+  /// Arm (or re-arm) the first-token watchdog. Fires [_onFirstTokenTimeout]
+  /// after [_firstTokenTimeout] unless cancelled by the first response_chunk.
+  void _armFirstTokenTimer() {
+    _firstTokenTimer?.cancel();
+    _firstTokenTimer = Timer(_firstTokenTimeout, _onFirstTokenTimeout);
+  }
+
+  /// Cancel the first-token watchdog. Idempotent — safe to call when no timer
+  /// is armed. Invoked on the first token, on conversation switch / new chat,
+  /// on history reload, and on dispose so a late timeout can never fire on a
+  /// chat the turn no longer belongs to.
+  void _cancelFirstTokenTimer() {
+    _firstTokenTimer?.cancel();
+    _firstTokenTimer = null;
+  }
+
+  /// The watchdog elapsed without a first token. Replace the thinking dots
+  /// with the inline "no response" + Réessayer tile — but only if the turn is
+  /// still genuinely waiting on its first token over a healthy socket. A
+  /// dropped connection is left to the connection banner (don't show a
+  /// misleading "no response" error when it's actually a disconnect).
+  void _onFirstTokenTimeout() {
+    _firstTokenTimer = null;
+    if (!mounted) return;
+    // Resolved already: turn done, streaming started, or the user moved off it.
+    if (!_awaitingResponse) return;
+    if (_streamingIndex != null) return;
+    if (_discardCurrentResponse) return;
+    // Connection-state handling takes precedence over the no-response error.
+    if (_wsService.state != ws.ConnectionState.connected) {
+      setState(() => _thinking = false);
+      return;
+    }
+    setState(() {
+      _thinking = false;
+      _noResponse = true;
+    });
+    _scrollToBottomAnimated();
+  }
+
+  /// Re-send the last turn verbatim after a no-response timeout (the
+  /// "Réessayer" button). The user's original message bubble stays — we only
+  /// replay the wire payload (file first, then prompt), then re-show thinking
+  /// and re-arm the watchdog. Mirrors [_sendText]'s send sequence.
+  void _retryLastTurn() {
+    final turn = _pendingTurn;
+    if (turn == null) return;
+    if (turn.hasFile) {
+      _wsService.sendFile(
+        turn.filename!,
+        base64Encode(turn.fileBytes!),
+        isImage: turn.isImage,
+      );
+    }
+    _wsService.sendText(turn.prompt);
+    setState(() {
+      _awaitingResponse = true;
+      _discardCurrentResponse = false;
+      _thinking = true;
+      _noResponse = false;
+    });
+    _speakRequested = false;
+    _armFirstTokenTimer();
+    _scrollToBottomAnimated();
   }
 
   void _clearPendingFile() {
@@ -879,11 +1023,14 @@ class _ChatScreenState extends State<ChatScreen> {
     _newChatSub?.cancel();
     _configSub?.cancel();
     _cancelPendingConvLoad();
+    _cancelFirstTokenTimer();
+    _pendingTurn = null;
     _wsService.dispose();
     setState(() {
       _initialized = false;
       _entries.clear();
       _thinking = false;
+      _noResponse = false;
       _connError = null;
       _conversations = [];
       _activeConversationId = null;
@@ -906,6 +1053,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _modelLoadTimeout?.cancel();
     _convLoadRetry?.cancel();
+    _firstTokenTimer?.cancel();
     _modelSelectorNotifier?.dispose();
     _msgSub?.cancel();
     _connSub?.cancel();
@@ -990,7 +1138,7 @@ class _ChatScreenState extends State<ChatScreen> {
           Column(
             children: [
               Expanded(
-                child: _entries.isEmpty && !_thinking
+                child: _entries.isEmpty && !_thinking && !_noResponse
                     ? _buildEmptyState(palette, strings)
                     : ListView.builder(
                         controller: _scrollCtrl,
@@ -1005,17 +1153,20 @@ class _ChatScreenState extends State<ChatScreen> {
                         padding:
                             EdgeInsets.fromLTRB(0, 12, 0, listBottomPadding),
                         itemCount: _entries.length +
-                            (_thinking && !_isThinkingMidStream ? 1 : 0),
+                            ((_showThinkingTrailer || _noResponse) ? 1 : 0),
                         itemBuilder: (context, index) {
-                          // The full thinking indicator is the trailing item
-                          // only before streaming starts. Once a streaming
-                          // bubble exists, a mid-stream pause is shown inline
-                          // via [_MiniThinkingDots] on that bubble instead, so
-                          // we skip the standalone one to avoid showing two.
-                          if (_thinking &&
-                              !_isThinkingMidStream &&
-                              index == _entries.length) {
-                            return const ThinkingIndicator();
+                          // Trailing slot: the pre-stream thinking indicator,
+                          // or — after a 12s no-first-token timeout — the
+                          // inline "no response" + Réessayer tile. The two are
+                          // mutually exclusive (arming the error clears
+                          // _thinking). Once a streaming bubble exists, a
+                          // mid-stream pause is shown inline via
+                          // [_MiniThinkingDots] on that bubble instead, so the
+                          // standalone indicator is skipped to avoid two.
+                          if (index == _entries.length) {
+                            return _showThinkingTrailer
+                                ? const ThinkingIndicator()
+                                : _buildNoResponseTile(palette, strings);
                           }
                           final entry = _entries[index];
                           final isAssistant =
@@ -1119,6 +1270,65 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Inline thread tile shown in the trailing slot when a sent turn produced
+  /// no first token within [_firstTokenTimeout]. Replaces the thinking dots
+  /// and offers a "Réessayer" button that re-sends the same message via
+  /// [_retryLastTurn] (the user's original bubble stays). Styled to match the
+  /// connection error banner's error palette.
+  Widget _buildNoResponseTile(OsiaPalette palette, OsiaStrings strings) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: palette.error.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: palette.error.withValues(alpha: 0.25),
+              width: 0.5,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.error_outline_rounded,
+                  color: palette.error, size: 18),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  strings.noResponseError,
+                  style: TextStyle(
+                    color: palette.error,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              TextButton(
+                onPressed: _retryLastTurn,
+                style: TextButton.styleFrom(
+                  foregroundColor: palette.error,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(
+                  strings.retry,
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1403,6 +1613,25 @@ class _ChatEntry {
       isSystem: isSystem,
     );
   }
+}
+
+/// The exact wire payload of the last text turn, captured at send so the
+/// no-response "Réessayer" button can re-send it verbatim — file (if any) plus
+/// prompt — without the user retyping. See [_ChatScreenState._retryLastTurn].
+class _PendingTurn {
+  final String prompt;
+  final String? filename;
+  final Uint8List? fileBytes;
+  final bool isImage;
+
+  const _PendingTurn({
+    required this.prompt,
+    this.filename,
+    this.fileBytes,
+    this.isImage = false,
+  });
+
+  bool get hasFile => filename != null && fileBytes != null;
 }
 
 /// Carries a live, already-authenticated [ws.WebSocketService] from the

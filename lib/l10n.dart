@@ -73,6 +73,7 @@ class OsiaStrings {
   final String hereIsFileTemplate; // {name}
   final String model;
   final String settingsTooltip;
+  final String noResponseError;
 
   // ── Model selector ──
   final String availableModels;
@@ -278,6 +279,7 @@ class OsiaStrings {
     required this.hereIsFileTemplate,
     required this.model,
     required this.settingsTooltip,
+    required this.noResponseError,
     required this.availableModels,
     required this.noModelsReceived,
     required this.modelsLoadFailed,
@@ -513,6 +515,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   hereIsFileTemplate: 'Here is the file {name}.',
   model: 'Model',
   settingsTooltip: 'Settings',
+  noResponseError: "OSIA didn't respond.",
   availableModels: 'Available models',
   noModelsReceived: 'No models received from the server.',
   modelsLoadFailed: 'Unable to load models',
@@ -701,6 +704,7 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   hereIsFileTemplate: 'Voici le fichier {name}.',
   model: 'Modèle',
   settingsTooltip: 'Paramètres',
+  noResponseError: "OSIA n'a pas répondu.",
   availableModels: 'Modèles disponibles',
   noModelsReceived: 'Aucun modèle reçu du serveur.',
   modelsLoadFailed: 'Impossible de charger les modèles',
@@ -890,6 +894,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   hereIsFileTemplate: '这是文件 {name}。',
   model: '模型',
   settingsTooltip: '设置',
+  noResponseError: 'OSIA 没有回应。',
   availableModels: '可用模型',
   noModelsReceived: '未从服务器收到任何模型。',
   modelsLoadFailed: '无法加载模型',
@@ -1073,6 +1078,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   hereIsFileTemplate: 'ファイル {name} です。',
   model: 'モデル',
   settingsTooltip: '設定',
+  noResponseError: 'OSIA から応答がありませんでした。',
   availableModels: '利用可能なモデル',
   noModelsReceived: 'サーバーからモデルを受信していません。',
   modelsLoadFailed: 'モデルを読み込めません',
@@ -1260,6 +1266,7 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   hereIsFileTemplate: 'Hier ist die Datei {name}.',
   model: 'Modell',
   settingsTooltip: 'Einstellungen',
+  noResponseError: 'OSIA hat nicht geantwortet.',
   availableModels: 'Verfügbare Modelle',
   noModelsReceived: 'Keine Modelle vom Server erhalten.',
   modelsLoadFailed: 'Modelle können nicht geladen werden',
@@ -1452,6 +1459,7 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   hereIsFileTemplate: 'Aquí está el archivo {name}.',
   model: 'Modelo',
   settingsTooltip: 'Ajustes',
+  noResponseError: 'OSIA no respondió.',
   availableModels: 'Modelos disponibles',
   noModelsReceived: 'No se recibieron modelos del servidor.',
   modelsLoadFailed: 'No se pueden cargar los modelos',
