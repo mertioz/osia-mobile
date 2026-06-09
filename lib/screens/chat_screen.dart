@@ -75,6 +75,16 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ws.Conversation> _conversations = [];
   String? _activeConversationId;
   String? _activeConversationTitle;
+  // The conversation whose history we've asked the server for and are still
+  // waiting on (`load_conversation` sent, `conversation_history` not yet
+  // received). Cleared when the history lands. Drives the load retry below and
+  // the re-request after a (re)connect so an in-session switch reliably shows
+  // its content without an app restart.
+  String? _pendingConvLoadId;
+  // Short safety-net timer: if a requested conversation's history never lands
+  // (a dropped frame, or the request going out across a momentary socket blip)
+  // we re-ask once instead of leaving the chat stuck empty.
+  Timer? _convLoadRetry;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   // Models
@@ -174,6 +184,16 @@ class _ChatScreenState extends State<ChatScreen> {
             // Replay our remembered selection so the server is in sync.
             if (_selectedModel != null && _selectedModel!.isNotEmpty) {
               _wsService.sendSetModel(_selectedModel!);
+            }
+            // Re-fetch the open conversation's messages on every (re)connect.
+            // The post-auth burst only carries the conversation LIST (never a
+            // conversation's messages), and the server resets its
+            // per-connection active conversation on each auth — so without this
+            // a reopened socket would leave the chat showing an empty
+            // conversation. Mirrors the models/config re-requests just above.
+            final openConv = _pendingConvLoadId ?? _activeConversationId;
+            if (openConv != null && openConv.isNotEmpty) {
+              _requestConversationContent(openConv);
             }
           }
         });
@@ -323,6 +343,9 @@ class _ChatScreenState extends State<ChatScreen> {
           _activeConversationTitle = title;
         });
       case ws.ConversationHistoryMessage(:final id, :final messages):
+        // The content we were waiting on has arrived — stand down the retry.
+        _convLoadRetry?.cancel();
+        _pendingConvLoadId = null;
         setState(() {
           _entries
             ..clear()
@@ -366,7 +389,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _loadConversation(ws.Conversation conv) {
-    _wsService.sendLoadConversation(conv.id);
+    _requestConversationContent(conv.id);
     setState(() {
       // If a response was in flight, drop everything it sends after the
       // switch so chunks meant for the old conversation never land on
@@ -383,8 +406,45 @@ class _ChatScreenState extends State<ChatScreen> {
     Navigator.of(context).maybePop();
   }
 
+  /// Ask the server for conversation [id]'s messages and remember it as the
+  /// in-flight load. The reply ([ws.ConversationHistoryMessage]) clears the
+  /// marker and the retry. Conversation content is ONLY ever delivered by this
+  /// `load_conversation` → `conversation_history` round-trip — the post-auth
+  /// burst carries just the conversation list — so if that single reply is lost
+  /// (a dropped frame, or the request crossing a momentary socket blip) the
+  /// chat would sit empty until an app restart. The retry re-asks once, and a
+  /// (re)connect re-asks too (see the connection listener), so the switch shows
+  /// its content reliably.
+  void _requestConversationContent(String id) {
+    if (id.isEmpty) return;
+    _pendingConvLoadId = id;
+    _wsService.sendLoadConversation(id);
+    _convLoadRetry?.cancel();
+    _convLoadRetry = Timer(const Duration(milliseconds: 1500), () {
+      if (!mounted) return;
+      // Only re-ask if we're still waiting on THIS conversation and the socket
+      // is up (a down socket is handled by the re-request on reconnect).
+      if (_pendingConvLoadId != id) return;
+      if (_wsService.state != ws.ConnectionState.connected) return;
+      debugPrint(
+          '[OSIA Chat] no conversation_history for $id after 1.5s — re-requesting');
+      _wsService.sendLoadConversation(id);
+    });
+  }
+
+  /// Forget any in-flight conversation load (and its retry). Called whenever we
+  /// move OFF a conversation we were loading — a new chat, or deleting the one
+  /// being loaded — so a late retry can't repopulate the chat with stale
+  /// history after the user navigated away.
+  void _cancelPendingConvLoad() {
+    _convLoadRetry?.cancel();
+    _convLoadRetry = null;
+    _pendingConvLoadId = null;
+  }
+
   void _newConversation() {
     _wsService.sendNewConversation();
+    _cancelPendingConvLoad();
     setState(() {
       if (_awaitingResponse) {
         _discardCurrentResponse = true;
@@ -405,6 +465,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// clearing those methods perform.
   void _onNewChat() {
     if (!mounted) return;
+    _cancelPendingConvLoad();
     setState(() {
       // If a response was in flight, drop everything it sends after the reset
       // (same guard as [_loadConversation] / [_newConversation]).
@@ -447,6 +508,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (confirmed != true) return;
 
     _wsService.sendDeleteConversation(conv.id);
+    if (_pendingConvLoadId == conv.id) _cancelPendingConvLoad();
     setState(() {
       _conversations =
           _conversations.where((c) => c.id != conv.id).toList();
@@ -816,6 +878,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _errSub?.cancel();
     _newChatSub?.cancel();
     _configSub?.cancel();
+    _cancelPendingConvLoad();
     _wsService.dispose();
     setState(() {
       _initialized = false;
@@ -842,6 +905,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _modelLoadTimeout?.cancel();
+    _convLoadRetry?.cancel();
     _modelSelectorNotifier?.dispose();
     _msgSub?.cancel();
     _connSub?.cancel();
