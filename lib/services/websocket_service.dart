@@ -833,6 +833,16 @@ class WebSocketService {
       // to flip state, or the badge stays on "Connexion…" forever.
       _channel = IOWebSocketChannel(socket);
       _setState(ConnectionState.connected);
+      // The socket is open and healthy: kill any reconnect timer left pending
+      // from an earlier failed attempt. Otherwise that stale timer fires while
+      // we're already connected and calls _doConnect() directly (it bypasses
+      // connect()'s connecting/connected guard), opening a *duplicate* socket.
+      // The orphaned socket's onDone then looks like a drop and schedules yet
+      // another reconnect — the open→close→reconnect loop seen after the WOR-47
+      // server change, even though every auth succeeds. Cancelling here keeps
+      // the connection stable indefinitely once it's up.
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
       _reconnectAttempt = 0;
       debugPrint('[OSIA WS] Socket open, sending auth (token length ${token.length})');
 
@@ -1054,7 +1064,11 @@ class WebSocketService {
         '[OSIA WS] Reconnecting in ${delayMs}ms (attempt $_reconnectAttempt)...');
 
     _reconnectTimer = Timer(Duration(milliseconds: delayMs), () {
-      if (!_intentionalClose) {
+      // Only reconnect if we're still actually down. A connection may have come
+      // back up via connect() (e.g. the user's "Retry") between this timer being
+      // scheduled and firing; reconnecting then would open a duplicate socket
+      // and restart the open→close loop.
+      if (!_intentionalClose && _state == ConnectionState.disconnected) {
         _doConnect();
       }
     });
