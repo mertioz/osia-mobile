@@ -116,13 +116,20 @@ class _ChatScreenState extends State<ChatScreen> {
   // dropped until the matching status=done/error arrives.
   bool _discardCurrentResponse = false;
 
-  // ── Optimistic thinking + first-token watchdog ──────────────────────────
+  // ── Optimistic thinking + no-response watchdog ──────────────────────────
   // Standalone UI state (deliberately NOT a sealed [ws.OsiaMessage] subtype):
   // the thinking indicator is shown locally the instant the user taps send —
   // before any network round-trip — to mask first-token latency. A 12s timer
-  // armed at send is cancelled the moment the FIRST response_chunk (time to
-  // first token) lands; if it elapses with no token, [_noResponse] flips and
-  // an inline "no response" + Réessayer tile replaces the thinking dots.
+  // armed at send is cancelled at the FIRST SIGN OF LIFE from the server for
+  // this turn — any turn-progress frame: a status (thinking / tool-status)
+  // update, an audio frame, the voice transcript, or the first response_chunk
+  // / full response, whichever lands first. It therefore only elapses on TOTAL
+  // silence (server down, lost connection, request never received). On a long
+  // multi-step task the server keeps emitting status/tool/audio frames well
+  // before the final reply's first token, so the watchdog stands down and the
+  // false error never shows. If it does elapse with no frame at all,
+  // [_noResponse] flips and an inline "no response" + Réessayer tile replaces
+  // the thinking dots.
   static const Duration _firstTokenTimeout = Duration(seconds: 12);
   Timer? _firstTokenTimer;
   // True once the watchdog fired with no first token — drives the retry tile.
@@ -267,6 +274,9 @@ class _ChatScreenState extends State<ChatScreen> {
   void _onMessage(ws.OsiaMessage msg) {
     switch (msg) {
       case ws.TranscriptMessage(:final content):
+        // The STT transcript of the user's voice turn — proof the server
+        // received the request and is working. Stand the watchdog down.
+        _cancelFirstTokenTimer();
         if (content.isNotEmpty) {
           _addEntry(_ChatEntry(
               content: content, isUser: true, isTranscript: true));
@@ -334,22 +344,24 @@ class _ChatScreenState extends State<ChatScreen> {
         // Response audio (auto-TTS path): gated by the toggle and the
         // conversation-switch discard flag.
         if (_discardCurrentResponse) break;
+        // The server is actively producing this turn's reply as audio — a
+        // sign of life that stands the no-response watchdog down even when the
+        // first text token is still pending (and whether or not auto-TTS plays
+        // it below).
+        _cancelFirstTokenTimer();
         debugPrint('[OSIA Chat] audio: autoTts=$_autoTts → '
             '${_autoTts ? "playing audio" : "dropped (auto-TTS off)"}');
         if (!_autoTts) break;
         _audioService.playMp3(data);
       case ws.StatusMessage(:final content):
-        if (content == 'thinking') {
-          if (_discardCurrentResponse) break;
-          // Server confirms it's working — clear any stale no-response tile.
-          setState(() {
-            _thinking = true;
-            _noResponse = false;
-          });
-          _scrollToBottomAnimated();
-        } else if (content == 'done' || content == 'error') {
+        // ANY status frame — "thinking", a tool-execution/status update, or the
+        // terminal "done"/"error" — proves the server is alive and working on
+        // this turn, so it stands the no-response watchdog down. On a long
+        // multi-step task these arrive well before the final reply's first
+        // token; without this the 12s timer would trip a false error mid-task.
+        _cancelFirstTokenTimer();
+        if (content == 'done' || content == 'error') {
           // The turn ended — the watchdog has nothing left to guard.
-          _cancelFirstTokenTimer();
           final wasDiscarding = _discardCurrentResponse;
           setState(() {
             _awaitingResponse = false;
@@ -364,6 +376,14 @@ class _ChatScreenState extends State<ChatScreen> {
               }
             }
           });
+        } else if (content == 'thinking') {
+          if (_discardCurrentResponse) break;
+          // Server confirms it's working — clear any stale no-response tile.
+          setState(() {
+            _thinking = true;
+            _noResponse = false;
+          });
+          _scrollToBottomAnimated();
         }
       case ws.ConversationsMessage(:final conversations):
         setState(() => _conversations = conversations);
@@ -697,34 +717,42 @@ class _ChatScreenState extends State<ChatScreen> {
       _thinking = true;
       _noResponse = false;
     });
-    // Arm the 12s first-token watchdog (cancelled on the first chunk).
+    // Arm the 12s no-response watchdog (cancelled at the first sign of life
+    // from the server for this turn — see [_onMessage]).
     _armFirstTokenTimer();
     // A new turn supersedes any stale read-aloud request — never let an
     // old speak tap unlock this turn's response audio.
     _speakRequested = false;
   }
 
-  /// Arm (or re-arm) the first-token watchdog. Fires [_onFirstTokenTimeout]
-  /// after [_firstTokenTimeout] unless cancelled by the first response_chunk.
+  /// Arm (or re-arm) the no-response watchdog. Fires [_onFirstTokenTimeout]
+  /// after [_firstTokenTimeout] unless cancelled by the first sign of life
+  /// from the server for this turn (any turn-progress frame: a status
+  /// thinking / tool-status update, an audio frame, the voice transcript, or
+  /// the first response_chunk / full response — see [_onMessage]).
   void _armFirstTokenTimer() {
     _firstTokenTimer?.cancel();
     _firstTokenTimer = Timer(_firstTokenTimeout, _onFirstTokenTimeout);
   }
 
-  /// Cancel the first-token watchdog. Idempotent — safe to call when no timer
-  /// is armed. Invoked on the first token, on conversation switch / new chat,
-  /// on history reload, and on dispose so a late timeout can never fire on a
-  /// chat the turn no longer belongs to.
+  /// Cancel the no-response watchdog. Idempotent — safe to call when no timer
+  /// is armed. Invoked at the first sign of life from the server for the turn
+  /// (any turn-progress frame: status thinking / tool-status, audio, voice
+  /// transcript, response chunk / full response), on conversation switch / new
+  /// chat, on history reload, and on dispose so a late timeout can never fire
+  /// on a chat the turn no longer belongs to.
   void _cancelFirstTokenTimer() {
     _firstTokenTimer?.cancel();
     _firstTokenTimer = null;
   }
 
-  /// The watchdog elapsed without a first token. Replace the thinking dots
-  /// with the inline "no response" + Réessayer tile — but only if the turn is
-  /// still genuinely waiting on its first token over a healthy socket. A
-  /// dropped connection is left to the connection banner (don't show a
-  /// misleading "no response" error when it's actually a disconnect).
+  /// The watchdog elapsed with TOTAL silence from the server — not a single
+  /// turn-progress frame (status / tool-status / audio / transcript / response)
+  /// arrived in [_firstTokenTimeout]. Replace the thinking dots with the inline
+  /// "no response" + Réessayer tile — but only if the turn is still genuinely
+  /// waiting over a healthy socket. A dropped connection is left to the
+  /// connection banner (don't show a misleading "no response" error when it's
+  /// actually a disconnect).
   void _onFirstTokenTimeout() {
     _firstTokenTimer = null;
     if (!mounted) return;
