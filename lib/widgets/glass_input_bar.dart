@@ -9,20 +9,6 @@ import '../theme.dart';
 const Duration _kBarAnimDuration = Duration(milliseconds: 250);
 const Curve _kBarAnimCurve = Curves.easeOutCubic;
 
-/// Button-specific motion. Kept separate from the bar's layout animations so
-/// the mic/send toggles can feel snappier without altering the text-field /
-/// chip / model-pill size transitions.
-///
-/// State change (mic ↔ stop, send active/idle): short + eased so the toggle
-/// reads as immediate.
-const Duration _kButtonStateDuration = Duration(milliseconds: 180);
-
-/// Press feedback: a quick scale-down on touch with a subtle pop on release.
-/// Transform-only (no layout/paint cost beyond the transform), so it stays
-/// smooth every frame and feels instant (<100ms perceived).
-const Duration _kPressDuration = Duration(milliseconds: 120);
-const double _kPressedScale = 0.90;
-
 /// Floating glassmorphism input bar pinned to the bottom of the chat.
 ///
 /// Two-row layout, like a modern AI chat app:
@@ -346,48 +332,6 @@ class _GlassIconButton extends StatelessWidget {
   }
 }
 
-/// Gives a button immediate tactile feedback: a quick scale-down on press and
-/// a subtle pop on release (via [Curves.easeOutBack]). A passive [Listener]
-/// drives the press state, so it never enters the gesture arena — the wrapped
-/// [InkWell] still fires onTap and shows its ripple. Pure Transform.scale, so
-/// there is no layout cost.
-class _PressableScale extends StatefulWidget {
-  final Widget child;
-
-  /// When false, presses produce no scale (used for the idle send button).
-  final bool enabled;
-
-  const _PressableScale({required this.child, this.enabled = true});
-
-  @override
-  State<_PressableScale> createState() => _PressableScaleState();
-}
-
-class _PressableScaleState extends State<_PressableScale> {
-  bool _pressed = false;
-
-  void _setPressed(bool value) {
-    if (_pressed != value) setState(() => _pressed = value);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final pressed = _pressed && widget.enabled;
-    return Listener(
-      behavior: HitTestBehavior.deferToChild,
-      onPointerDown: widget.enabled ? (_) => _setPressed(true) : null,
-      onPointerUp: (_) => _setPressed(false),
-      onPointerCancel: (_) => _setPressed(false),
-      child: AnimatedScale(
-        scale: pressed ? _kPressedScale : 1.0,
-        duration: _kPressDuration,
-        curve: Curves.easeOutBack,
-        child: widget.child,
-      ),
-    );
-  }
-}
-
 class _GlassMicButton extends StatefulWidget {
   final bool isRecording;
   final VoidCallback onTap;
@@ -431,58 +375,46 @@ class _GlassMicButtonState extends State<_GlassMicButton>
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
-    // The glyph cross-fade depends only on isRecording — not on the pulse — so
-    // it is built once and threaded through AnimatedBuilder's `child`. The
-    // pulse then only repaints the glow, instead of rebuilding the switcher and
-    // icon on every frame.
-    final glyph = AnimatedSwitcher(
-      duration: _kButtonStateDuration,
-      switchInCurve: Curves.easeOutBack,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, anim) => ScaleTransition(
-        scale: Tween<double>(begin: 0.7, end: 1.0).animate(anim),
-        child: FadeTransition(opacity: anim, child: child),
-      ),
-      child: Icon(
-        widget.isRecording ? Icons.stop_rounded : Icons.mic_none_rounded,
-        key: ValueKey(widget.isRecording),
-        size: 20,
-        color: widget.isRecording ? palette.accent : palette.textMuted,
-      ),
+    // Glyph swaps instantly between mic and stop — no cross-fade — so toggling
+    // recording paints the new icon/color immediately. Built once and threaded
+    // through AnimatedBuilder's `child` so the pulse only repaints the glow.
+    final glyph = Icon(
+      widget.isRecording ? Icons.stop_rounded : Icons.mic_none_rounded,
+      size: 20,
+      color: widget.isRecording ? palette.accent : palette.textMuted,
     );
-    return _PressableScale(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: widget.onTap,
-        child: AnimatedBuilder(
-          animation: _pulse,
-          child: glyph,
-          builder: (context, child) {
-            final glow = widget.isRecording ? 0.3 + 0.4 * _pulse.value : 0.0;
-            return AnimatedContainer(
-              duration: _kButtonStateDuration,
-              curve: _kBarAnimCurve,
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: widget.isRecording
-                    ? palette.accent.withValues(alpha: 0.18)
-                    : Colors.transparent,
-                boxShadow: widget.isRecording
-                    ? [
-                        BoxShadow(
-                          color: palette.accent.withValues(alpha: glow),
-                          blurRadius: 14,
-                          spreadRadius: 1,
-                        ),
-                      ]
-                    : null,
-              ),
-              child: child,
-            );
-          },
-        ),
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: widget.onTap,
+      child: AnimatedBuilder(
+        animation: _pulse,
+        child: glyph,
+        builder: (context, child) {
+          final glow = widget.isRecording ? 0.3 + 0.4 * _pulse.value : 0.0;
+          // Plain Container: the fill colour is chosen directly from
+          // isRecording, so the grey ↔ accent change paints immediately (no
+          // morph). Only the recording glow keeps pulsing.
+          return Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: widget.isRecording
+                  ? palette.accent.withValues(alpha: 0.18)
+                  : Colors.transparent,
+              boxShadow: widget.isRecording
+                  ? [
+                      BoxShadow(
+                        color: palette.accent.withValues(alpha: glow),
+                        blurRadius: 14,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: child,
+          );
+        },
       ),
     );
   }
@@ -499,38 +431,35 @@ class _GlassSendButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
-    return _PressableScale(
-      enabled: active,
-      child: AnimatedContainer(
-        duration: _kButtonStateDuration,
-        curve: _kBarAnimCurve,
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color:
-              active ? palette.accent : palette.border.withValues(alpha: 0.4),
-          borderRadius: _shape,
-          boxShadow: active
-              ? [
-                  BoxShadow(
-                    color: palette.accent.withValues(alpha: 0.35),
-                    blurRadius: 14,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : null,
-        ),
-        child: InkWell(
-          borderRadius: _shape,
-          onTap: active ? onTap : null,
-          child: Center(
-            child: Icon(
-              Icons.arrow_upward_rounded,
-              size: 20,
-              color: active
-                  ? (palette.isDark ? palette.background : Colors.white)
-                  : palette.textMuted,
-            ),
+    // Plain Container: the fill colour is chosen directly from `active`, so the
+    // button goes accent ↔ grey instantly (no morph) when text is typed or
+    // cleared / the message is sent. Rounded-square shape (radius 14) unchanged.
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: active ? palette.accent : palette.border.withValues(alpha: 0.4),
+        borderRadius: _shape,
+        boxShadow: active
+            ? [
+                BoxShadow(
+                  color: palette.accent.withValues(alpha: 0.35),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+            : null,
+      ),
+      child: InkWell(
+        borderRadius: _shape,
+        onTap: active ? onTap : null,
+        child: Center(
+          child: Icon(
+            Icons.arrow_upward_rounded,
+            size: 20,
+            color: active
+                ? (palette.isDark ? palette.background : Colors.white)
+                : palette.textMuted,
           ),
         ),
       ),
