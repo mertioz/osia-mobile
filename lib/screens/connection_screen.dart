@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../l10n.dart';
+import '../motion.dart';
 import '../services/rendezvous_service.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
@@ -36,10 +37,12 @@ class _ConnectionScreenState extends State<ConnectionScreen>
   bool _obscureToken = true;
   String? _error;
 
-  // Entrance animation — same rhythm as the rest of the app (easeOutCubic).
+  // Entrance animation — shared app rhythm: fade on [enter], slide on the
+  // light [spring], over MotionDurations.entrance.
   late final AnimationController _enterCtrl;
   late final Animation<double> _fade;
   late final Animation<Offset> _slide;
+  bool _entered = false;
 
   // Service used to verify the token. On success we DON'T close it — the
   // same authenticated socket is handed to the chat screen (see
@@ -81,14 +84,26 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     super.initState();
     _enterCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 600),
+      duration: MotionDurations.entrance,
     );
-    _fade = CurvedAnimation(parent: _enterCtrl, curve: Curves.easeOutCubic);
+    _fade = CurvedAnimation(parent: _enterCtrl, curve: MotionCurves.enter);
     _slide = Tween<Offset>(
       begin: const Offset(0, 0.04),
       end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _enterCtrl, curve: Curves.easeOutCubic));
-    _enterCtrl.forward();
+    ).animate(CurvedAnimation(parent: _enterCtrl, curve: MotionCurves.spring));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_entered) return;
+    _entered = true;
+    // Reduced motion: show the screen immediately, no slide/fade.
+    if (Motion.reduced(context)) {
+      _enterCtrl.value = 1.0;
+    } else {
+      _enterCtrl.forward();
+    }
   }
 
   @override
@@ -488,8 +503,8 @@ class _ConnectionScreenState extends State<ConnectionScreen>
   Widget _buildError(OsiaPalette palette) {
     // AnimatedSize keeps the layout from jumping when the error appears.
     return AnimatedSize(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOutCubic,
+      duration: MotionDurations.medium,
+      curve: MotionCurves.enter,
       alignment: Alignment.topCenter,
       child: _error == null
           ? const SizedBox(width: double.infinity)
@@ -533,9 +548,9 @@ class _ConnectionScreenState extends State<ConnectionScreen>
           ),
         ),
         child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 250),
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeInCubic,
+          duration: MotionDurations.medium,
+          switchInCurve: MotionCurves.enter,
+          switchOutCurve: MotionCurves.exit,
           child: _connecting
               ? Row(
                   key: const ValueKey('connecting'),

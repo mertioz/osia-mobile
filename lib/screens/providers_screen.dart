@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n.dart';
+import '../motion.dart';
 import '../nav.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
@@ -3035,18 +3036,33 @@ Future<String?> _showHierarchyModelPicker({
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
     builder: (ctx) {
-      // Ride the modal's slide-up with a fade, matching the chat sheet.
+      final content = _HierarchyModelPickerSheet(
+        choices: choices,
+        currentValue: currentValue,
+      );
+      // Reduced motion: skip the added fade + spring-scale (modal slide only).
+      if (Motion.reduced(ctx)) return content;
+      // Ride the modal's slide-up with a fade + light spring-scale, matching
+      // the chat model sheet. Fade on [enter] (opacity-safe), scale on the
+      // [spring] (transform — overshoot is fine).
       final routeAnim =
           ModalRoute.of(ctx)?.animation ?? kAlwaysCompleteAnimation;
       return FadeTransition(
         opacity: CurvedAnimation(
           parent: routeAnim,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
+          curve: MotionCurves.enter,
+          reverseCurve: MotionCurves.exit,
         ),
-        child: _HierarchyModelPickerSheet(
-          choices: choices,
-          currentValue: currentValue,
+        child: ScaleTransition(
+          alignment: Alignment.bottomCenter,
+          scale: Tween<double>(begin: 0.96, end: 1.0).animate(
+            CurvedAnimation(
+              parent: routeAnim,
+              curve: MotionCurves.spring,
+              reverseCurve: MotionCurves.exit,
+            ),
+          ),
+          child: content,
         ),
       );
     },
@@ -4141,8 +4157,8 @@ class _SegmentedToggle extends StatelessWidget {
               child: GestureDetector(
                 onTap: () => onChanged(i),
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOutCubic,
+                  duration: MotionDurations.medium,
+                  curve: MotionCurves.enter,
                   padding: const EdgeInsets.symmetric(vertical: 10),
                   decoration: BoxDecoration(
                     color: i == index ? palette.accent : Colors.transparent,

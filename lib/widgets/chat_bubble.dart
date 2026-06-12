@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../l10n.dart';
+import '../motion.dart';
 import '../theme.dart';
 
 /// A chat bubble for displaying messages in the conversation.
@@ -50,21 +51,37 @@ class _ChatBubbleState extends State<ChatBubble>
   late final Animation<double> _fade;
   late final Animation<Offset> _slide;
 
+  bool _appeared = false;
+
   @override
   void initState() {
     super.initState();
-    // Same rhythm as the input bar's implicit animations: 250 ms,
-    // easeOutCubic, for a consistent feel across the whole chat.
+    // Shared app rhythm (MotionDurations.medium) so bubbles land in step with
+    // the input bar and the rest of the chat. The fade rides [enter] (opacity
+    // must stay in [0,1]); the slide-up rides the light [spring] so the bubble
+    // settles with a hair of expressive lift instead of a flat stop.
     _appearCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 250),
+      duration: MotionDurations.medium,
     );
-    _fade = CurvedAnimation(parent: _appearCtrl, curve: Curves.easeOutCubic);
+    _fade = CurvedAnimation(parent: _appearCtrl, curve: MotionCurves.enter);
     _slide = Tween<Offset>(
       begin: const Offset(0, 0.12),
       end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _appearCtrl, curve: Curves.easeOutCubic));
-    _appearCtrl.forward();
+    ).animate(CurvedAnimation(parent: _appearCtrl, curve: MotionCurves.spring));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_appeared) return;
+    _appeared = true;
+    // Reduced motion: skip the slide/fade and show the bubble immediately.
+    if (Motion.reduced(context)) {
+      _appearCtrl.value = 1.0;
+    } else {
+      _appearCtrl.forward();
+    }
   }
 
   @override
@@ -277,11 +294,19 @@ class _BlinkingCursorState extends State<_BlinkingCursor> {
   bool _visible = true;
 
   @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (mounted) setState(() => _visible = !_visible);
-    });
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Re-sync on dependency changes so a runtime reduced-motion toggle is
+    // honored: hold the cursor steady (no flashing) when reduced, else blink.
+    if (Motion.reduced(context)) {
+      _timer?.cancel();
+      _timer = null;
+      _visible = true;
+    } else {
+      _timer ??= Timer.periodic(MotionDurations.cursorBlink, (_) {
+        if (mounted) setState(() => _visible = !_visible);
+      });
+    }
   }
 
   @override
@@ -294,7 +319,8 @@ class _BlinkingCursorState extends State<_BlinkingCursor> {
   Widget build(BuildContext context) {
     return AnimatedOpacity(
       opacity: _visible ? 1.0 : 0.0,
-      duration: const Duration(milliseconds: 180),
+      duration: MotionDurations.fast,
+      curve: MotionCurves.enter,
       child: Container(
         width: 6,
         height: 15,

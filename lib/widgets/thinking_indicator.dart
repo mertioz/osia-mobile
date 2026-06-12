@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../motion.dart';
 import '../theme.dart';
 
 /// Choreographed "sliding puzzle" thinking indicator.
@@ -47,24 +48,42 @@ class _ThinkingIndicatorState extends State<ThinkingIndicator>
   /// each move reads as a deliberate, choreographed step.
   late final Animation<double> _slide;
 
+  bool _reduced = false;
+
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 600),
+      duration: MotionDurations.thinking,
     );
     _slide = CurvedAnimation(
       parent: _controller,
-      curve: const Interval(0.0, 0.8, curve: Curves.easeInOutSine),
+      curve: const Interval(0.0, 0.8, curve: MotionCurves.thinkingSlide),
     );
     _pickNextMove();
     _controller.addStatusListener(_onCycleComplete);
-    _controller.forward();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Re-sync on every dependency change so a runtime reduced-motion toggle is
+    // honored. Under reduced motion the loop is held on the static L-shape;
+    // otherwise it (re)starts the sliding-puzzle cycle.
+    _reduced = Motion.reduced(context);
+    if (_reduced) {
+      _controller.stop();
+      _controller.value = 0; // clean static L-shape (dots parked on corners)
+    } else if (!_controller.isAnimating) {
+      _controller.forward();
+    }
   }
 
   void _onCycleComplete(AnimationStatus status) {
     if (status != AnimationStatus.completed || !mounted) return;
+    // Stop re-arming the loop once reduced motion is on.
+    if (_reduced) return;
     setState(() {
       // Commit the move: the sliding dot now occupies the empty corner and
       // leaves its previous corner empty.

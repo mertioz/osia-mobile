@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../l10n.dart';
+import '../motion.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 
@@ -34,25 +35,42 @@ Future<String?> showModelSelector({
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
     builder: (ctx) {
-      // The modal route already slides the sheet up; riding the same
-      // animation with a fade gives the smooth slide + fade open/close.
+      final content = ValueListenableBuilder<ModelSelectorState>(
+        valueListenable: stateListenable,
+        builder: (ctx, state, _) => _ModelSelectorSheet(
+          models: state.models,
+          currentModel: currentModel,
+          isLoading: state.isLoading,
+          errorMessage: state.errorMessage,
+          hierarchyActive: hierarchyActive,
+        ),
+      );
+      // Reduced motion: skip the added fade + spring-scale; the modal route's
+      // own slide is the platform-minimal transition.
+      if (Motion.reduced(ctx)) return content;
+      // The modal route already slides the sheet up; riding the same animation
+      // with a fade + a light spring-scale gives a smooth slide-and-pop open.
+      // The fade rides [enter] (opacity must stay in [0,1]); the scale is a
+      // transform, so the spring's ≈6.5% overshoot is safe and reads as a
+      // tasteful settle.
       final routeAnim =
           ModalRoute.of(ctx)?.animation ?? kAlwaysCompleteAnimation;
       return FadeTransition(
         opacity: CurvedAnimation(
           parent: routeAnim,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
+          curve: MotionCurves.enter,
+          reverseCurve: MotionCurves.exit,
         ),
-        child: ValueListenableBuilder<ModelSelectorState>(
-          valueListenable: stateListenable,
-          builder: (ctx, state, _) => _ModelSelectorSheet(
-            models: state.models,
-            currentModel: currentModel,
-            isLoading: state.isLoading,
-            errorMessage: state.errorMessage,
-            hierarchyActive: hierarchyActive,
+        child: ScaleTransition(
+          alignment: Alignment.bottomCenter,
+          scale: Tween<double>(begin: 0.96, end: 1.0).animate(
+            CurvedAnimation(
+              parent: routeAnim,
+              curve: MotionCurves.spring,
+              reverseCurve: MotionCurves.exit,
+            ),
           ),
+          child: content,
         ),
       );
     },
@@ -138,13 +156,13 @@ class _ModelSelectorSheet extends StatelessWidget {
               // Smooth the height change + cross-fade when the body flips
               // from spinner to model list (or to an error message).
               child: AnimatedSize(
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeOutCubic,
+                duration: MotionDurations.medium,
+                curve: MotionCurves.enter,
                 alignment: Alignment.topCenter,
                 child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 250),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
+                  duration: MotionDurations.medium,
+                  switchInCurve: MotionCurves.enter,
+                  switchOutCurve: MotionCurves.exit,
                   child: KeyedSubtree(
                     key: ValueKey(_bodyKind),
                     child: _buildBody(palette, strings),
@@ -327,7 +345,8 @@ class _ModelTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
+    return PressableScale(
+      child: Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
@@ -386,6 +405,7 @@ class _ModelTile extends StatelessWidget {
             ],
           ),
         ),
+      ),
       ),
     );
   }

@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../l10n.dart';
+import '../motion.dart';
 import '../nav.dart';
 import '../services/audio_service.dart';
 import '../services/rendezvous_service.dart';
@@ -654,12 +655,19 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _scrollToBottomAnimated() {
+    // Small settle delay so the freshly added entry is laid out before we
+    // measure the new max extent.
     Future.delayed(const Duration(milliseconds: 80), () {
-      if (_scrollCtrl.hasClients) {
+      if (!mounted || !_scrollCtrl.hasClients) return;
+      final target = _scrollCtrl.position.maxScrollExtent;
+      // Reduced motion: jump straight to the bottom, no glide.
+      if (Motion.reduced(context)) {
+        _scrollCtrl.jumpTo(target);
+      } else {
         _scrollCtrl.animateTo(
-          _scrollCtrl.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOutCubic,
+          target,
+          duration: MotionDurations.route,
+          curve: MotionCurves.enter,
         );
       }
     });
@@ -1263,9 +1271,11 @@ class _ChatScreenState extends State<ChatScreen> {
             left: 0,
             right: 0,
             child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 280),
-              switchInCurve: Curves.easeOut,
-              switchOutCurve: Curves.easeIn,
+              duration: Motion.duration(context, MotionDurations.medium),
+              switchInCurve: MotionCurves.enter,
+              switchOutCurve: MotionCurves.exit,
+              // NB: the `_bannerSeq` unique keys below (WOR-64 fix) are kept
+              // intact — only the duration/curve are tokenized here.
               child: (_connError != null &&
                       _connState != ws.ConnectionState.connected)
                   ? _buildErrorBanner(palette, strings)
@@ -1447,22 +1457,24 @@ class _ChatScreenState extends State<ChatScreen> {
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
                 child: SizedBox(
                   width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _newConversation,
-                    icon: const Icon(Icons.add_rounded, size: 20),
-                    label: Text(strings.newChat),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: palette.accent,
-                      foregroundColor: palette.isDark
-                          ? palette.background
-                          : Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+                  child: PressableScale(
+                    child: ElevatedButton.icon(
+                      onPressed: _newConversation,
+                      icon: const Icon(Icons.add_rounded, size: 20),
+                      label: Text(strings.newChat),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: palette.accent,
+                        foregroundColor: palette.isDark
+                            ? palette.background
+                            : Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        textStyle: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600),
                       ),
-                      textStyle: const TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.w600),
                     ),
                   ),
                 ),
@@ -1493,7 +1505,15 @@ class _ChatScreenState extends State<ChatScreen> {
                         itemCount: _conversations.length,
                         itemBuilder: (context, index) {
                           final conv = _conversations[index];
-                          return _buildConversationTile(conv, palette);
+                          // Subtle staggered cascade as the drawer opens. Key
+                          // by conversation id so entrance state follows the
+                          // conversation (a freshly inserted one animates;
+                          // shifted ones stay settled).
+                          return StaggeredAppear(
+                            key: ValueKey('stagger_${conv.id}'),
+                            index: index,
+                            child: _buildConversationTile(conv, palette),
+                          );
                         },
                       ),
               ),
@@ -1529,6 +1549,9 @@ class _ChatScreenState extends State<ChatScreen> {
               color: palette.error, size: 22),
         ),
         child: Material(
+          // Material implicitly animates its color, so the active background
+          // tint fades in/out instead of snapping when the selection changes.
+          animationDuration: MotionDurations.medium,
           color: isActive
               ? palette.accent.withValues(alpha: 0.12)
               : Colors.transparent,
@@ -1537,7 +1560,9 @@ class _ChatScreenState extends State<ChatScreen> {
             borderRadius: BorderRadius.circular(12),
             onTap: () => _loadConversation(conv),
             onLongPress: () => _deleteConversation(conv),
-            child: Container(
+            child: AnimatedContainer(
+              duration: MotionDurations.medium,
+              curve: MotionCurves.enter,
               padding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
@@ -1730,14 +1755,29 @@ class _MiniThinkingDotsState extends State<_MiniThinkingDots>
   static const int _dotCount = 3;
 
   late final AnimationController _ctrl;
+  bool _reduced = false;
 
   @override
   void initState() {
     super.initState();
     _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1000),
-    )..repeat();
+      duration: MotionDurations.pulse,
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Re-sync on every dependency change so a runtime reduced-motion toggle is
+    // honored: stop the ticker (and show steady dots) when reduced, otherwise
+    // keep the soft pulse looping.
+    _reduced = Motion.reduced(context);
+    if (_reduced) {
+      _ctrl.stop();
+    } else if (!_ctrl.isAnimating) {
+      _ctrl.repeat();
+    }
   }
 
   @override
@@ -1746,48 +1786,56 @@ class _MiniThinkingDotsState extends State<_MiniThinkingDots>
     super.dispose();
   }
 
+  /// Build the three-dot row given an easing value per dot index (0 → 1).
+  Widget _dots(double Function(int index) easedFor) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(_dotCount, (i) {
+        final eased = easedFor(i);
+        final opacity = 0.3 + 0.7 * eased;
+        final scale = 0.6 + 0.4 * eased;
+        return Padding(
+          padding: EdgeInsets.only(left: i == 0 ? 0 : _gap),
+          child: Opacity(
+            opacity: opacity,
+            child: Transform.scale(
+              scale: scale,
+              child: Container(
+                width: _dotSize,
+                height: _dotSize,
+                decoration: const BoxDecoration(
+                  color: _violet,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
       // Small gap so the dots don't crowd the blinking cursor / last glyph.
       padding: const EdgeInsets.only(left: 4),
-      child: AnimatedBuilder(
-        animation: _ctrl,
-        builder: (context, _) {
-          return Row(
-            mainAxisSize: MainAxisSize.min,
-            children: List.generate(_dotCount, (i) {
-              // Each dot is offset along the loop so they pulse in sequence.
-              // Dart's `%` keeps a positive result here, so the negative
-              // stagger wraps cleanly into [0, 1).
-              final phase = (_ctrl.value - i * 0.18) % 1.0;
-              // Triangle wave 0 → 1 → 0 over the loop, eased for a soft pulse.
-              final tri = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
-              final eased =
-                  Curves.easeInOut.transform(tri.clamp(0.0, 1.0).toDouble());
-              final opacity = 0.3 + 0.7 * eased;
-              final scale = 0.6 + 0.4 * eased;
-              return Padding(
-                padding: EdgeInsets.only(left: i == 0 ? 0 : _gap),
-                child: Opacity(
-                  opacity: opacity,
-                  child: Transform.scale(
-                    scale: scale,
-                    child: Container(
-                      width: _dotSize,
-                      height: _dotSize,
-                      decoration: const BoxDecoration(
-                        color: _violet,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }),
-          );
-        },
-      ),
+      child: _reduced
+          // Static, fully-shown dots — no continuous loop under reduced motion.
+          ? _dots((_) => 1.0)
+          : AnimatedBuilder(
+              animation: _ctrl,
+              builder: (context, _) => _dots((i) {
+                // Each dot is offset along the loop so they pulse in sequence.
+                // Dart's `%` keeps a positive result here, so the negative
+                // stagger wraps cleanly into [0, 1).
+                final phase = (_ctrl.value - i * 0.18) % 1.0;
+                // Triangle wave 0 → 1 → 0 over the loop, eased for a soft pulse.
+                final tri = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
+                return MotionCurves.loop
+                    .transform(tri.clamp(0.0, 1.0).toDouble());
+              }),
+            ),
     );
   }
 }

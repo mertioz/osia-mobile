@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../l10n.dart';
+import '../motion.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 
@@ -70,8 +71,21 @@ class _PulsingDotState extends State<_PulsingDot>
     super.initState();
     _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
-    )..repeat(reverse: true);
+      duration: MotionDurations.pulseSlow,
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Re-sync on every dependency change so a runtime reduced-motion toggle is
+    // honored, not just the value at mount.
+    if (Motion.reduced(context)) {
+      _ctrl.stop();
+      _ctrl.value = 1.0; // steady bright dot, no pulse
+    } else if (!_ctrl.isAnimating) {
+      _ctrl.repeat(reverse: true);
+    }
   }
 
   @override
@@ -85,11 +99,13 @@ class _PulsingDotState extends State<_PulsingDot>
     return AnimatedBuilder(
       animation: _ctrl,
       builder: (context, _) {
+        // Ease the alpha ramp so the dot breathes instead of ticking linearly.
+        final v = MotionCurves.loop.transform(_ctrl.value);
         return Container(
           width: 8,
           height: 8,
           decoration: BoxDecoration(
-            color: widget.color.withValues(alpha: 0.4 + _ctrl.value * 0.6),
+            color: widget.color.withValues(alpha: 0.4 + v * 0.6),
             shape: BoxShape.circle,
           ),
         );

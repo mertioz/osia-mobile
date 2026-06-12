@@ -2,12 +2,14 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import '../l10n.dart';
+import '../motion.dart';
 import '../theme.dart';
 
-/// Shared motion constants so every implicit animation in the bar moves
-/// with the same rhythm.
-const Duration _kBarAnimDuration = Duration(milliseconds: 250);
-const Curve _kBarAnimCurve = Curves.easeOutCubic;
+/// Shared motion constants so every implicit animation in the bar moves with
+/// the same rhythm — sourced from the global motion tokens so the bar stays
+/// in step with the rest of the app.
+const Duration _kBarAnimDuration = MotionDurations.medium;
+const Curve _kBarAnimCurve = MotionCurves.enter;
 
 /// Floating glassmorphism input bar pinned to the bottom of the chat.
 ///
@@ -190,7 +192,8 @@ class _ModelPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
-    return Material(
+    return PressableScale(
+      child: Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(20),
@@ -217,7 +220,7 @@ class _ModelPill extends StatelessWidget {
                 child: AnimatedSwitcher(
                   duration: _kBarAnimDuration,
                   switchInCurve: _kBarAnimCurve,
-                  switchOutCurve: Curves.easeInCubic,
+                  switchOutCurve: MotionCurves.exit,
                   layoutBuilder: (current, previous) => Stack(
                     alignment: Alignment.centerLeft,
                     children: [...previous, ?current],
@@ -244,6 +247,7 @@ class _ModelPill extends StatelessWidget {
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -328,7 +332,9 @@ class _GlassIconButton extends StatelessWidget {
         ),
       ),
     );
-    return tooltip == null ? btn : Tooltip(message: tooltip!, child: btn);
+    return PressableScale(
+      child: tooltip == null ? btn : Tooltip(message: tooltip!, child: btn),
+    );
   }
 }
 
@@ -344,25 +350,39 @@ class _GlassMicButton extends StatefulWidget {
 class _GlassMicButtonState extends State<_GlassMicButton>
     with SingleTickerProviderStateMixin {
   late final AnimationController _pulse;
+  bool _reduced = false;
 
   @override
   void initState() {
     super.initState();
     _pulse = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1000),
+      duration: MotionDurations.pulse,
     );
-    if (widget.isRecording) _pulse.repeat(reverse: true);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduced = Motion.reduced(context);
+    _syncPulse();
   }
 
   @override
   void didUpdateWidget(covariant _GlassMicButton old) {
     super.didUpdateWidget(old);
-    if (widget.isRecording && !old.isRecording) {
-      _pulse.repeat(reverse: true);
-    } else if (!widget.isRecording && old.isRecording) {
+    if (widget.isRecording != old.isRecording) _syncPulse();
+  }
+
+  /// Run the recording-glow pulse only while recording and motion is allowed.
+  /// Under reduced motion, hold a steady (non-pulsing) glow so the recording
+  /// state is still visible without continuous animation.
+  void _syncPulse() {
+    if (widget.isRecording && !_reduced) {
+      if (!_pulse.isAnimating) _pulse.repeat(reverse: true);
+    } else {
       _pulse.stop();
-      _pulse.value = 0;
+      _pulse.value = (widget.isRecording && _reduced) ? 0.5 : 0.0;
     }
   }
 
@@ -383,7 +403,8 @@ class _GlassMicButtonState extends State<_GlassMicButton>
       size: 20,
       color: widget.isRecording ? palette.accent : palette.textMuted,
     );
-    return InkWell(
+    return PressableScale(
+      child: InkWell(
       borderRadius: BorderRadius.circular(20),
       onTap: widget.onTap,
       child: AnimatedBuilder(
@@ -416,6 +437,7 @@ class _GlassMicButtonState extends State<_GlassMicButton>
           );
         },
       ),
+      ),
     );
   }
 }
@@ -434,7 +456,7 @@ class _GlassSendButton extends StatelessWidget {
     // Plain Container: the fill colour is chosen directly from `active`, so the
     // button goes accent ↔ grey instantly (no morph) when text is typed or
     // cleared / the message is sent. Rounded-square shape (radius 14) unchanged.
-    return Container(
+    final btn = Container(
       width: 40,
       height: 40,
       decoration: BoxDecoration(
@@ -464,5 +486,9 @@ class _GlassSendButton extends StatelessWidget {
         ),
       ),
     );
+    // Always wrap (stable identity) but only respond to presses while active —
+    // a disabled send button shouldn't squeeze, and toggling active mustn't
+    // tear down the press controller mid-tap.
+    return PressableScale(enabled: active, child: btn);
   }
 }

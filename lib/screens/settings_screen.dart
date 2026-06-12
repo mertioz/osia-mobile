@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n.dart';
+import '../motion.dart';
 import '../nav.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
@@ -221,9 +222,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _openLegal(LegalDocument document) {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => LegalScreen(document: document)));
+    // Use the shared slide-fade route so the legal screen opens with the same
+    // motion as every other navigation (not the default Material transition).
+    Navigator.of(context).push(
+      slideFadeRoute(LegalScreen(document: document)),
+    );
   }
 
   // ── Build ───────────────────────────────────────────────────────────────
@@ -543,11 +546,12 @@ class _ThemeSwatch extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        GestureDetector(
+        PressableScale(
+          child: GestureDetector(
           onTap: onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeOutCubic,
+            duration: MotionDurations.medium,
+            curve: MotionCurves.enter,
             width: 44,
             height: 44,
             decoration: BoxDecoration(
@@ -575,6 +579,7 @@ class _ThemeSwatch extends StatelessWidget {
                   )
                 : null,
           ),
+        ),
         ),
         const SizedBox(height: 6),
         Text(
@@ -713,8 +718,8 @@ class _RestartServerTile extends StatelessWidget {
     final enabled = state == _RestartState.idle && connected;
 
     return AnimatedOpacity(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOutCubic,
+      duration: MotionDurations.medium,
+      curve: MotionCurves.enter,
       opacity: enabled || state != _RestartState.idle ? 1.0 : 0.45,
       child: InkWell(
         onTap: enabled ? onTap : null,
@@ -731,9 +736,9 @@ class _RestartServerTile extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 250),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
+                      duration: MotionDurations.medium,
+                      switchInCurve: MotionCurves.enter,
+                      switchOutCurve: MotionCurves.exit,
                       child: Text(
                         title,
                         key: ValueKey(title),
