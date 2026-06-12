@@ -9,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../l10n.dart';
 import '../nav.dart';
 import '../services/audio_service.dart';
+import '../services/rendezvous_service.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
@@ -181,18 +182,31 @@ class _ChatScreenState extends State<ChatScreen> {
       _autoTts = true;
     }
 
-    if (ip == null || token == null || ip.isEmpty || token.isEmpty) {
+    // WOR-64: the server host is no longer persisted — it is resolved fresh
+    // from the token on every connect. Only the token gates readiness, so a
+    // user with a valid token is never wrongly bounced to /connection.
+    if (token == null || token.isEmpty) {
       if (mounted) {
         Navigator.of(context).pushReplacementNamed('/connection');
       }
       return;
     }
+    // token is non-null past the guard; capture it in a final so the resolver
+    // closure below sees a non-nullable value (closures don't inherit flow
+    // promotion of a non-final local).
+    final authToken = token;
 
     // Reuse the validated, still-open socket the connection screen handed
     // over, rather than opening a second connection (the close+reopen race
     // left the chat stuck "Connecting"). Falls back to a fresh service for
-    // app relaunch / Settings round-trips.
-    _wsService = handoff?.service ?? ws.WebSocketService(ip: ip, token: token);
+    // app relaunch / Settings round-trips — which resolves the host from the
+    // token just like the connection screen ([ip] kept only as a fallback).
+    _wsService = handoff?.service ??
+        ws.WebSocketService(
+          ip: ip ?? StorageService.defaultHost,
+          token: authToken,
+          resolveHost: () => RendezvousService().resolveHost(authToken),
+        );
 
     _connSub = _wsService.connectionStream.listen((state) {
       if (mounted) {

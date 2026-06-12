@@ -151,11 +151,12 @@ class StorageService {
 
   // ── Helpers ───────────────────────────────────────────────────────────
 
-  /// True if both IP and token are stored (i.e. ready to connect).
+  /// True if a token is stored (i.e. ready to connect). WOR-64: the server host
+  /// is no longer persisted — it is resolved fresh from the token on every
+  /// connect — so only the token gates readiness.
   Future<bool> isConfigured() async {
-    final ip = await getTailscaleIp();
     final token = await getToken();
-    return ip != null && ip.isNotEmpty && token != null && token.isNotEmpty;
+    return token != null && token.isNotEmpty;
   }
 
   /// Clear connection credentials (IP, token, selected model) while

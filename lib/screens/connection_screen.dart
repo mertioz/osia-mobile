@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../l10n.dart';
+import '../services/rendezvous_service.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
@@ -168,6 +169,9 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     final probe = ws.WebSocketService(
       ip: StorageService.defaultHost,
       token: token,
+      // WOR-64: resolve the PC's current host from the token on every connect/
+      // reconnect instead of using a fixed host. [ip] stays as the fallback.
+      resolveHost: () => RendezvousService().resolveHost(token),
     );
     _probe = probe;
 
@@ -234,11 +238,18 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     _probeErrSub = probe.errorStream.listen((err) {
       debugPrint('[OSIA Connect] probe error: $err '
           '(reachedConnected=$_probeReachedConnected)');
-      // Before the socket ever opened this is a reachability problem; after,
-      // it's the server refusing us.
-      _failConnection(_probeReachedConnected
-          ? strings.invalidToken
-          : strings.connectionFailed);
+      // A rendezvous 404 means the PC isn't publishing a tunnel URL — it's
+      // offline, NOT a bad token. Surface that distinctly so an offline PC is
+      // never reported as a rejected token. Otherwise: before the socket ever
+      // opened this is a reachability problem; after, it's the server refusing
+      // us.
+      if (err == kPcOfflineError) {
+        _failConnection(strings.pcOffline);
+      } else {
+        _failConnection(_probeReachedConnected
+            ? strings.invalidToken
+            : strings.connectionFailed);
+      }
     });
 
     probe.connect();

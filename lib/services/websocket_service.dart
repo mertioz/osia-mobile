@@ -541,10 +541,20 @@ class WebSocketService {
 
   // ── Constructor ──────────────────────────────────────────────────────
 
+  /// Optional async host resolver (WOR-64 token→URL rendezvous). When provided
+  /// it is invoked on every connect AND reconnect to obtain the server host
+  /// fresh — so a PC restart that rotates its tunnel URL is picked up — and its
+  /// result is fed into the same [_sanitizeHost]/URL path as [ip]. When null,
+  /// [ip] is used directly (the original behaviour). A failure of this callback
+  /// (PC offline / network) is funnelled into the existing error stream and
+  /// reconnect path, exactly like a socket-level failure.
+  final Future<String> Function()? resolveHost;
+
   WebSocketService({
     required this.ip,
     required this.token,
     this.autoReconnect = true,
+    this.resolveHost,
   });
 
   // ── Public API ───────────────────────────────────────────────────────
@@ -818,7 +828,27 @@ class WebSocketService {
   Future<void> _doConnect() async {
     _setState(ConnectionState.connecting);
 
-    final host = _sanitizeHost(ip);
+    // Host acquisition (WOR-64). With a [resolveHost] callback we fetch the
+    // PC's current server host fresh on every connect AND reconnect (handling a
+    // restarted PC's rotated tunnel URL); otherwise we fall back to the literal
+    // [ip]. A resolve failure (PC offline / network) is funnelled into the SAME
+    // error stream + reconnect path as a socket-level failure. Nothing below
+    // this block — protocol, auth handshake, streaming, reconnect/backoff — is
+    // affected.
+    final String host;
+    if (resolveHost != null) {
+      try {
+        host = _sanitizeHost(await resolveHost!());
+      } catch (e) {
+        debugPrint('[OSIA WS] Host resolution failed: $e');
+        _errorCtrl.add('$e');
+        _setState(ConnectionState.disconnected);
+        _scheduleReconnect();
+        return;
+      }
+    } else {
+      host = _sanitizeHost(ip);
+    }
     // A Cloudflare Tunnel hostname is fronted by HTTPS on 443, so use wss://
     // with no explicit port. A raw IP (Tailscale) still goes to the local
     // server on port 8765 over plain ws://.

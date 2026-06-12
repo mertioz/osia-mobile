@@ -45,6 +45,7 @@ class OsiaStrings {
   final String connectionFailed;
   final String invalidToken;
   final String tokenHint;
+  final String pcOffline;
 
   // ── Chat screen ──
   final String conversations;
@@ -253,6 +254,7 @@ class OsiaStrings {
     required this.connectionFailed,
     required this.invalidToken,
     required this.tokenHint,
+    required this.pcOffline,
     required this.conversations,
     required this.newChat,
     required this.noConversationsYet,
@@ -488,6 +490,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   connectionFailed: 'Connection failed. Check your token and try again.',
   invalidToken: 'Invalid token. Check it and try again.',
   tokenHint: 'Your token is in the OSIA settings on your PC',
+  pcOffline: 'Your PC is offline. Start OSIA on your PC, then try again.',
   conversations: 'Conversations',
   newChat: 'New chat',
   noConversationsYet: 'No conversations yet',
@@ -677,6 +680,8 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   connectionFailed: 'Échec de la connexion. Vérifiez votre token et réessayez.',
   invalidToken: 'Token invalide. Vérifiez-le et réessayez.',
   tokenHint: 'Votre token se trouve dans les paramètres OSIA sur votre PC',
+  pcOffline:
+      'Votre PC est hors ligne. Lancez OSIA sur votre PC, puis réessayez.',
   conversations: 'Conversations',
   newChat: 'Nouveau chat',
   noConversationsYet: 'Aucune conversation pour le moment',
@@ -868,6 +873,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   connectionFailed: '连接失败。请检查您的令牌后重试。',
   invalidToken: '令牌无效。请检查后重试。',
   tokenHint: '您的令牌位于您电脑上的 OSIA 设置中',
+  pcOffline: '您的电脑已离线。请在电脑上启动 OSIA，然后重试。',
   conversations: '对话',
   newChat: '新对话',
   noConversationsYet: '暂无对话',
@@ -1052,6 +1058,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   connectionFailed: '接続に失敗しました。トークンを確認してもう一度お試しください。',
   invalidToken: 'トークンが無効です。確認してもう一度お試しください。',
   tokenHint: 'トークンは PC の OSIA 設定にあります',
+  pcOffline: 'お使いの PC がオフラインです。PC で OSIA を起動してから、もう一度お試しください。',
   conversations: '会話',
   newChat: '新しいチャット',
   noConversationsYet: 'まだ会話がありません',
@@ -1238,6 +1245,8 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   invalidToken:
       'Ungültiges Token. Überprüfen Sie es und versuchen Sie es erneut.',
   tokenHint: 'Ihr Token finden Sie in den OSIA-Einstellungen auf Ihrem PC',
+  pcOffline:
+      'Ihr PC ist offline. Starten Sie OSIA auf Ihrem PC und versuchen Sie es erneut.',
   conversations: 'Unterhaltungen',
   newChat: 'Neuer Chat',
   noConversationsYet: 'Noch keine Unterhaltungen',
@@ -1432,6 +1441,8 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
       'Error de conexión. Comprueba tu token e inténtalo de nuevo.',
   invalidToken: 'Token no válido. Compruébalo e inténtalo de nuevo.',
   tokenHint: 'Tu token está en los ajustes de OSIA en tu PC',
+  pcOffline:
+      'Tu PC está desconectado. Inicia OSIA en tu PC y vuelve a intentarlo.',
   conversations: 'Conversaciones',
   newChat: 'Nuevo chat',
   noConversationsYet: 'Aún no hay conversaciones',
