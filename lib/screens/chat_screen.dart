@@ -70,6 +70,15 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _newChatSub;
   StreamSubscription? _configSub;
   String? _connError;
+  // Monotonic generation for the connection-banner AnimatedSwitcher keys.
+  // Bumped on every connection-state change so the error banner / placeholder
+  // get a fresh key on each (dis)appearance. During the offline reconnect loop
+  // the banner can flip hidden→shown faster than the 280ms switch animation;
+  // without a fresh key the reappearing banner collides with the still-
+  // animating outgoing one inside the switcher's Stack ("Duplicate keys found
+  // ... key [<'error-banner'>]"). A strictly-increasing suffix guarantees the
+  // outgoing and incoming children can never share a key.
+  int _bannerSeq = 0;
   bool _initialized = false;
 
   // Conversations
@@ -212,6 +221,9 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         setState(() {
           _connState = state;
+          // Fresh banner-switcher key on every connection-state change so a
+          // reappearing banner never collides with a still-animating one.
+          _bannerSeq++;
           if (state == ws.ConnectionState.connected) {
             _connError = null;
             // Ask for available models once the socket is up.
@@ -253,7 +265,14 @@ class _ChatScreenState extends State<ChatScreen> {
     _newChatSub = _wsService.newChatStream.listen((_) => _onNewChat());
 
     _errSub = _wsService.errorStream.listen((err) {
-      if (mounted) setState(() => _connError = err);
+      if (mounted) {
+        setState(() {
+          _connError = err;
+          // Same fresh-key guarantee as the connection-state listener: an error
+          // can arrive without a coincident state change, so bump here too.
+          _bannerSeq++;
+        });
+      }
     });
 
     final reusing =
@@ -1250,7 +1269,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: (_connError != null &&
                       _connState != ws.ConnectionState.connected)
                   ? _buildErrorBanner(palette, strings)
-                  : const SizedBox.shrink(key: ValueKey('no-banner')),
+                  : SizedBox.shrink(key: ValueKey('no-banner-$_bannerSeq')),
             ),
           ),
           Positioned(
@@ -1582,7 +1601,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildErrorBanner(OsiaPalette palette, OsiaStrings strings) {
     return Container(
-      key: const ValueKey('error-banner'),
+      key: ValueKey('error-banner-$_bannerSeq'),
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
