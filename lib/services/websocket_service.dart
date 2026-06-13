@@ -817,6 +817,11 @@ class WebSocketService {
     _send({'type': 'autonomous_interrupt'});
   }
 
+  /// Resume a paused autonomous run (the server continues from its kept state).
+  void sendAutonomousResume() {
+    _send({'type': 'autonomous_resume'});
+  }
+
   /// Abandon the current autonomous run entirely (not resumable).
   void sendAutonomousAbort() {
     _send({'type': 'autonomous_abort'});

@@ -389,6 +389,16 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     widget.wsService.sendAutonomousInterrupt();
   }
 
+  void _resume() {
+    widget.wsService.sendAutonomousResume();
+    // Optimistic flip to running so the UI responds before the server's running
+    // frame lands. _latest is deliberately left intact — the progress card
+    // keeps its snapshot and continues from where the run paused.
+    setState(() {
+      _runPhase = _RunPhase.running;
+    });
+  }
+
   Future<void> _abort() async {
     final strings = OsiaL10n.of(context);
     final palette = OsiaTheme.of(context);
@@ -606,6 +616,29 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                         ),
                       ),
                     if (_isActive) const SizedBox(width: 12),
+                    if (_runPhase == _RunPhase.paused)
+                      Expanded(
+                        child: PressableScale(
+                          child: OutlinedButton.icon(
+                            onPressed: _resume,
+                            icon: const Icon(Icons.play_arrow_rounded, size: 19),
+                            label: Text(strings.autonomousResume),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: palette.accent,
+                              side: BorderSide(color: palette.border),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              textStyle: const TextStyle(
+                                  fontSize: 14.5, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (_runPhase == _RunPhase.paused)
+                      const SizedBox(width: 12),
                     Expanded(
                       child: PressableScale(
                         child: OutlinedButton.icon(

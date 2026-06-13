@@ -250,6 +250,7 @@ class OsiaStrings {
   final String autonomousFailed;
   final String autonomousAborted;
   final String autonomousInterrupted;
+  final String autonomousResume;
   final String autonomousPhase;
   final String autonomousObjectiveRequired;
   final String autonomousModelRequired;
@@ -453,6 +454,7 @@ class OsiaStrings {
     required this.autonomousFailed,
     required this.autonomousAborted,
     required this.autonomousInterrupted,
+    required this.autonomousResume,
     required this.autonomousPhase,
     required this.autonomousObjectiveRequired,
     required this.autonomousModelRequired,
@@ -720,6 +722,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   autonomousFailed: 'Task failed',
   autonomousAborted: 'Task abandoned',
   autonomousInterrupted: 'Paused',
+  autonomousResume: 'Resume',
   autonomousPhase: 'Phase',
   autonomousObjectiveRequired: 'Enter an objective first.',
   autonomousModelRequired: 'Choose a model first.',
@@ -934,6 +937,7 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   autonomousFailed: 'Tâche échouée',
   autonomousAborted: 'Tâche abandonnée',
   autonomousInterrupted: 'En pause',
+  autonomousResume: 'Reprendre',
   autonomousPhase: 'Phase',
   autonomousObjectiveRequired: "Saisissez d'abord un objectif.",
   autonomousModelRequired: "Choisissez d'abord un modèle.",
@@ -1139,6 +1143,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   autonomousFailed: '任务失败',
   autonomousAborted: '任务已放弃',
   autonomousInterrupted: '已暂停',
+  autonomousResume: '继续',
   autonomousPhase: '阶段',
   autonomousObjectiveRequired: '请先输入目标。',
   autonomousModelRequired: '请先选择模型。',
@@ -1344,6 +1349,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   autonomousFailed: 'タスク失敗',
   autonomousAborted: 'タスクを中止しました',
   autonomousInterrupted: '一時停止中',
+  autonomousResume: '再開',
   autonomousPhase: 'フェーズ',
   autonomousObjectiveRequired: 'まず目標を入力してください。',
   autonomousModelRequired: 'まずモデルを選択してください。',
@@ -1562,6 +1568,7 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   autonomousFailed: 'Aufgabe fehlgeschlagen',
   autonomousAborted: 'Aufgabe abgebrochen',
   autonomousInterrupted: 'Pausiert',
+  autonomousResume: 'Fortsetzen',
   autonomousPhase: 'Phase',
   autonomousObjectiveRequired: 'Gib zuerst ein Ziel ein.',
   autonomousModelRequired: 'Wähle zuerst ein Modell.',
@@ -1776,6 +1783,7 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   autonomousFailed: 'Tarea fallida',
   autonomousAborted: 'Tarea abandonada',
   autonomousInterrupted: 'En pausa',
+  autonomousResume: 'Reanudar',
   autonomousPhase: 'Fase',
   autonomousObjectiveRequired: 'Introduce primero un objetivo.',
   autonomousModelRequired: 'Elige primero un modelo.',

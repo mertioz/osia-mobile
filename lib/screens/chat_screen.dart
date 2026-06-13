@@ -1196,7 +1196,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.rocket_launch_rounded),
+            icon: const Icon(Icons.all_inclusive_rounded),
             onPressed: () => Navigator.of(context).push(
               slideFadeRoute(AutonomousScreen(wsService: _wsService)),
             ),
