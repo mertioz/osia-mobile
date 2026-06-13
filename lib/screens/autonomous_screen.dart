@@ -1,0 +1,1041 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+
+import '../l10n.dart';
+import '../motion.dart';
+import '../services/websocket_service.dart' as ws;
+import '../theme.dart';
+import '../widgets/model_selector_sheet.dart';
+import '../widgets/thinking_indicator.dart';
+
+/// Autonomous runs — the mobile mirror of the PC's dedicated "autonomous"
+/// section (WOR-45 Phase 5).
+///
+/// Enter an objective, pick a CONFIGURED-only model, Start, then watch live
+/// progress (phase name, X / Y tasks, a status line) pushed by the PC on
+/// `autonomous_progress` frames. Interrupt pauses the run (resumable); Abandon
+/// stops it entirely.
+///
+/// All traffic rides the existing WebSocket service additively:
+///   - outbound: `autonomous_start` / `autonomous_interrupt` /
+///     `autonomous_abort` / `get_autonomous_status`;
+///   - inbound: `autonomous_progress` on [ws.WebSocketService.autonomousStream].
+///
+/// The model list and "configured" rule reuse the same data as the rest of the
+/// app — `get_models` (`models_list` on the shared message stream) filtered
+/// against the config snapshot (`api_keys_set` + `api_key_fallbacks`), so a
+/// model is offered only when its provider has a primary key OR a fallback key
+/// OR is keyless/local (Ollama) — identical to the PC.
+class AutonomousScreen extends StatefulWidget {
+  /// Live connection to the OSIA server, owned by the chat screen and threaded
+  /// down so this screen can drive autonomous runs.
+  final ws.WebSocketService wsService;
+
+  const AutonomousScreen({super.key, required this.wsService});
+
+  @override
+  State<AutonomousScreen> createState() => _AutonomousScreenState();
+}
+
+/// Lifecycle of an autonomous run, derived from the latest `event` marker.
+enum _RunPhase { idle, planning, running, paused, done, failed, aborted }
+
+class _AutonomousScreenState extends State<AutonomousScreen> {
+  final TextEditingController _objectiveCtrl = TextEditingController();
+
+  /// Latest config snapshot (drives the configured-only model filter). Null
+  /// until the first `config` reply lands.
+  ws.ConfigData? _config;
+
+  /// All models the server exposes (via `models_list`). Filtered to
+  /// configured-only before display.
+  List<ws.OsiaModel> _models = const [];
+
+  /// The chosen model id. Defaults to the server's current model when it is
+  /// itself configured, else the first configured model.
+  String? _selectedModel;
+
+  /// The server's currently-active model (from `models_list`), remembered
+  /// separately so the auto-selection can prefer it once the config snapshot
+  /// has arrived — regardless of whether `models_list` or `config` lands first.
+  String? _serverCurrentModel;
+
+  /// Set once the user explicitly picks a model in the selector, so the
+  /// auto-selection stops overriding their choice when later frames arrive.
+  bool _userPickedModel = false;
+
+  /// Latest progress frame, or null before the first one arrives.
+  ws.AutonomousProgressMessage? _latest;
+
+  /// Derived run state. Starts idle; flips to [_RunPhase.planning] the instant
+  /// the user taps Start (optimistic) until the first frame refines it.
+  _RunPhase _runPhase = _RunPhase.idle;
+
+  StreamSubscription<ws.ConfigData>? _configSub;
+  StreamSubscription<ws.OsiaMessage>? _msgSub;
+  StreamSubscription<ws.AutonomousProgressMessage>? _autoSub;
+
+  /// Live notifier for an open model-selector sheet, so a late `models_list`
+  /// (or config) flips it from spinner → list.
+  ValueNotifier<ModelSelectorState>? _selectorNotifier;
+  Timer? _modelLoadTimeout;
+
+  @override
+  void initState() {
+    super.initState();
+    // Subscribe BEFORE requesting: the broadcast streams don't replay, so a
+    // reply must not be able to land before we're listening.
+    _configSub = widget.wsService.configStream.listen((cfg) {
+      if (!mounted) return;
+      setState(() => _config = cfg);
+      _syncModelSelection();
+    });
+    _msgSub = widget.wsService.messageStream.listen((msg) {
+      if (msg is ws.ModelsListMessage && mounted) {
+        setState(() {
+          _models = msg.models;
+          // Remember the server's current model; the actual (configured-only)
+          // selection is resolved by _syncModelSelection, which converges to
+          // the same result whether models or config arrives first.
+          if (msg.current != null && msg.current!.isNotEmpty) {
+            _serverCurrentModel = msg.current;
+          }
+        });
+        _syncModelSelection();
+      }
+    });
+    _autoSub = widget.wsService.autonomousStream.listen(_onProgress);
+
+    // Pull everything the screen needs. get_autonomous_status lets a client
+    // that opens mid-run render the live progress immediately (the server
+    // replies with a snapshot, or an event:"idle" frame).
+    widget.wsService.sendGetConfig();
+    widget.wsService.sendGetModels();
+    widget.wsService.sendGetAutonomousStatus();
+  }
+
+  @override
+  void dispose() {
+    _configSub?.cancel();
+    _msgSub?.cancel();
+    _autoSub?.cancel();
+    _modelLoadTimeout?.cancel();
+    _selectorNotifier?.dispose();
+    _objectiveCtrl.dispose();
+    super.dispose();
+  }
+
+  // ── Progress handling ────────────────────────────────────────────────────
+
+  void _onProgress(ws.AutonomousProgressMessage msg) {
+    if (!mounted) return;
+    final event = (msg.event ?? '').toLowerCase();
+
+    // "busy" means our start was rejected because a run is already active —
+    // inform the user and ask the server for the real running snapshot rather
+    // than overwriting state with this rejection frame.
+    if (event == 'busy') {
+      final strings = OsiaL10n.of(context);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(strings.autonomousBusy)));
+      widget.wsService.sendGetAutonomousStatus();
+      return;
+    }
+
+    setState(() {
+      _latest = msg;
+      _runPhase = _phaseFor(event, _runPhase);
+    });
+  }
+
+  /// Map a server `event` marker to a run phase, defaulting to "running" for an
+  /// unrecognized non-empty event (so progress still shows), or keeping the
+  /// current phase when the event is absent.
+  _RunPhase _phaseFor(String event, _RunPhase current) {
+    switch (event) {
+      case 'idle':
+        return _RunPhase.idle;
+      case 'planning':
+      case 'plan':
+        return _RunPhase.planning;
+      case 'paused':
+      case 'interrupt':
+      case 'interrupted':
+        return _RunPhase.paused;
+      case 'done':
+      case 'completed':
+      case 'complete':
+      case 'finished':
+      case 'success':
+        return _RunPhase.done;
+      case 'failed':
+      case 'fail':
+      case 'error':
+        return _RunPhase.failed;
+      case 'aborted':
+      case 'abort':
+      case 'abandoned':
+      case 'cancelled':
+      case 'canceled':
+        return _RunPhase.aborted;
+      case 'phase':
+      case 'progress':
+      case 'task':
+      case 'running':
+      case 'started':
+      case 'start':
+      case 'step':
+        return _RunPhase.running;
+      case '':
+        return current == _RunPhase.idle ? _RunPhase.running : current;
+      default:
+        return _RunPhase.running;
+    }
+  }
+
+  bool get _isActive =>
+      _runPhase == _RunPhase.planning || _runPhase == _RunPhase.running;
+  bool get _isTerminal =>
+      _runPhase == _RunPhase.done ||
+      _runPhase == _RunPhase.failed ||
+      _runPhase == _RunPhase.aborted;
+
+  // ── Configured-only model filter ─────────────────────────────────────────
+
+  /// The configured-only model list (the only models offered for a run).
+  List<ws.OsiaModel> get _configuredModels {
+    final config = _config;
+    if (config == null) return const [];
+    return _models
+        .where((m) => _isProviderConfigured(_providerFor(m), config))
+        .toList();
+  }
+
+  /// Provider id for a model, preferring the server-tagged provider and falling
+  /// back to the same name heuristic the PC uses for untagged models.
+  String _providerFor(ws.OsiaModel m) {
+    final tagged = (m.provider ?? '').trim().toLowerCase();
+    if (tagged.isNotEmpty) return tagged;
+    final id = m.id.toLowerCase();
+    if (id.contains('claude')) return 'anthropic';
+    if (id.contains('gemini')) return 'google';
+    if (id.contains('grok')) return 'xai';
+    if (id.contains('deepseek')) return 'deepseek';
+    if (id.startsWith('meta-llama/') ||
+        id.startsWith('moonshotai/') ||
+        id.startsWith('qwen/') ||
+        id.startsWith('groq/') ||
+        id.startsWith('playai/') ||
+        id.contains('gpt-oss') ||
+        id.contains('kimi') ||
+        id.endsWith('-versatile') ||
+        id.endsWith('-instant')) {
+      return 'groq';
+    }
+    if (id.contains('gpt') || id.startsWith('o1') || id.startsWith('o3')) {
+      return 'openai';
+    }
+    return 'ollama';
+  }
+
+  /// Mirror of the PC's "configured" rule: a provider counts as configured when
+  /// it has a primary key OR at least one non-empty fallback key OR is
+  /// keyless/local (Ollama).
+  bool _isProviderConfigured(String provider, ws.ConfigData config) {
+    final p = provider.toLowerCase();
+    if (p.isEmpty || p == 'ollama' || p == 'local') return true;
+    if (config.apiKeysSet[p] == true) return true;
+    final raw = config.settings['api_key_fallbacks'];
+    if (raw is Map) {
+      final list = raw[p];
+      if (list is List && list.any((e) => e.toString().trim().isNotEmpty)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Resolve [_selectedModel] against the configured-only list, and push a
+  /// fresh state into an open model-selector sheet.
+  ///
+  /// Converges to the same selection regardless of whether `models_list` or
+  /// `config` arrives first: the configured set can only be computed once
+  /// config has landed, so until then the selection is left untouched and this
+  /// re-runs on the next stream event. Once config is present and the user
+  /// hasn't picked manually, it prefers the server's current model (when that
+  /// model is itself configured) and otherwise the first configured model.
+  void _syncModelSelection() {
+    final configured = _configuredModels;
+    if (_config != null) {
+      final ids = configured.map((m) => m.id).toSet();
+      if (!_userPickedModel) {
+        // Auto-selection: server's current model if configured, else the first
+        // configured model, else none.
+        String? next;
+        if (_serverCurrentModel != null && ids.contains(_serverCurrentModel)) {
+          next = _serverCurrentModel;
+        } else if (configured.isNotEmpty) {
+          next = configured.first.id;
+        }
+        if (next != _selectedModel) setState(() => _selectedModel = next);
+      } else if (_selectedModel != null && !ids.contains(_selectedModel)) {
+        // A manual pick that is no longer configured (config changed) — clamp
+        // back to the first configured model (or clear when none remain).
+        setState(() =>
+            _selectedModel = configured.isNotEmpty ? configured.first.id : null);
+      }
+    }
+    final notifier = _selectorNotifier;
+    if (notifier != null) {
+      _modelLoadTimeout?.cancel();
+      notifier.value = ModelSelectorState(
+        models: configured,
+        // Still waiting on the config snapshot needed to filter — keep spinning.
+        isLoading: _config == null,
+        errorMessage: (_config != null && configured.isEmpty)
+            ? OsiaL10n.of(context).autonomousNoConfiguredModels
+            : null,
+      );
+    }
+  }
+
+  // ── Actions ──────────────────────────────────────────────────────────────
+
+  Future<void> _openModelSelector() async {
+    final strings = OsiaL10n.of(context);
+    final configured = _configuredModels;
+    // No config yet → spin and (re)request; config present but nothing
+    // configured → show the explicit "no configured model" message.
+    final notifier = ValueNotifier<ModelSelectorState>(
+      ModelSelectorState(
+        models: configured,
+        isLoading: _config == null,
+        errorMessage: (_config != null && configured.isEmpty)
+            ? strings.autonomousNoConfiguredModels
+            : null,
+      ),
+    );
+    _selectorNotifier = notifier;
+    _modelLoadTimeout?.cancel();
+
+    if (_config == null || _models.isEmpty) {
+      widget.wsService.sendGetConfig();
+      widget.wsService.sendGetModels();
+      _modelLoadTimeout = Timer(const Duration(seconds: 5), () {
+        if (_selectorNotifier != notifier) return;
+        if (notifier.value.models.isNotEmpty) return;
+        notifier.value = ModelSelectorState(
+          models: const [],
+          isLoading: false,
+          errorMessage: _config != null
+              ? strings.autonomousNoConfiguredModels
+              : strings.modelsLoadFailed,
+        );
+      });
+    }
+
+    try {
+      final chosen = await showModelSelector(
+        context: context,
+        stateListenable: notifier,
+        currentModel: _selectedModel,
+        // The run uses the explicitly chosen model — the AI-hierarchy override
+        // note doesn't apply here.
+        hierarchyActive: false,
+      );
+      if (chosen != null) {
+        // A manual pick wins over auto-selection from here on.
+        _userPickedModel = true;
+        if (chosen != _selectedModel) setState(() => _selectedModel = chosen);
+      }
+    } finally {
+      _modelLoadTimeout?.cancel();
+      _modelLoadTimeout = null;
+      _selectorNotifier = null;
+      notifier.dispose();
+    }
+  }
+
+  void _start() {
+    final objective = _objectiveCtrl.text.trim();
+    final strings = OsiaL10n.of(context);
+    if (objective.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+            SnackBar(content: Text(strings.autonomousObjectiveRequired)));
+      return;
+    }
+    final model = _selectedModel;
+    if (model == null || model.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+            SnackBar(content: Text(strings.autonomousModelRequired)));
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    widget.wsService.sendAutonomousStart(objective, model);
+    // Optimistic "Planning…" until the first progress frame refines the state.
+    setState(() {
+      _latest = ws.AutonomousProgressMessage(objective: objective);
+      _runPhase = _RunPhase.planning;
+    });
+  }
+
+  void _interrupt() {
+    widget.wsService.sendAutonomousInterrupt();
+  }
+
+  Future<void> _abort() async {
+    final strings = OsiaL10n.of(context);
+    final palette = OsiaTheme.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(strings.autonomousAbort),
+        content: Text(
+          strings.autonomousAborted,
+          style: TextStyle(color: palette.textMuted, fontSize: 13.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child:
+                Text(strings.cancel, style: TextStyle(color: palette.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child:
+                Text(strings.autonomousAbort, style: TextStyle(color: palette.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    widget.wsService.sendAutonomousAbort();
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+
+    final configuredCount = _configuredModels.length;
+    final canStart = !_isActive &&
+        _objectiveCtrl.text.trim().isNotEmpty &&
+        _selectedModel != null &&
+        configuredCount > 0;
+
+    return Scaffold(
+      backgroundColor: palette.background,
+      appBar: AppBar(
+        title: Text(strings.autonomousTitle),
+        backgroundColor: palette.background,
+        iconTheme: IconThemeData(color: palette.accent),
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // ── Objective ──
+              StaggeredAppear(
+                index: 0,
+                child: _SectionLabel(
+                    label: strings.autonomousObjectiveLabel, palette: palette),
+              ),
+              StaggeredAppear(
+                index: 1,
+                child: _OsiaCard(
+                  palette: palette,
+                  child: TextField(
+                    controller: _objectiveCtrl,
+                    enabled: !_isActive,
+                    minLines: 3,
+                    maxLines: 6,
+                    keyboardType: TextInputType.multiline,
+                    textInputAction: TextInputAction.newline,
+                    cursorColor: palette.accent,
+                    onChanged: (_) => setState(() {}),
+                    style: TextStyle(
+                        color: palette.textPrimary, fontSize: 15, height: 1.4),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: palette.surfaceElevated,
+                      hintText: strings.autonomousObjectiveHint,
+                      hintStyle:
+                          TextStyle(color: palette.textMuted, fontSize: 14.5),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 14),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: palette.border),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: palette.border),
+                      ),
+                      disabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                            color: palette.border.withValues(alpha: 0.5)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: palette.accent, width: 1.4),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // ── Model (configured-only) ──
+              StaggeredAppear(
+                index: 2,
+                child: _SectionLabel(label: strings.model, palette: palette),
+              ),
+              StaggeredAppear(
+                index: 3,
+                child: _ModelPickerTile(
+                  palette: palette,
+                  label: _selectedModelLabel(strings),
+                  enabled: !_isActive,
+                  onTap: _isActive ? null : _openModelSelector,
+                ),
+              ),
+              // "No configured model" hint once config has arrived and the
+              // filtered list is empty.
+              if (_config != null && configuredCount == 0) ...[
+                const SizedBox(height: 10),
+                _InlineNote(
+                  icon: Icons.info_outline_rounded,
+                  text: strings.autonomousNoConfiguredModels,
+                  palette: palette,
+                ),
+              ],
+              const SizedBox(height: 20),
+
+              // ── Start ──
+              StaggeredAppear(
+                index: 4,
+                child: PressableScale(
+                  enabled: canStart,
+                  child: SizedBox(
+                    height: 52,
+                    child: ElevatedButton.icon(
+                      onPressed: canStart ? _start : null,
+                      icon: Icon(
+                        _runPhase == _RunPhase.planning
+                            ? Icons.hourglass_top_rounded
+                            : Icons.rocket_launch_rounded,
+                        size: 20,
+                      ),
+                      label: Text(_runPhase == _RunPhase.planning
+                          ? strings.autonomousPlanning
+                          : strings.autonomousStart),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: palette.accent,
+                        foregroundColor:
+                            palette.isDark ? palette.background : Colors.white,
+                        disabledBackgroundColor:
+                            palette.accent.withValues(alpha: 0.4),
+                        disabledForegroundColor:
+                            (palette.isDark ? palette.background : Colors.white)
+                                .withValues(alpha: 0.7),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        textStyle: const TextStyle(
+                            fontSize: 15.5, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // ── Live progress ──
+              AnimatedSize(
+                duration: Motion.duration(context, MotionDurations.medium),
+                curve: Motion.curve(context, MotionCurves.enter),
+                alignment: Alignment.topCenter,
+                child: AnimatedSwitcher(
+                  duration: Motion.duration(context, MotionDurations.medium),
+                  switchInCurve: Motion.curve(context, MotionCurves.enter),
+                  switchOutCurve: Motion.curve(context, MotionCurves.exit),
+                  child: KeyedSubtree(
+                    key: ValueKey(_runPhase),
+                    child: _buildStatus(palette, strings),
+                  ),
+                ),
+              ),
+
+              // ── Interrupt / Abandon ──
+              if (_isActive || _runPhase == _RunPhase.paused) ...[
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    if (_isActive)
+                      Expanded(
+                        child: PressableScale(
+                          child: OutlinedButton.icon(
+                            onPressed: _interrupt,
+                            icon: const Icon(Icons.pause_rounded, size: 19),
+                            label: Text(strings.autonomousInterrupt),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: palette.accent,
+                              side: BorderSide(color: palette.border),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              textStyle: const TextStyle(
+                                  fontSize: 14.5, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (_isActive) const SizedBox(width: 12),
+                    Expanded(
+                      child: PressableScale(
+                        child: OutlinedButton.icon(
+                          onPressed: _abort,
+                          icon: const Icon(Icons.stop_rounded, size: 19),
+                          label: Text(strings.autonomousAbort),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: palette.error,
+                            side: BorderSide(
+                                color: palette.error.withValues(alpha: 0.5)),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            textStyle: const TextStyle(
+                                fontSize: 14.5, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Pretty label for the selected model — its server label when known, else
+  /// the raw id, else the "choose a model" prompt.
+  String _selectedModelLabel(OsiaStrings strings) {
+    final id = _selectedModel;
+    if (id == null || id.isEmpty) return strings.autonomousPickModel;
+    for (final m in _models) {
+      if (m.id == id) return m.label;
+    }
+    return id;
+  }
+
+  /// The status card. Idle → a muted "nothing running" line; active →
+  /// thinking indicator + phase / tasks / status; terminal → a final state.
+  Widget _buildStatus(OsiaPalette palette, OsiaStrings strings) {
+    if (_runPhase == _RunPhase.idle) {
+      return _InlineNote(
+        key: const ValueKey('idle'),
+        icon: Icons.bedtime_outlined,
+        text: strings.autonomousIdle,
+        palette: palette,
+      );
+    }
+
+    final latest = _latest;
+    final objective = (latest?.objective ?? '').trim();
+    final phaseName = (latest?.phaseName ?? '').trim();
+    final status = (latest?.status ?? '').trim();
+    final reason = (latest?.reason ?? '').trim();
+    final done = latest?.tasksDone;
+    final total = latest?.tasksTotal;
+
+    return _OsiaCard(
+      key: const ValueKey('status'),
+      palette: palette,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header: state label + colored dot.
+          Row(
+            children: [
+              Icon(_runIcon(), size: 18, color: _runColor(palette)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  _runLabel(strings),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: _runColor(palette),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (objective.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              objective,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.4,
+                color: palette.textPrimary,
+              ),
+            ),
+          ],
+          if (phaseName.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _MetaRow(
+              label: strings.autonomousPhase,
+              value: phaseName,
+              palette: palette,
+            ),
+          ],
+          if (done != null && total != null) ...[
+            const SizedBox(height: 8),
+            // Pre-formatted "X / Y tasks" line (its own template — no label).
+            _MetaRow(
+              label: '',
+              value: strings.autonomousTasks(done, total),
+              palette: palette,
+              valueOnly: true,
+            ),
+            const SizedBox(height: 8),
+            _TaskProgressBar(
+              done: done,
+              total: total,
+              palette: palette,
+            ),
+          ],
+          if (status.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              status,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.4,
+                color: palette.textMuted,
+              ),
+            ),
+          ],
+          // Reason on terminal frames (why it failed / was abandoned).
+          if (_isTerminal && reason.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              reason,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.4,
+                color: _runColor(palette),
+              ),
+            ),
+          ],
+          // Active runs show the choreographed thinking indicator.
+          if (_isActive) ...[
+            const SizedBox(height: 8),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: ThinkingIndicator(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  IconData _runIcon() {
+    switch (_runPhase) {
+      case _RunPhase.done:
+        return Icons.check_circle_rounded;
+      case _RunPhase.failed:
+        return Icons.error_rounded;
+      case _RunPhase.aborted:
+        return Icons.stop_circle_rounded;
+      case _RunPhase.paused:
+        return Icons.pause_circle_rounded;
+      case _RunPhase.planning:
+      case _RunPhase.running:
+      case _RunPhase.idle:
+        return Icons.rocket_launch_rounded;
+    }
+  }
+
+  Color _runColor(OsiaPalette palette) {
+    switch (_runPhase) {
+      case _RunPhase.failed:
+      case _RunPhase.aborted:
+        return palette.error;
+      case _RunPhase.paused:
+        return palette.textMuted;
+      case _RunPhase.done:
+      case _RunPhase.planning:
+      case _RunPhase.running:
+      case _RunPhase.idle:
+        return palette.accent;
+    }
+  }
+
+  String _runLabel(OsiaStrings strings) {
+    switch (_runPhase) {
+      case _RunPhase.planning:
+        return strings.autonomousPlanning;
+      case _RunPhase.running:
+        return strings.autonomousRunning;
+      case _RunPhase.paused:
+        return strings.autonomousInterrupted;
+      case _RunPhase.done:
+        return strings.autonomousDone;
+      case _RunPhase.failed:
+        return strings.autonomousFailed;
+      case _RunPhase.aborted:
+        return strings.autonomousAborted;
+      case _RunPhase.idle:
+        return strings.autonomousIdle;
+    }
+  }
+}
+
+// ── Small building blocks (local to this screen) ───────────────────────────
+
+/// Section label above a card — small, muted, letter-spaced (matches the
+/// providers screen's section headers).
+class _SectionLabel extends StatelessWidget {
+  final String label;
+  final OsiaPalette palette;
+  const _SectionLabel({required this.label, required this.palette});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
+      child: Text(
+        label.toUpperCase(),
+        style: TextStyle(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 1.1,
+          color: palette.textMuted,
+        ),
+      ),
+    );
+  }
+}
+
+/// Rounded surface card matching the rest of the app.
+class _OsiaCard extends StatelessWidget {
+  final OsiaPalette palette;
+  final Widget child;
+  const _OsiaCard({
+    super.key,
+    required this.palette,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: palette.border, width: 0.5),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// Tappable tile showing the chosen model; opens the model selector.
+class _ModelPickerTile extends StatelessWidget {
+  final OsiaPalette palette;
+  final String label;
+  final bool enabled;
+  final VoidCallback? onTap;
+  const _ModelPickerTile({
+    required this.palette,
+    required this.label,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return PressableScale(
+      enabled: enabled,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            decoration: BoxDecoration(
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: palette.border, width: 0.5),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.tune_rounded,
+                    size: 18,
+                    color: enabled
+                        ? palette.accent
+                        : palette.accent.withValues(alpha: 0.5)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w500,
+                      color: enabled
+                          ? palette.textPrimary
+                          : palette.textMuted,
+                    ),
+                  ),
+                ),
+                Icon(Icons.keyboard_arrow_down_rounded,
+                    color: enabled
+                        ? palette.accent
+                        : palette.accent.withValues(alpha: 0.5)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A "label: value" line inside the status card. With [valueOnly] the label is
+/// dropped (used for the pre-formatted tasks line).
+class _MetaRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final OsiaPalette palette;
+  final bool valueOnly;
+  const _MetaRow({
+    required this.label,
+    required this.value,
+    required this.palette,
+    this.valueOnly = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (valueOnly) {
+      return Text(
+        value,
+        style: TextStyle(
+          fontSize: 13.5,
+          fontWeight: FontWeight.w600,
+          color: palette.textPrimary,
+        ),
+      );
+    }
+    return RichText(
+      text: TextSpan(
+        children: [
+          TextSpan(
+            text: '$label: ',
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: palette.textMuted,
+            ),
+          ),
+          TextSpan(
+            text: value,
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w500,
+              color: palette.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Slim determinate progress bar for the X / Y task count.
+class _TaskProgressBar extends StatelessWidget {
+  final int done;
+  final int total;
+  final OsiaPalette palette;
+  const _TaskProgressBar({
+    required this.done,
+    required this.total,
+    required this.palette,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fraction = total > 0 ? (done / total).clamp(0.0, 1.0) : 0.0;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: LinearProgressIndicator(
+        value: fraction,
+        minHeight: 6,
+        backgroundColor: palette.surfaceElevated,
+        valueColor: AlwaysStoppedAnimation<Color>(palette.accent),
+      ),
+    );
+  }
+}
+
+/// A muted inline note with a leading icon (used for "idle" / "no configured
+/// model" hints).
+class _InlineNote extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  final OsiaPalette palette;
+  const _InlineNote({
+    super.key,
+    required this.icon,
+    required this.text,
+    required this.palette,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 17, color: palette.textMuted),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 13.5,
+              height: 1.4,
+              color: palette.textMuted,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}

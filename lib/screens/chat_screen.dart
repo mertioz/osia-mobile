@@ -19,6 +19,7 @@ import '../widgets/connection_badge.dart';
 import '../widgets/glass_input_bar.dart';
 import '../widgets/model_selector_sheet.dart';
 import '../widgets/thinking_indicator.dart';
+import 'autonomous_screen.dart';
 import 'settings_screen.dart';
 
 /// Main chat screen: conversation history, floating glass input,
@@ -1194,6 +1195,13 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.rocket_launch_rounded),
+            onPressed: () => Navigator.of(context).push(
+              slideFadeRoute(AutonomousScreen(wsService: _wsService)),
+            ),
+            tooltip: strings.autonomousTitle,
+          ),
           IconButton(
             icon: const Icon(Icons.settings_rounded),
             onPressed: _openSettings,

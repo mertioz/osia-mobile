@@ -233,6 +233,28 @@ class OsiaStrings {
   final String sectionGeneral;
   final String timeFormatLabel;
 
+  // ── Autonomous runs (WOR-45) ──
+  final String autonomousTitle;
+  final String autonomousObjectiveLabel;
+  final String autonomousObjectiveHint;
+  final String autonomousPickModel;
+  final String autonomousNoConfiguredModels;
+  final String autonomousStart;
+  final String autonomousPlanning;
+  final String autonomousRunning;
+  final String autonomousInterrupt;
+  final String autonomousAbort;
+  final String autonomousIdle;
+  final String autonomousBusy;
+  final String autonomousDone;
+  final String autonomousFailed;
+  final String autonomousAborted;
+  final String autonomousInterrupted;
+  final String autonomousPhase;
+  final String autonomousObjectiveRequired;
+  final String autonomousModelRequired;
+  final String autonomousTasksTemplate; // {done} {total}
+
   // ── Theme names (keyed lookup via themeName) ──
   final String themeViolet;
   final String themeRose;
@@ -415,6 +437,26 @@ class OsiaStrings {
     required this.metricGpuTemp,
     required this.sectionGeneral,
     required this.timeFormatLabel,
+    required this.autonomousTitle,
+    required this.autonomousObjectiveLabel,
+    required this.autonomousObjectiveHint,
+    required this.autonomousPickModel,
+    required this.autonomousNoConfiguredModels,
+    required this.autonomousStart,
+    required this.autonomousPlanning,
+    required this.autonomousRunning,
+    required this.autonomousInterrupt,
+    required this.autonomousAbort,
+    required this.autonomousIdle,
+    required this.autonomousBusy,
+    required this.autonomousDone,
+    required this.autonomousFailed,
+    required this.autonomousAborted,
+    required this.autonomousInterrupted,
+    required this.autonomousPhase,
+    required this.autonomousObjectiveRequired,
+    required this.autonomousModelRequired,
+    required this.autonomousTasksTemplate,
     required this.themeViolet,
     required this.themeRose,
     required this.themeNoir,
@@ -455,6 +497,10 @@ class OsiaStrings {
 
   String skillDeleteBody(String name) =>
       skillDeleteBodyTemplate.replaceAll('{name}', name);
+
+  String autonomousTasks(int done, int total) => autonomousTasksTemplate
+      .replaceAll('{done}', '$done')
+      .replaceAll('{total}', '$total');
 
   /// Localized display name for a theme palette key.
   String themeName(String paletteKey) {
@@ -657,6 +703,27 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   metricGpuTemp: 'GPU temp.',
   sectionGeneral: 'General',
   timeFormatLabel: 'Time format',
+  autonomousTitle: 'Autonomous',
+  autonomousObjectiveLabel: 'Objective',
+  autonomousObjectiveHint: 'Describe what OSIA should accomplish on its own…',
+  autonomousPickModel: 'Choose a model',
+  autonomousNoConfiguredModels:
+      'No configured model — add an API key in Providers first.',
+  autonomousStart: 'Start',
+  autonomousPlanning: 'Planning…',
+  autonomousRunning: 'Running',
+  autonomousInterrupt: 'Pause',
+  autonomousAbort: 'Abandon',
+  autonomousIdle: 'No autonomous task running',
+  autonomousBusy: 'An autonomous task is already running.',
+  autonomousDone: 'Task completed',
+  autonomousFailed: 'Task failed',
+  autonomousAborted: 'Task abandoned',
+  autonomousInterrupted: 'Paused',
+  autonomousPhase: 'Phase',
+  autonomousObjectiveRequired: 'Enter an objective first.',
+  autonomousModelRequired: 'Choose a model first.',
+  autonomousTasksTemplate: '{done} / {total} tasks',
   themeViolet: 'Violet',
   themeRose: 'Rose',
   themeNoir: 'Black',
@@ -850,6 +917,27 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   metricGpuTemp: 'Temp. GPU',
   sectionGeneral: 'Général',
   timeFormatLabel: 'Format horaire',
+  autonomousTitle: 'Autonome',
+  autonomousObjectiveLabel: 'Objectif',
+  autonomousObjectiveHint: "Décrivez ce qu'OSIA doit accomplir seul…",
+  autonomousPickModel: 'Choisir un modèle',
+  autonomousNoConfiguredModels:
+      "Aucun modèle configuré — ajoutez d'abord une clé API dans Fournisseurs.",
+  autonomousStart: 'Démarrer',
+  autonomousPlanning: 'Planification…',
+  autonomousRunning: 'En cours',
+  autonomousInterrupt: 'Pause',
+  autonomousAbort: 'Abandonner',
+  autonomousIdle: 'Aucune tâche autonome en cours',
+  autonomousBusy: 'Une tâche autonome est déjà en cours.',
+  autonomousDone: 'Tâche terminée',
+  autonomousFailed: 'Tâche échouée',
+  autonomousAborted: 'Tâche abandonnée',
+  autonomousInterrupted: 'En pause',
+  autonomousPhase: 'Phase',
+  autonomousObjectiveRequired: "Saisissez d'abord un objectif.",
+  autonomousModelRequired: "Choisissez d'abord un modèle.",
+  autonomousTasksTemplate: '{done} / {total} tâches',
   themeViolet: 'Violet',
   themeRose: 'Rose',
   themeNoir: 'Noir',
@@ -1035,6 +1123,26 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   metricGpuTemp: 'GPU 温度',
   sectionGeneral: '通用',
   timeFormatLabel: '时间格式',
+  autonomousTitle: '自主',
+  autonomousObjectiveLabel: '目标',
+  autonomousObjectiveHint: '描述 OSIA 需要自主完成的任务…',
+  autonomousPickModel: '选择模型',
+  autonomousNoConfiguredModels: '没有已配置的模型 — 请先在「提供商」中添加 API 密钥。',
+  autonomousStart: '开始',
+  autonomousPlanning: '规划中…',
+  autonomousRunning: '运行中',
+  autonomousInterrupt: '暂停',
+  autonomousAbort: '放弃',
+  autonomousIdle: '没有正在运行的自主任务',
+  autonomousBusy: '已有一个自主任务正在运行。',
+  autonomousDone: '任务完成',
+  autonomousFailed: '任务失败',
+  autonomousAborted: '任务已放弃',
+  autonomousInterrupted: '已暂停',
+  autonomousPhase: '阶段',
+  autonomousObjectiveRequired: '请先输入目标。',
+  autonomousModelRequired: '请先选择模型。',
+  autonomousTasksTemplate: '{done} / {total} 个任务',
   themeViolet: '紫色',
   themeRose: '玫瑰',
   themeNoir: '黑色',
@@ -1220,6 +1328,26 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   metricGpuTemp: 'GPU 温度',
   sectionGeneral: '一般',
   timeFormatLabel: '時刻表示形式',
+  autonomousTitle: '自律',
+  autonomousObjectiveLabel: '目標',
+  autonomousObjectiveHint: 'OSIA が自律的に達成すべき内容を入力…',
+  autonomousPickModel: 'モデルを選択',
+  autonomousNoConfiguredModels: '設定済みのモデルがありません — まず「プロバイダー」で API キーを追加してください。',
+  autonomousStart: '開始',
+  autonomousPlanning: '計画中…',
+  autonomousRunning: '実行中',
+  autonomousInterrupt: '一時停止',
+  autonomousAbort: '中止',
+  autonomousIdle: '実行中の自律タスクはありません',
+  autonomousBusy: '自律タスクはすでに実行中です。',
+  autonomousDone: 'タスク完了',
+  autonomousFailed: 'タスク失敗',
+  autonomousAborted: 'タスクを中止しました',
+  autonomousInterrupted: '一時停止中',
+  autonomousPhase: 'フェーズ',
+  autonomousObjectiveRequired: 'まず目標を入力してください。',
+  autonomousModelRequired: 'まずモデルを選択してください。',
+  autonomousTasksTemplate: '{done} / {total} タスク',
   themeViolet: 'バイオレット',
   themeRose: 'ローズ',
   themeNoir: 'ブラック',
@@ -1417,6 +1545,27 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   metricGpuTemp: 'GPU-Temp.',
   sectionGeneral: 'Allgemein',
   timeFormatLabel: 'Zeitformat',
+  autonomousTitle: 'Autonom',
+  autonomousObjectiveLabel: 'Ziel',
+  autonomousObjectiveHint: 'Beschreibe, was OSIA eigenständig erledigen soll…',
+  autonomousPickModel: 'Modell wählen',
+  autonomousNoConfiguredModels:
+      'Kein konfiguriertes Modell — füge zuerst unter Anbieter einen API-Schlüssel hinzu.',
+  autonomousStart: 'Starten',
+  autonomousPlanning: 'Planung…',
+  autonomousRunning: 'Läuft',
+  autonomousInterrupt: 'Pause',
+  autonomousAbort: 'Abbrechen',
+  autonomousIdle: 'Keine autonome Aufgabe aktiv',
+  autonomousBusy: 'Eine autonome Aufgabe läuft bereits.',
+  autonomousDone: 'Aufgabe abgeschlossen',
+  autonomousFailed: 'Aufgabe fehlgeschlagen',
+  autonomousAborted: 'Aufgabe abgebrochen',
+  autonomousInterrupted: 'Pausiert',
+  autonomousPhase: 'Phase',
+  autonomousObjectiveRequired: 'Gib zuerst ein Ziel ein.',
+  autonomousModelRequired: 'Wähle zuerst ein Modell.',
+  autonomousTasksTemplate: '{done} / {total} Aufgaben',
   themeViolet: 'Violett',
   themeRose: 'Rosé',
   themeNoir: 'Schwarz',
@@ -1610,6 +1759,27 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   metricGpuTemp: 'Temp. GPU',
   sectionGeneral: 'General',
   timeFormatLabel: 'Formato de hora',
+  autonomousTitle: 'Autónomo',
+  autonomousObjectiveLabel: 'Objetivo',
+  autonomousObjectiveHint: 'Describe lo que OSIA debe lograr por su cuenta…',
+  autonomousPickModel: 'Elegir un modelo',
+  autonomousNoConfiguredModels:
+      'Ningún modelo configurado — añade primero una clave API en Proveedores.',
+  autonomousStart: 'Iniciar',
+  autonomousPlanning: 'Planificando…',
+  autonomousRunning: 'En curso',
+  autonomousInterrupt: 'Pausar',
+  autonomousAbort: 'Abandonar',
+  autonomousIdle: 'No hay ninguna tarea autónoma en curso',
+  autonomousBusy: 'Ya hay una tarea autónoma en curso.',
+  autonomousDone: 'Tarea completada',
+  autonomousFailed: 'Tarea fallida',
+  autonomousAborted: 'Tarea abandonada',
+  autonomousInterrupted: 'En pausa',
+  autonomousPhase: 'Fase',
+  autonomousObjectiveRequired: 'Introduce primero un objetivo.',
+  autonomousModelRequired: 'Elige primero un modelo.',
+  autonomousTasksTemplate: '{done} / {total} tareas',
   themeViolet: 'Violeta',
   themeRose: 'Rosa',
   themeNoir: 'Negro',

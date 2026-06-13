@@ -428,6 +428,96 @@ class ConversationsListMessage {
   const ConversationsListMessage(this.conversations);
 }
 
+/// One `autonomous_progress` frame broadcast by the PC while an autonomous run
+/// is active (WOR-45 Phase 5). Like [ConfigData], [ApiKeysMessage],
+/// [HeartbeatDataMessage], [NewChatMessage] and [ConversationsListMessage],
+/// this is deliberately NOT part of the sealed [OsiaMessage] hierarchy:
+/// chat_screen.dart switches over OsiaMessage exhaustively with no `default`,
+/// so adding a sealed subtype would break its compile (and CLAUDE.md forbids
+/// touching that path). It rides its own [WebSocketService.autonomousStream]
+/// instead, exactly like config/api_keys/heartbeat/new_chat/conversations_list.
+///
+/// [event] is the lifecycle marker the UI keys off
+/// (e.g. `planning`, `phase`, `progress`, `done`, `failed`, `aborted`,
+/// `interrupted`, `idle`, `busy`). Every other field is optional and only
+/// present on the frames that carry it.
+class AutonomousProgressMessage {
+  /// Lifecycle marker for this frame (planning / phase / progress / done /
+  /// failed / aborted / interrupted / idle / busy …).
+  final String? event;
+
+  /// Human-readable name of the current phase, when the run reports phases.
+  final String? phaseName;
+
+  /// Completed / total task counts for the live "X / Y" progress line.
+  final int? tasksDone;
+  final int? tasksTotal;
+
+  /// Free-form status line describing the active step.
+  final String? status;
+
+  /// The objective the run is working on, echoed back so a client that
+  /// reconnects mid-run can render it without local state.
+  final String? objective;
+
+  /// Server-side id of the run / current task, when provided.
+  final String? taskId;
+
+  /// Why the run ended or paused (carried on terminal / interrupt frames).
+  final String? reason;
+
+  const AutonomousProgressMessage({
+    this.event,
+    this.phaseName,
+    this.tasksDone,
+    this.tasksTotal,
+    this.status,
+    this.objective,
+    this.taskId,
+    this.reason,
+  });
+
+  factory AutonomousProgressMessage.fromJson(Map<String, dynamic> json) {
+    // Read the first present alias as a non-empty string, or null when none of
+    // the aliases carry a value. (Tolerates snake_case / camelCase server keys.)
+    String? pickStr(List<String> keys) {
+      for (final k in keys) {
+        final v = json[k];
+        if (v != null) {
+          final s = v.toString();
+          if (s.isNotEmpty) return s;
+        }
+      }
+      return null;
+    }
+
+    // Read the first present alias as an int, accepting numbers or numeric
+    // strings; null when absent / unparseable.
+    int? pickInt(List<String> keys) {
+      for (final k in keys) {
+        final v = json[k];
+        if (v is num) return v.toInt();
+        if (v is String) {
+          final parsed = int.tryParse(v);
+          if (parsed != null) return parsed;
+        }
+      }
+      return null;
+    }
+
+    return AutonomousProgressMessage(
+      event: pickStr(['event']),
+      phaseName: pickStr(['phase_name', 'phaseName', 'phase']),
+      tasksDone: pickInt(['tasks_done', 'tasksDone']),
+      tasksTotal: pickInt(['tasks_total', 'tasksTotal']),
+      status: pickStr(['status', 'message']),
+      objective: pickStr(['objective']),
+      taskId: pickStr(['task_id', 'taskId']),
+      reason: pickStr(['reason']),
+    );
+  }
+}
+
 // ── WebSocket service ─────────────────────────────────────────────────────
 
 /// Manages the WebSocket connection to the OSIA PC server.
@@ -488,6 +578,9 @@ class WebSocketService {
   final StreamController<ConversationsListMessage> _conversationsListCtrl =
       StreamController<ConversationsListMessage>.broadcast();
 
+  final StreamController<AutonomousProgressMessage> _autonomousCtrl =
+      StreamController<AutonomousProgressMessage>.broadcast();
+
   /// Stream of connection state changes.
   Stream<ConnectionState> get connectionStream => _connectionCtrl.stream;
 
@@ -517,6 +610,11 @@ class WebSocketService {
   /// off [messageStream] for the same reason as [configStream].
   Stream<ConversationsListMessage> get conversationsListStream =>
       _conversationsListCtrl.stream;
+
+  /// Stream of autonomous-run progress frames (`autonomous_progress`, WOR-45
+  /// Phase 5). Kept off [messageStream] for the same reason as [configStream].
+  Stream<AutonomousProgressMessage> get autonomousStream =>
+      _autonomousCtrl.stream;
 
   /// Current connection state.
   ConnectionState _state = ConnectionState.disconnected;
@@ -700,6 +798,38 @@ class WebSocketService {
     _send({'type': 'get_conversations'});
   }
 
+  // ── Autonomous runs (WOR-45 Phase 5) ──
+  //
+  // The PC accepts these commands and broadcasts `autonomous_progress` frames
+  // (surfaced on [autonomousStream]). Purely additive: they reuse the same
+  // [_send] path as every other command and touch nothing on the chat /
+  // streaming path.
+
+  /// Start an autonomous run working toward [objective] using [model]
+  /// (a configured `"provider:model"` / model id). Progress arrives on
+  /// [autonomousStream].
+  void sendAutonomousStart(String objective, String model) {
+    _send({'type': 'autonomous_start', 'objective': objective, 'model': model});
+  }
+
+  /// Pause the current autonomous run (resumable — the server keeps its state).
+  void sendAutonomousInterrupt() {
+    _send({'type': 'autonomous_interrupt'});
+  }
+
+  /// Abandon the current autonomous run entirely (not resumable).
+  void sendAutonomousAbort() {
+    _send({'type': 'autonomous_abort'});
+  }
+
+  /// Ask the PC for the current autonomous-run status, so a client that
+  /// reconnects mid-run can render live progress. The reply arrives on
+  /// [autonomousStream] as an [AutonomousProgressMessage] (a snapshot of the
+  /// active run, or an `event:"idle"` frame when nothing is running).
+  void sendGetAutonomousStatus() {
+    _send({'type': 'get_autonomous_status'});
+  }
+
   /// Persist the personality document (`~/.osia/personality.md`) on the PC.
   void sendSetPersonality(String text) {
     _send({'type': 'set_personality', 'text': text});
@@ -756,6 +886,7 @@ class WebSocketService {
     _heartbeatCtrl.close();
     _newChatCtrl.close();
     _conversationsListCtrl.close();
+    _autonomousCtrl.close();
   }
 
   /// Strip any scheme, path, or port the user may have pasted into the
@@ -1047,6 +1178,17 @@ class WebSocketService {
           debugPrint('[OSIA WS] conversations_list: ${convs.length} item(s)');
           if (!_conversationsListCtrl.isClosed) {
             _conversationsListCtrl.add(ConversationsListMessage(convs));
+          }
+        case 'autonomous_progress':
+          // Live progress for an autonomous run (WOR-45 Phase 5). Delivered on
+          // its own [autonomousStream] (NOT the paced message queue) so it can't
+          // disturb response-chunk streaming.
+          final prog = AutonomousProgressMessage.fromJson(json);
+          debugPrint(
+              '[OSIA WS] autonomous_progress: event=${prog.event} '
+              'phase="${prog.phaseName}" ${prog.tasksDone}/${prog.tasksTotal}');
+          if (!_autonomousCtrl.isClosed) {
+            _autonomousCtrl.add(prog);
           }
         default:
           debugPrint(
