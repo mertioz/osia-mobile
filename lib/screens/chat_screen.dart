@@ -381,11 +381,58 @@ class _ChatScreenState extends State<ChatScreen> {
       case ws.ConversationsMessage(:final conversations):
         setState(() => _conversations = conversations);
       case ws.ActiveConversationMessage(:final id, :final title):
+        // Defensive mirror of the conversation_history guard below: an inbound
+        // active_conversation must never silently repoint the view off the
+        // conversation the user is on. Adopt it only when nothing is displayed
+        // yet (first launch, or a just-created new chat where
+        // _activeConversationId was reset to null — preserving the
+        // new-conversation creation UX), OR it matches the conversation the
+        // user is viewing / just explicitly requested. Otherwise it is an
+        // unsolicited server repoint, so ignore it: the displayed conversation
+        // changes only on explicit user action, never in reaction to a frame.
+        final viewingActive = _activeConversationId;
+        if (viewingActive != null &&
+            id != viewingActive &&
+            id != _pendingConvLoadId) {
+          return;
+        }
         setState(() {
           _activeConversationId = id;
           _activeConversationTitle = title;
         });
       case ws.ConversationHistoryMessage(:final id, :final messages):
+        // Capture the in-flight requested-load id BEFORE anything clears it: a
+        // late/deferred history frame for a DIFFERENT conversation must not
+        // cancel a load the user is still waiting on (part of the WOR-53/WOR-75
+        // root cause — a late history for A used to cancel a pending load of B).
+        final pendingId = _pendingConvLoadId;
+        final viewing = _activeConversationId;
+        // The displayed conversation changes ONLY on explicit user action — an
+        // inbound frame is a routing hint, never a switch command. Apply this
+        // history to the view only when it is FOR the conversation the user is
+        // viewing (the WOR-62 deferred-recovery / reconnect re-request
+        // reconcile), the one they just explicitly requested via
+        // _loadConversation, or — when nothing is displayed yet — first-launch
+        // hydration (which overrides no user choice). An untagged (null/empty
+        // id) frame can only be the reply to our own load_conversation, so it
+        // too targets the current view and is allowed through.
+        final hasId = id != null && id.isNotEmpty;
+        final isForView = hasId && (id == viewing || id == pendingId);
+        final nothingDisplayed = viewing == null && pendingId == null;
+        if (hasId && !isForView && !nothingDisplayed) {
+          // History for a conversation the user is NOT viewing (e.g. the
+          // server's WOR-62 deferred push for the last-messaged conv). Do NOT
+          // clear _entries or repoint _activeConversationId — that is exactly
+          // the forced redirect (WOR-75) and the mid-generation bounce (the
+          // WOR-53 regression) being fixed. The reply text is already kept live
+          // in the service's per-conversation buffer (bufferedText/isStreaming,
+          // fed by _onConvStream regardless of which conversation is on screen),
+          // and tapping that conversation re-requests its persisted history via
+          // _loadConversation — so its content is current when the user later
+          // switches to it. Leave the pending load + retry untouched so a
+          // still-pending load of a DIFFERENT conversation keeps waiting.
+          return;
+        }
         // The content we were waiting on has arrived — stand down the retry.
         _convLoadRetry?.cancel();
         _pendingConvLoadId = null;
