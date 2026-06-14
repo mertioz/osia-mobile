@@ -116,6 +116,19 @@ class _ChatScreenState extends State<ChatScreen> {
   // Index of the entry currently receiving streamed chunks (null when idle).
   int? _streamingIndex;
 
+  // WOR-75/WOR-53/WOR-62 (simplified): true when the displayed conversation has
+  // an in-flight turn we are NOT watching stream live — the user switched back
+  // to it, or we reconnected after a disconnect/sleep. In that mode the chat
+  // shows the "OSIA is working in the background" placeholder (logo + localized
+  // text + thinking animation) INSTEAD of a partial/empty view, and the live
+  // [_onConvStream] render is suppressed. It is cleared — and the real reply
+  // rendered — when the turn's terminal frame arrives or the deferred
+  // conversation_history re-fetch (WOR-62) lands. This only changes WHAT is
+  // rendered for the already-displayed conversation; it NEVER switches the view
+  // (the WOR-75 guard stays). The active live-streaming conversation (user
+  // stayed on it) is unaffected — this is false there, so streaming is normal.
+  bool _backgroundPlaceholder = false;
+
   // Pending attachment shown as a chip in the input bar. Only sent when
   // the user taps the send arrow (or hits enter).
   String? _pendingFilename;
@@ -242,6 +255,17 @@ class _ChatScreenState extends State<ChatScreen> {
             final openConv = _pendingConvLoadId ?? _activeConversationId;
             if (openConv != null && openConv.isNotEmpty) {
               _requestConversationContent(openConv);
+            }
+            // WOR-75/WOR-53/WOR-62: if the displayed conversation has an
+            // in-flight turn we weren't watching live (the socket dropped
+            // during sleep/network loss), show the background-work placeholder
+            // until the deferred conversation_history re-fetch above brings the
+            // finished reply. The live stream on the old socket is gone and the
+            // new socket won't resume it — so the placeholder, not a stale
+            // partial, is what we show. Never switches the view (WOR-75 guard).
+            final displayed = _activeConversationId;
+            if (displayed != null && _wsService.isPending(displayed)) {
+              _backgroundPlaceholder = true;
             }
           }
         });
@@ -449,6 +473,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 )));
           _thinking = false;
           _noResponse = false;
+          // WOR-75/WOR-53/WOR-62: this history IS the recovered reply (the
+          // deferred re-fetch fires only once the turn has finished), so the
+          // background-work placeholder is done — render the real conversation.
+          _backgroundPlaceholder = false;
           if (id != null && id.isNotEmpty) _activeConversationId = id;
           // WOR-53: while a turn is in flight the persisted history doesn't yet
           // include its reply, so blindly reconciling would blank the in-flight
@@ -463,6 +491,14 @@ class _ChatScreenState extends State<ChatScreen> {
           // instead of appending a second one.
           final convId =
               (id != null && id.isNotEmpty) ? id : _activeConversationId;
+          // WOR-75/WOR-53/WOR-62 (simplified): the persisted history is now the
+          // single source of truth for this conversation's finished reply, so
+          // drop its streamed-reply buffer (and clear any stuck pending /
+          // streaming flag — e.g. a disconnect ate the terminal `done`). This
+          // also makes the in-flight re-attach reconcile below a no-op: with no
+          // buffer, [liveText] is empty and [streaming] is false, so we render
+          // the recovered history cleanly instead of a stale partial bubble.
+          if (convId != null) _wsService.clearConvBuffer(convId);
           final liveText =
               convId != null ? _wsService.bufferedText(convId) : '';
           final streaming =
@@ -537,6 +573,24 @@ class _ChatScreenState extends State<ChatScreen> {
     // watchdog down (moved here from the old streaming message cases).
     _cancelFirstTokenTimer();
 
+    // WOR-75/WOR-53/WOR-62 (simplified): while the background-work placeholder
+    // is up for this conversation (the user switched back to it, or we
+    // reconnected, and are NOT watching it stream live), do NOT render the live
+    // partial into the view. The reply is recovered via the deferred
+    // conversation_history re-fetch when the turn finishes (which clears the
+    // placeholder and renders the real reply). On the terminal frame we only
+    // clear the conversation-agnostic flags; the placeholder stays until that
+    // history lands, so there's no flash of an empty/partial view.
+    if (_backgroundPlaceholder) {
+      if (event.done || event.error) {
+        setState(() {
+          _awaitingResponse = false;
+          _thinking = false;
+        });
+      }
+      return;
+    }
+
     if (event.done || event.error) {
       // Terminal frame for the active conversation — finalize the streaming
       // bubble (the streaming-finalize the old StatusMessage done/error did).
@@ -600,31 +654,36 @@ class _ChatScreenState extends State<ChatScreen> {
     // leaving — drop them so a late timeout can't fire on the new chat.
     _cancelFirstTokenTimer();
     _pendingTurn = null;
+    // WOR-75/WOR-53/WOR-62 (simplified): is the conversation we're switching TO
+    // mid-turn? If so we show the background-work placeholder instead of
+    // replaying its partial buffer — the finished reply arrives via the
+    // deferred conversation_history re-fetch (sent by _requestConversationContent
+    // above) once the turn ends.
+    final pending = _wsService.isPending(conv.id);
     setState(() {
-      // WOR-53: no longer discard the in-flight response. The conversation we
-      // are leaving keeps streaming into its service buffer in the background;
-      // returning to it will hydrate those tokens. We seed THIS conversation's
-      // view from its buffer below — the load_conversation→conversation_history
-      // round-trip reconciles to persisted history right after.
       _entries.clear();
       _thinking = false;
       _noResponse = false;
+      _streamingIndex = null;
       _activeConversationId = conv.id;
       _activeConversationTitle = conv.title;
-      // Hydrate any reply that streamed for this conversation while it was
-      // backgrounded, restoring the live streaming bubble if its turn is still
-      // in flight.
-      final buffered = _wsService.bufferedText(conv.id);
-      if (buffered.isNotEmpty) {
-        final streaming = _wsService.isStreaming(conv.id);
-        _entries.add(_ChatEntry(
-          content: buffered,
-          isUser: false,
-          isStreaming: streaming,
-        ));
-        _streamingIndex = streaming ? _entries.length - 1 : null;
-      } else {
-        _streamingIndex = null;
+      _backgroundPlaceholder = pending;
+      if (!pending) {
+        // WOR-53: a finished conversation's buffer (if any) still holds its
+        // reply — seed the view from it so the switch isn't blank; the
+        // load_conversation→conversation_history round-trip reconciles to
+        // persisted history right after. (A pending conversation skips this and
+        // shows the placeholder instead of a partial bubble.)
+        final buffered = _wsService.bufferedText(conv.id);
+        if (buffered.isNotEmpty) {
+          final streaming = _wsService.isStreaming(conv.id);
+          _entries.add(_ChatEntry(
+            content: buffered,
+            isUser: false,
+            isStreaming: streaming,
+          ));
+          _streamingIndex = streaming ? _entries.length - 1 : null;
+        }
       }
     });
     Navigator.of(context).maybePop();
@@ -681,6 +740,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
+      _backgroundPlaceholder = false;
       _activeConversationId = null;
       _activeConversationTitle = null;
     });
@@ -706,6 +766,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
+      _backgroundPlaceholder = false;
       _activeConversationId = null;
       _activeConversationTitle = null;
     });
@@ -754,6 +815,8 @@ class _ChatScreenState extends State<ChatScreen> {
         _entries.clear();
         _thinking = false;
         _noResponse = false;
+        _streamingIndex = null;
+        _backgroundPlaceholder = false;
         _activeConversationId = null;
         _activeConversationTitle = null;
       }
@@ -867,6 +930,15 @@ class _ChatScreenState extends State<ChatScreen> {
             ? strings.analyzeImagePrompt
             : strings.hereIsFile(filename ?? ''));
     _wsService.sendText(prompt);
+    // WOR-75/WOR-53/WOR-62: mark this conversation's turn in flight at send
+    // time (when its id is known) so switching away and straight back shows the
+    // background-work placeholder even before the first chunk arrives. A
+    // brand-new conversation has no id yet — its first streamed chunk carries
+    // the id and marks it then.
+    final sendingConv = _activeConversationId;
+    if (sendingConv != null && sendingConv.isNotEmpty) {
+      _wsService.markPending(sendingConv);
+    }
 
     // Remember this exact turn so a no-response timeout can re-send it verbatim
     // without the user retyping (see [_retryLastTurn]).
@@ -887,6 +959,9 @@ class _ChatScreenState extends State<ChatScreen> {
       // first token, to mask network + agent-construction latency.
       _thinking = true;
       _noResponse = false;
+      // The user is actively engaged on this conversation — never the
+      // background-work placeholder (WOR-75/WOR-53/WOR-62).
+      _backgroundPlaceholder = false;
     });
     // Arm the 12s no-response watchdog (cancelled at the first sign of life
     // from the server for this turn — see [_onMessage]).
@@ -957,10 +1032,17 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
     _wsService.sendText(turn.prompt);
+    // WOR-75/WOR-53/WOR-62: re-mark the displayed conversation's turn in flight
+    // (see [_sendText]) so a switch-away-and-back shows the placeholder.
+    final retryConv = _activeConversationId;
+    if (retryConv != null && retryConv.isNotEmpty) {
+      _wsService.markPending(retryConv);
+    }
     setState(() {
       _awaitingResponse = true;
       _thinking = true;
       _noResponse = false;
+      _backgroundPlaceholder = false;
     });
     _speakRequested = false;
     _armFirstTokenTimer();
@@ -1009,6 +1091,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (base64Wav != null && base64Wav.isNotEmpty) {
         _wsService.sendAudio(base64Wav);
         _awaitingResponse = true;
+        // WOR-75/WOR-53/WOR-62: mark the displayed conversation's turn in flight
+        // (see [_sendText]); the user is engaged, so never the placeholder.
+        final voiceConv = _activeConversationId;
+        if (voiceConv != null && voiceConv.isNotEmpty) {
+          _wsService.markPending(voiceConv);
+        }
+        _backgroundPlaceholder = false;
         // Same as _sendText: a new turn invalidates stale speak requests.
         _speakRequested = false;
       }
@@ -1233,6 +1322,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _activeConversationId = null;
       _activeConversationTitle = null;
       _streamingIndex = null;
+      _backgroundPlaceholder = false;
     });
     _initConnection();
   }
@@ -1343,7 +1433,14 @@ class _ChatScreenState extends State<ChatScreen> {
           Column(
             children: [
               Expanded(
-                child: _entries.isEmpty && !_thinking && !_noResponse
+                // WOR-75/WOR-53/WOR-62: when the displayed conversation has an
+                // in-flight turn we're not watching live (switch-back /
+                // reconnect), show the background-work placeholder instead of a
+                // partial/empty view. Only changes WHAT is rendered for the
+                // already-displayed conversation — never switches the view.
+                child: _backgroundPlaceholder
+                    ? _buildBackgroundPlaceholder(palette, strings)
+                    : _entries.isEmpty && !_thinking && !_noResponse
                     ? _buildEmptyState(palette, strings)
                     : ListView.builder(
                         controller: _scrollCtrl,
@@ -1476,6 +1573,41 @@ class _ChatScreenState extends State<ChatScreen> {
               color: palette.textMuted.withValues(alpha: 0.8),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// WOR-75/WOR-53/WOR-62: the "OSIA is working in the background" placeholder.
+  /// Shown for the displayed conversation when it has an in-flight turn we are
+  /// NOT watching stream live (the user switched back to it, or we reconnected
+  /// after a disconnect/sleep). A centered, gently-pulsing OSIA logo + the
+  /// localized line + the on-brand thinking animation. Replaced by the real
+  /// reply when the turn finishes (terminal frame or the deferred
+  /// conversation_history re-fetch). On-brand: background #0d0b12, violet
+  /// accent — reuses the same logo asset and [ThinkingIndicator] as the app.
+  Widget _buildBackgroundPlaceholder(OsiaPalette palette, OsiaStrings strings) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const _PulsingLogo(),
+          const SizedBox(height: 18),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Text(
+              strings.osiaWorkingBackground,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+                color: palette.textPrimary.withValues(alpha: 0.85),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          const ThinkingIndicator(),
         ],
       ),
     );
@@ -1972,6 +2104,87 @@ class _MiniThinkingDotsState extends State<_MiniThinkingDots>
                     .transform(tri.clamp(0.0, 1.0).toDouble());
               }),
             ),
+    );
+  }
+}
+
+/// The gently-pulsing OSIA logo at the center of the "working in the
+/// background" placeholder (WOR-75/WOR-53/WOR-62, see
+/// [_ChatScreenState._buildBackgroundPlaceholder]). A soft breathe — a small
+/// scale + opacity loop on [MotionDurations.pulse] — so the placeholder feels
+/// alive without distracting. Honors reduced motion by rendering the logo
+/// static (no loop). Uses the same `osia_logo_mark.png` asset as the empty
+/// state, so the placeholder stays on-brand.
+class _PulsingLogo extends StatefulWidget {
+  const _PulsingLogo();
+
+  @override
+  State<_PulsingLogo> createState() => _PulsingLogoState();
+}
+
+class _PulsingLogoState extends State<_PulsingLogo>
+    with SingleTickerProviderStateMixin {
+  static const double _size = 64;
+
+  late final AnimationController _ctrl;
+  bool _reduced = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: MotionDurations.pulse,
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Re-sync on every dependency change so a runtime reduced-motion toggle is
+    // honored: hold the logo static when reduced, otherwise keep the soft
+    // breathe looping (reverse so it eases in and out, never snapping).
+    _reduced = Motion.reduced(context);
+    if (_reduced) {
+      _ctrl.stop();
+    } else if (!_ctrl.isAnimating) {
+      _ctrl.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Widget _logo() => SizedBox(
+        width: _size,
+        height: _size,
+        child: Image.asset(
+          'assets/osia_logo_mark.png',
+          fit: BoxFit.contain,
+          filterQuality: FilterQuality.medium,
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    if (_reduced) return _logo();
+    return AnimatedBuilder(
+      animation: _ctrl,
+      child: _logo(),
+      builder: (context, child) {
+        // easeInOut over the [0,1] loop value → a soft, symmetric breathe.
+        final eased = MotionCurves.loop.transform(_ctrl.value);
+        // Both ranges stay safely within [0,1] for Opacity (no spring here).
+        final opacity = 0.7 + 0.3 * eased;
+        final scale = 0.94 + 0.06 * eased;
+        return Opacity(
+          opacity: opacity,
+          child: Transform.scale(scale: scale, child: child),
+        );
+      },
     );
   }
 }

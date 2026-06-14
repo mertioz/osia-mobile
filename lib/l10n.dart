@@ -75,6 +75,7 @@ class OsiaStrings {
   final String model;
   final String settingsTooltip;
   final String noResponseError;
+  final String osiaWorkingBackground;
 
   // ── Model selector ──
   final String availableModels;
@@ -305,6 +306,7 @@ class OsiaStrings {
     required this.model,
     required this.settingsTooltip,
     required this.noResponseError,
+    required this.osiaWorkingBackground,
     required this.availableModels,
     required this.noModelsReceived,
     required this.modelsLoadFailed,
@@ -567,6 +569,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   model: 'Model',
   settingsTooltip: 'Settings',
   noResponseError: "OSIA didn't respond.",
+  osiaWorkingBackground: 'OSIA is working in the background',
   availableModels: 'Available models',
   noModelsReceived: 'No models received from the server.',
   modelsLoadFailed: 'Unable to load models',
@@ -780,6 +783,7 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   model: 'Modèle',
   settingsTooltip: 'Paramètres',
   noResponseError: "OSIA n'a pas répondu.",
+  osiaWorkingBackground: 'OSIA travaille en arrière-plan',
   availableModels: 'Modèles disponibles',
   noModelsReceived: 'Aucun modèle reçu du serveur.',
   modelsLoadFailed: 'Impossible de charger les modèles',
@@ -993,6 +997,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   model: '模型',
   settingsTooltip: '设置',
   noResponseError: 'OSIA 没有回应。',
+  osiaWorkingBackground: 'OSIA 正在后台工作',
   availableModels: '可用模型',
   noModelsReceived: '未从服务器收到任何模型。',
   modelsLoadFailed: '无法加载模型',
@@ -1199,6 +1204,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   model: 'モデル',
   settingsTooltip: '設定',
   noResponseError: 'OSIA から応答がありませんでした。',
+  osiaWorkingBackground: 'OSIA はバックグラウンドで作業中',
   availableModels: '利用可能なモデル',
   noModelsReceived: 'サーバーからモデルを受信していません。',
   modelsLoadFailed: 'モデルを読み込めません',
@@ -1410,6 +1416,7 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   model: 'Modell',
   settingsTooltip: 'Einstellungen',
   noResponseError: 'OSIA hat nicht geantwortet.',
+  osiaWorkingBackground: 'OSIA arbeitet im Hintergrund',
   availableModels: 'Verfügbare Modelle',
   noModelsReceived: 'Keine Modelle vom Server erhalten.',
   modelsLoadFailed: 'Modelle können nicht geladen werden',
@@ -1627,6 +1634,7 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   model: 'Modelo',
   settingsTooltip: 'Ajustes',
   noResponseError: 'OSIA no respondió.',
+  osiaWorkingBackground: 'OSIA está trabajando en segundo plano',
   availableModels: 'Modelos disponibles',
   noModelsReceived: 'No se recibieron modelos del servidor.',
   modelsLoadFailed: 'No se pueden cargar los modelos',

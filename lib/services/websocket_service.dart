@@ -636,6 +636,18 @@ class WebSocketService {
   /// grow unbounded.
   final Map<String, _ConvStreamState> _streamBuffers = {};
 
+  /// Conversations with an in-flight turn (WOR-75/WOR-53/WOR-62, simplified):
+  /// a message was sent / chunks are arriving for the conversation and no
+  /// terminal `done` / `error` has been received yet. Lives in the long-lived
+  /// service so it survives screen switches and reconnects, letting the chat
+  /// show an "OSIA is working in the background" placeholder for a pending
+  /// conversation the user isn't watching stream live. Added on send
+  /// ([markPending]) and on the first streamed frame
+  /// ([_appendConvDelta]/[_replaceConvText]); removed on the terminal frame
+  /// ([_finishConvStream]) and on delete/new ([clearConvBuffer]). Superset of
+  /// [isStreaming]: it can be set at send time, before the first chunk lands.
+  final Set<String> _pendingConvs = {};
+
   /// Hard cap on retained per-conversation buffers (WOR-53) — a backstop for
   /// buffers the user never explicitly leaves or deletes (e.g. a server-streamed
   /// id absent from the local list). Live streams are never evicted.
@@ -695,12 +707,35 @@ class WebSocketService {
   /// restoring the streaming bubble on switch.
   bool isStreaming(String id) => _streamBuffers[id]?.streaming ?? false;
 
+  /// Whether conversation [id] has an in-flight turn (WOR-75/WOR-53/WOR-62):
+  /// a turn was sent / is streaming and hasn't hit a terminal `done` / `error`
+  /// yet. Drives the "OSIA is working in the background" placeholder shown for
+  /// a pending conversation the user switched back to, or returned to after a
+  /// disconnect/sleep. See [markPending] / [_pendingConvs].
+  bool isPending(String id) => _pendingConvs.contains(id);
+
+  /// Mark conversation [id]'s turn as in flight at SEND time (WOR-75/WOR-53/
+  /// WOR-62) — before the first streamed chunk lands, so switching away and
+  /// straight back shows the background placeholder rather than a blank view.
+  /// The first chunk ([_appendConvDelta]) / full reply ([_replaceConvText])
+  /// also mark it, and the terminal frame ([_finishConvStream]) clears it, so
+  /// this is idempotent and self-clearing. No-op for an empty id (a brand-new
+  /// conversation has no id until the server assigns one; its first streamed
+  /// chunk carries the id and marks it then).
+  void markPending(String id) {
+    if (id.isNotEmpty) _pendingConvs.add(id);
+  }
+
   /// Drop conversation [id]'s streamed-reply buffer (WOR-53). Called when a
   /// conversation is deleted or the chat is reset to a new conversation, so the
   /// buffer map can't grow unbounded. Never closes [convStreamStream] — that
   /// happens only in [dispose].
   void clearConvBuffer(String id) {
     _streamBuffers.remove(id);
+    // WOR-75/WOR-53/WOR-62: a dropped/recovered conversation is no longer
+    // pending (delete/new, or a conversation_history re-fetch that recovered
+    // the finished reply). Clear its pending flag so no stale placeholder lingers.
+    _pendingConvs.remove(id);
   }
 
   /// Current connection state.
@@ -983,6 +1018,7 @@ class WebSocketService {
     _autonomousCtrl.close();
     _convStreamCtrl.close();
     _streamBuffers.clear();
+    _pendingConvs.clear();
   }
 
   /// Strip any scheme, path, or port the user may have pasted into the
@@ -1061,6 +1097,7 @@ class WebSocketService {
     if (needsSpace) st.text.write(' ');
     st.text.write(delta);
     st.streaming = true;
+    _pendingConvs.add(convId); // WOR-75/WOR-53/WOR-62: turn in flight.
     _capConvBuffers();
     _convStreamCtrl.add(ConvStreamEvent(convId, delta: delta));
   }
@@ -1076,6 +1113,7 @@ class WebSocketService {
       ..clear()
       ..write(text);
     st.streaming = true;
+    _pendingConvs.add(convId); // WOR-75/WOR-53/WOR-62: turn in flight.
     _capConvBuffers();
     _convStreamCtrl.add(ConvStreamEvent(convId, delta: text));
   }
@@ -1088,6 +1126,7 @@ class WebSocketService {
     if (convId == null || convId.isEmpty || _convStreamCtrl.isClosed) return;
     final st = _streamBuffers[convId];
     if (st != null) st.streaming = false;
+    _pendingConvs.remove(convId); // WOR-75/WOR-53/WOR-62: turn finished.
     _convStreamCtrl.add(ConvStreamEvent(convId, done: !error, error: error));
   }
 
