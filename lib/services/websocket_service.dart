@@ -518,6 +518,43 @@ class AutonomousProgressMessage {
   }
 }
 
+/// One streamed-response event for a single conversation (WOR-53). Like
+/// [AutonomousProgressMessage] and the other standalone stream messages
+/// (`ConfigData`, `ApiKeysMessage`, `HeartbeatDataMessage`, `NewChatMessage`,
+/// `ConversationsListMessage`), this is deliberately NOT part of the sealed
+/// [OsiaMessage] hierarchy: chat_screen.dart switches over OsiaMessage
+/// exhaustively with no `default`, so adding a sealed subtype would break its
+/// compile (and CLAUDE.md forbids touching that path). It rides its own
+/// [WebSocketService.convStreamStream], exactly like the others.
+///
+/// Carries the [conversationId] the frame belongs to (the server tags
+/// `response_chunk` / `response` / `status` frames with `conversation_id`) so a
+/// client viewing one conversation can let another conversation's reply keep
+/// streaming in the background and render it on return. [delta] is the text
+/// just accrued into that conversation's buffer (null on the terminal frame);
+/// [done] / [error] mark the turn's end (status `done` / `error`).
+class ConvStreamEvent {
+  final String conversationId;
+  final String? delta;
+  final bool done;
+  final bool error;
+  const ConvStreamEvent(
+    this.conversationId, {
+    this.delta,
+    this.done = false,
+    this.error = false,
+  });
+}
+
+/// Per-conversation accumulation of a streamed reply (WOR-53). Holds the text
+/// streamed so far for one conversation plus whether its turn is still live, so
+/// a backgrounded conversation's reply survives a screen switch and can be
+/// hydrated on return (see [WebSocketService.bufferedText] / [isStreaming]).
+class _ConvStreamState {
+  final StringBuffer text = StringBuffer();
+  bool streaming = false;
+}
+
 // ── WebSocket service ─────────────────────────────────────────────────────
 
 /// Manages the WebSocket connection to the OSIA PC server.
@@ -581,6 +618,32 @@ class WebSocketService {
   final StreamController<AutonomousProgressMessage> _autonomousCtrl =
       StreamController<AutonomousProgressMessage>.broadcast();
 
+  // ── Per-conversation stream buffers (WOR-53) ──────────────────────────
+  //
+  // A parallel sink to the paced [messageStream]: every streamed
+  // `response_chunk` / `response` / terminal `status` frame is ALSO accrued
+  // here, keyed by conversation id, and broadcast on [convStreamStream]. This
+  // lets a conversation's reply keep streaming in the background while the
+  // user views another conversation — its tokens land in [_streamBuffers] and
+  // hydrate on return. Entirely additive: it does not touch the paced queue,
+  // the reconnect logic, or the sealed message path.
+
+  /// Streamed-reply buffers keyed by conversation id. Reset at the start of
+  /// each turn (so replies don't accrete across turns), removed on
+  /// delete/new (see [clearConvBuffer]), capped at [_maxConvBuffers] (a
+  /// backstop that evicts the oldest FINISHED buffer — never a live stream),
+  /// and dropped wholesale when the service is disposed — so the map can't
+  /// grow unbounded.
+  final Map<String, _ConvStreamState> _streamBuffers = {};
+
+  /// Hard cap on retained per-conversation buffers (WOR-53) — a backstop for
+  /// buffers the user never explicitly leaves or deletes (e.g. a server-streamed
+  /// id absent from the local list). Live streams are never evicted.
+  static const int _maxConvBuffers = 32;
+
+  final StreamController<ConvStreamEvent> _convStreamCtrl =
+      StreamController<ConvStreamEvent>.broadcast();
+
   /// Stream of connection state changes.
   Stream<ConnectionState> get connectionStream => _connectionCtrl.stream;
 
@@ -615,6 +678,30 @@ class WebSocketService {
   /// Phase 5). Kept off [messageStream] for the same reason as [configStream].
   Stream<AutonomousProgressMessage> get autonomousStream =>
       _autonomousCtrl.stream;
+
+  /// Stream of per-conversation streamed-reply events (`response_chunk` /
+  /// `response` / terminal `status`, WOR-53). Kept off [messageStream] for the
+  /// same reason as [configStream]; carries the conversation id so a client can
+  /// route a backgrounded stream to the right conversation.
+  Stream<ConvStreamEvent> get convStreamStream => _convStreamCtrl.stream;
+
+  /// The reply text streamed so far for conversation [id] (WOR-53), for
+  /// hydrating the chat when switching to a conversation whose reply streamed
+  /// while it was backgrounded. Empty when nothing has streamed for [id].
+  String bufferedText(String id) => _streamBuffers[id]?.text.toString() ?? '';
+
+  /// Whether conversation [id]'s reply is still streaming (WOR-53) — i.e. its
+  /// turn hasn't hit a terminal `status` (`done` / `error`) yet. Drives
+  /// restoring the streaming bubble on switch.
+  bool isStreaming(String id) => _streamBuffers[id]?.streaming ?? false;
+
+  /// Drop conversation [id]'s streamed-reply buffer (WOR-53). Called when a
+  /// conversation is deleted or the chat is reset to a new conversation, so the
+  /// buffer map can't grow unbounded. Never closes [convStreamStream] — that
+  /// happens only in [dispose].
+  void clearConvBuffer(String id) {
+    _streamBuffers.remove(id);
+  }
 
   /// Current connection state.
   ConnectionState _state = ConnectionState.disconnected;
@@ -706,6 +793,8 @@ class WebSocketService {
   /// Ask the server to delete a conversation.
   void sendDeleteConversation(String id) {
     _send({'type': 'delete_conversation', 'id': id});
+    // WOR-53: the conversation is gone — drop any streamed-reply buffer for it.
+    clearConvBuffer(id);
   }
 
   /// Ask the server for the list of available models.
@@ -892,6 +981,8 @@ class WebSocketService {
     _newChatCtrl.close();
     _conversationsListCtrl.close();
     _autonomousCtrl.close();
+    _convStreamCtrl.close();
+    _streamBuffers.clear();
   }
 
   /// Strip any scheme, path, or port the user may have pasted into the
@@ -943,6 +1034,79 @@ class WebSocketService {
         return;
       }
     }
+  }
+
+  // ── Per-conversation stream buffering (WOR-53) ────────────────────────
+  //
+  // These run alongside (never instead of) the paced [_emit] above — they
+  // accrue the same streamed text into [_streamBuffers] and broadcast on
+  // [convStreamStream]. Nothing here touches the queue, its pacing, or the
+  // reconnect path.
+
+  /// Accrue a streamed [delta] into conversation [convId]'s buffer and
+  /// broadcast a [ConvStreamEvent]. A new turn (buffer not currently
+  /// streaming) starts fresh so replies don't accrete across turns. The
+  /// space-aware joining mirrors the chat screen's chunk handling so hydrated
+  /// text reads the same as live text.
+  void _appendConvDelta(String? convId, String delta) {
+    if (convId == null || convId.isEmpty || _convStreamCtrl.isClosed) return;
+    final st = _streamBuffers.putIfAbsent(convId, () => _ConvStreamState());
+    // First chunk of a fresh turn: drop the previous turn's text.
+    if (!st.streaming) st.text.clear();
+    final existing = st.text.toString();
+    final needsSpace = existing.isNotEmpty &&
+        !existing.endsWith(' ') &&
+        !existing.endsWith('\n') &&
+        !delta.startsWith(' ');
+    if (needsSpace) st.text.write(' ');
+    st.text.write(delta);
+    st.streaming = true;
+    _capConvBuffers();
+    _convStreamCtrl.add(ConvStreamEvent(convId, delta: delta));
+  }
+
+  /// Replace conversation [convId]'s buffer with the canonical full reply
+  /// [text] (the `response` frame) and broadcast it. Keeps the buffer's
+  /// hydration text in sync with the assembled reply rather than the
+  /// chunk-concatenation.
+  void _replaceConvText(String? convId, String text) {
+    if (convId == null || convId.isEmpty || _convStreamCtrl.isClosed) return;
+    final st = _streamBuffers.putIfAbsent(convId, () => _ConvStreamState());
+    st.text
+      ..clear()
+      ..write(text);
+    st.streaming = true;
+    _capConvBuffers();
+    _convStreamCtrl.add(ConvStreamEvent(convId, delta: text));
+  }
+
+  /// Mark conversation [convId]'s turn finished (terminal `status`) and
+  /// broadcast a terminal [ConvStreamEvent]. The buffered text is kept (for
+  /// hydration on return) until the next turn resets it or [clearConvBuffer]
+  /// drops it.
+  void _finishConvStream(String? convId, {required bool error}) {
+    if (convId == null || convId.isEmpty || _convStreamCtrl.isClosed) return;
+    final st = _streamBuffers[convId];
+    if (st != null) st.streaming = false;
+    _convStreamCtrl.add(ConvStreamEvent(convId, done: !error, error: error));
+  }
+
+  /// Evict the oldest FINISHED buffer when the map exceeds [_maxConvBuffers].
+  /// Never drops a buffer whose turn is still streaming, so the WOR-53
+  /// background-stream guarantee holds. Called only after the just-touched
+  /// buffer has been marked streaming, so it can never evict the live one.
+  void _capConvBuffers() {
+    if (_streamBuffers.length <= _maxConvBuffers) return;
+    String? victim;
+    // Insertion order (Dart's default Map) → the first non-streaming entry is
+    // the oldest finished one.
+    for (final entry in _streamBuffers.entries) {
+      if (!entry.value.streaming) {
+        victim = entry.key;
+        break;
+      }
+    }
+    if (victim != null) _streamBuffers.remove(victim);
   }
 
   void _send(Map<String, dynamic> json) {
@@ -1056,6 +1220,12 @@ class WebSocketService {
       final type = json['type'] as String?;
       final content = json['content'] as String?;
       final data = json['data'] as String?;
+      // WOR-53: optional per-turn conversation-id routing hint. The server tags
+      // the streaming frames (response_chunk / response / status) with
+      // `conversation_id`; conversation_history mirrors it onto `id`, so read
+      // conversation_id with an id fallback. Only the streaming cases below use
+      // it — it routes a backgrounded stream to its conversation buffer.
+      final convId = (json['conversation_id'] ?? json['id'])?.toString();
 
       switch (type) {
         case 'transcript':
@@ -1065,10 +1235,16 @@ class WebSocketService {
         case 'response':
           if (content != null) {
             _emit(ResponseMessage(content));
+            // WOR-53: also replace this conversation's buffer with the
+            // canonical full reply (parallel sink — no change to pacing).
+            _replaceConvText(convId, content);
           }
         case 'response_chunk':
           if (content != null && content.isNotEmpty) {
             _emit(ResponseChunkMessage(content));
+            // WOR-53: also accrue the delta into this conversation's buffer so
+            // its reply survives a screen switch and hydrates on return.
+            _appendConvDelta(convId, content);
           }
         case 'audio':
           if (data != null) {
@@ -1081,6 +1257,13 @@ class WebSocketService {
         case 'status':
           if (content != null) {
             _emit(StatusMessage(content));
+            // WOR-53: a terminal turn status finalizes the conversation's
+            // background stream (marks it not-streaming + terminal event).
+            // Early error frames without a conversation_id are ignored by
+            // [_finishConvStream]'s null guard.
+            if (content == 'done' || content == 'error') {
+              _finishConvStream(convId, error: content == 'error');
+            }
           }
         case 'conversations':
           final raw = json['items'] ?? json['conversations'];

@@ -67,6 +67,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _thinking = false;
   ws.ConnectionState _connState = ws.ConnectionState.disconnected;
   StreamSubscription? _msgSub;
+  StreamSubscription? _convStreamSub;
   StreamSubscription? _connSub;
   StreamSubscription? _errSub;
   StreamSubscription? _newChatSub;
@@ -123,10 +124,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // True while we sent a turn and haven't yet seen status=done/error.
   bool _awaitingResponse = false;
-  // True if the user switched conversation mid-response — every subsequent
-  // response_chunk / response / audio frame for the in-flight request is
-  // dropped until the matching status=done/error arrives.
-  bool _discardCurrentResponse = false;
 
   // ── Optimistic thinking + no-response watchdog ──────────────────────────
   // Standalone UI state (deliberately NOT a sealed [ws.OsiaMessage] subtype):
@@ -253,6 +250,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _msgSub = _wsService.messageStream.listen(_onMessage);
 
+    // WOR-53: per-conversation streamed-reply events (kept off the sealed
+    // message switch). Renders the ACTIVE conversation's stream; events for
+    // other conversations keep accumulating in the service buffer and hydrate
+    // when the user switches to them.
+    _convStreamSub = _wsService.convStreamStream.listen(_onConvStream);
+
     // AI-hierarchy state arrives on its own config channel (kept off the
     // sealed-message switch). Track it so the model selector can note when
     // the chosen model is overridden by the configured chain.
@@ -316,53 +319,17 @@ class _ChatScreenState extends State<ChatScreen> {
           _addEntry(_ChatEntry(
               content: content, isUser: true, isTranscript: true));
         }
-      case ws.ResponseChunkMessage(:final content):
-        if (content.isEmpty) break;
-        if (_discardCurrentResponse) break;
-        // First token for this turn — stand down the no-response watchdog and
-        // transition the thinking dots seamlessly into the streaming bubble.
-        _cancelFirstTokenTimer();
-        setState(() {
-          _thinking = false;
-          _noResponse = false;
-          final idx = _streamingIndex;
-          if (idx == null) {
-            _entries.add(_ChatEntry(
-              content: content,
-              isUser: false,
-              isStreaming: true,
-            ));
-            _streamingIndex = _entries.length - 1;
-          } else {
-            final cur = _entries[idx];
-            final needsSpace = cur.content.isNotEmpty &&
-                !cur.content.endsWith(' ') &&
-                !cur.content.endsWith('\n') &&
-                !content.startsWith(' ');
-            _entries[idx] = cur.copyWith(
-              content: cur.content + (needsSpace ? ' ' : '') + content,
-            );
-          }
-        });
-        _scrollToBottomAnimated();
-      case ws.ResponseMessage(:final content):
-        if (_discardCurrentResponse) break;
-        // A full reply (even with no preceding chunks) means the turn produced
-        // a response — never let the watchdog fire after this.
-        _cancelFirstTokenTimer();
-        setState(() {
-          _thinking = false;
-          _noResponse = false;
-          final idx = _streamingIndex;
-          if (idx != null) {
-            // Final assembled reply — keep `isStreaming` true until
-            // status=done so the cursor stays visible through TTS playback.
-            _entries[idx] = _entries[idx].copyWith(content: content);
-          } else {
-            _entries.add(_ChatEntry(content: content, isUser: false));
-          }
-        });
-        _scrollToBottomAnimated();
+      case ws.ResponseChunkMessage():
+        // WOR-53: streamed chunks are now rendered by [_onConvStream] (routed
+        // by conversation id) so a backgrounded conversation's reply keeps
+        // streaming while the user views another. Kept present (no-op) so the
+        // sealed switch stays exhaustive.
+        break;
+      case ws.ResponseMessage():
+        // WOR-53: the assembled reply is rendered by [_onConvStream] (routed by
+        // conversation id). Kept present (no-op) so the sealed switch stays
+        // exhaustive.
+        break;
       case ws.AudioMessage(:final data, :final source):
         // Read-aloud audio (speaker button): always play — the user
         // explicitly asked for it. Untagged frames (older server) fall
@@ -376,9 +343,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _audioService.playMp3(data);
           break;
         }
-        // Response audio (auto-TTS path): gated by the toggle and the
-        // conversation-switch discard flag.
-        if (_discardCurrentResponse) break;
+        // Response audio (auto-TTS path): gated by the toggle.
         // The server is actively producing this turn's reply as audio — a
         // sign of life that stands the no-response watchdog down even when the
         // first text token is still pending (and whether or not auto-TTS plays
@@ -396,23 +361,16 @@ class _ChatScreenState extends State<ChatScreen> {
         // token; without this the 12s timer would trip a false error mid-task.
         _cancelFirstTokenTimer();
         if (content == 'done' || content == 'error') {
-          // The turn ended — the watchdog has nothing left to guard.
-          final wasDiscarding = _discardCurrentResponse;
+          // The turn ended. WOR-53: finalizing the streaming bubble (clearing
+          // `isStreaming` on its entry) is now handled by [_onConvStream],
+          // routed by conversation id, so the right conversation's bubble is
+          // closed out even when another conversation is on screen. Here we
+          // only clear the conversation-agnostic thinking / awaiting flags.
           setState(() {
             _awaitingResponse = false;
-            _discardCurrentResponse = false;
-            if (!wasDiscarding) {
-              _thinking = false;
-              final idx = _streamingIndex;
-              if (idx != null) {
-                _entries[idx] =
-                    _entries[idx].copyWith(isStreaming: false);
-                _streamingIndex = null;
-              }
-            }
+            _thinking = false;
           });
         } else if (content == 'thinking') {
-          if (_discardCurrentResponse) break;
           // Server confirms it's working — clear any stale no-response tile.
           setState(() {
             _thinking = true;
@@ -444,8 +402,46 @@ class _ChatScreenState extends State<ChatScreen> {
                 )));
           _thinking = false;
           _noResponse = false;
-          _streamingIndex = null;
           if (id != null && id.isNotEmpty) _activeConversationId = id;
+          // WOR-53: while a turn is in flight the persisted history doesn't yet
+          // include its reply, so blindly reconciling would blank the in-flight
+          // background reply we just returned to. Re-attach the live streaming
+          // bubble from the service buffer when this conversation's turn is
+          // still streaming. BUT the server persists the reply slightly BEFORE
+          // it sends the terminal `done` (which is what flips isStreaming
+          // false), so there is a window where the just-rebuilt persisted
+          // history ALREADY ends with this reply while isStreaming is still
+          // true. Guard against duplicating it: if the last persisted entry is
+          // already this reply, reuse that entry as the streaming bubble
+          // instead of appending a second one.
+          final convId =
+              (id != null && id.isNotEmpty) ? id : _activeConversationId;
+          final liveText =
+              convId != null ? _wsService.bufferedText(convId) : '';
+          final streaming =
+              convId != null && _wsService.isStreaming(convId);
+          final lastIsThisReply = _entries.isNotEmpty &&
+              !_entries.last.isUser &&
+              _entries.last.content == liveText;
+          if (streaming && liveText.isNotEmpty && !lastIsThisReply) {
+            // In-flight reply not yet in persisted history — show it.
+            _entries.add(_ChatEntry(
+              content: liveText,
+              isUser: false,
+              isStreaming: true,
+            ));
+            _streamingIndex = _entries.length - 1;
+          } else if (streaming && lastIsThisReply) {
+            // Reply already shown via persisted history but the turn hasn't
+            // ended — mark that entry streaming so the terminal `done`
+            // finalizes it (and any late `response` update lands on it),
+            // without a duplicate bubble.
+            _entries[_entries.length - 1] =
+                _entries.last.copyWith(isStreaming: true);
+            _streamingIndex = _entries.length - 1;
+          } else {
+            _streamingIndex = null;
+          }
         });
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (_scrollCtrl.hasClients) {
@@ -478,25 +474,111 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Render the ACTIVE conversation's streamed reply (WOR-53). Events for other
+  /// conversations are ignored here — their text keeps accumulating in the
+  /// service buffer ([ws.WebSocketService.bufferedText] / [isStreaming]) and
+  /// hydrates when the user switches to them. The service buffer is the single
+  /// source of truth for the streamed text, so hydration on switch and live
+  /// rendering never diverge and can't double-append. This performs the
+  /// append/finalize the old `response_chunk` / `status`-done message cases did,
+  /// now routed by conversation id.
+  void _onConvStream(ws.ConvStreamEvent event) {
+    if (!mounted) return;
+    if (event.conversationId != _activeConversationId) return;
+
+    // Any frame for the active turn is a sign of life — stand the no-response
+    // watchdog down (moved here from the old streaming message cases).
+    _cancelFirstTokenTimer();
+
+    if (event.done || event.error) {
+      // Terminal frame for the active conversation — finalize the streaming
+      // bubble (the streaming-finalize the old StatusMessage done/error did).
+      setState(() {
+        _awaitingResponse = false;
+        _thinking = false;
+        final idx = _streamingIndex;
+        if (idx != null) {
+          _entries[idx] = _entries[idx].copyWith(isStreaming: false);
+          _streamingIndex = null;
+        }
+      });
+      return;
+    }
+
+    // A token landed. Render the conversation's accumulated buffer text rather
+    // than appending the raw delta, so the live bubble always matches what a
+    // hydration on switch would show (single source of truth → no divergence).
+    final text = _wsService.bufferedText(event.conversationId);
+    if (text.isEmpty) return;
+    setState(() {
+      _thinking = false;
+      _noResponse = false;
+      final idx = _streamingIndex;
+      if (idx != null) {
+        _entries[idx] = _entries[idx].copyWith(content: text);
+      } else if (_entries.isNotEmpty &&
+          !_entries.last.isUser &&
+          _entries.last.content == text) {
+        // A history reload landed after the server persisted this reply, so
+        // _entries already ends with it — reuse that entry rather than append
+        // a duplicate streaming bubble (WOR-53).
+        _entries[_entries.length - 1] =
+            _entries.last.copyWith(isStreaming: true);
+        _streamingIndex = _entries.length - 1;
+      } else {
+        _entries.add(_ChatEntry(
+          content: text,
+          isUser: false,
+          isStreaming: true,
+        ));
+        _streamingIndex = _entries.length - 1;
+      }
+    });
+    _scrollToBottomAnimated();
+  }
+
   void _loadConversation(ws.Conversation conv) {
+    // WOR-53: free the buffer of the conversation we're leaving IF its turn has
+    // finished — a still-streaming one is kept so it keeps accumulating in the
+    // background and hydrates on return. This bounds the buffer map (the common
+    // accumulation path) without breaking the concurrency guarantee.
+    final leaving = _activeConversationId;
+    if (leaving != null &&
+        leaving != conv.id &&
+        !_wsService.isStreaming(leaving)) {
+      _wsService.clearConvBuffer(leaving);
+    }
     _requestConversationContent(conv.id);
     // The pending turn (and its watchdog) belonged to the conversation we're
     // leaving — drop them so a late timeout can't fire on the new chat.
     _cancelFirstTokenTimer();
     _pendingTurn = null;
     setState(() {
-      // If a response was in flight, drop everything it sends after the
-      // switch so chunks meant for the old conversation never land on
-      // this one. The flag clears on the next status=done/error.
-      if (_awaitingResponse) {
-        _discardCurrentResponse = true;
-      }
+      // WOR-53: no longer discard the in-flight response. The conversation we
+      // are leaving keeps streaming into its service buffer in the background;
+      // returning to it will hydrate those tokens. We seed THIS conversation's
+      // view from its buffer below — the load_conversation→conversation_history
+      // round-trip reconciles to persisted history right after.
       _entries.clear();
       _thinking = false;
       _noResponse = false;
-      _streamingIndex = null;
       _activeConversationId = conv.id;
       _activeConversationTitle = conv.title;
+      // Hydrate any reply that streamed for this conversation while it was
+      // backgrounded, restoring the live streaming bubble if its turn is still
+      // in flight.
+      final buffered = _wsService.bufferedText(conv.id);
+      if (buffered.isNotEmpty) {
+        final streaming = _wsService.isStreaming(conv.id);
+        _entries.add(_ChatEntry(
+          content: buffered,
+          isUser: false,
+          isStreaming: streaming,
+        ));
+        _streamingIndex = streaming ? _entries.length - 1 : null;
+      } else {
+        _streamingIndex = null;
+      }
     });
     Navigator.of(context).maybePop();
   }
@@ -542,10 +624,12 @@ class _ChatScreenState extends State<ChatScreen> {
     _cancelPendingConvLoad();
     _cancelFirstTokenTimer();
     _pendingTurn = null;
+    // WOR-53: drop the buffer of the conversation we're leaving so the buffer
+    // map can't grow unbounded (the new conversation starts fresh; other
+    // conversations' background streams are untouched).
+    final leaving = _activeConversationId;
+    if (leaving != null) _wsService.clearConvBuffer(leaving);
     setState(() {
-      if (_awaitingResponse) {
-        _discardCurrentResponse = true;
-      }
       _entries.clear();
       _thinking = false;
       _noResponse = false;
@@ -566,12 +650,11 @@ class _ChatScreenState extends State<ChatScreen> {
     _cancelPendingConvLoad();
     _cancelFirstTokenTimer();
     _pendingTurn = null;
+    // WOR-53: drop the buffer of the conversation we're leaving so the buffer
+    // map can't grow unbounded (same hygiene as [_newConversation]).
+    final leaving = _activeConversationId;
+    if (leaving != null) _wsService.clearConvBuffer(leaving);
     setState(() {
-      // If a response was in flight, drop everything it sends after the reset
-      // (same guard as [_loadConversation] / [_newConversation]).
-      if (_awaitingResponse) {
-        _discardCurrentResponse = true;
-      }
       _entries.clear();
       _thinking = false;
       _noResponse = false;
@@ -753,7 +836,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _pendingFileBytes = null;
       _pendingIsImage = false;
       _awaitingResponse = true;
-      _discardCurrentResponse = false;
       // Optimistic, local thinking indicator — shown immediately, before the
       // first token, to mask network + agent-construction latency.
       _thinking = true;
@@ -801,7 +883,6 @@ class _ChatScreenState extends State<ChatScreen> {
     // Resolved already: turn done, streaming started, or the user moved off it.
     if (!_awaitingResponse) return;
     if (_streamingIndex != null) return;
-    if (_discardCurrentResponse) return;
     // Connection-state handling takes precedence over the no-response error.
     if (_wsService.state != ws.ConnectionState.connected) {
       setState(() => _thinking = false);
@@ -831,7 +912,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _wsService.sendText(turn.prompt);
     setState(() {
       _awaitingResponse = true;
-      _discardCurrentResponse = false;
       _thinking = true;
       _noResponse = false;
     });
@@ -882,7 +962,6 @@ class _ChatScreenState extends State<ChatScreen> {
       if (base64Wav != null && base64Wav.isNotEmpty) {
         _wsService.sendAudio(base64Wav);
         _awaitingResponse = true;
-        _discardCurrentResponse = false;
         // Same as _sendText: a new turn invalidates stale speak requests.
         _speakRequested = false;
       }
@@ -1088,6 +1167,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // navigator — don't touch state in that case.
     if (!mounted) return;
     _msgSub?.cancel();
+    _convStreamSub?.cancel();
     _connSub?.cancel();
     _errSub?.cancel();
     _newChatSub?.cancel();
@@ -1126,6 +1206,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _firstTokenTimer?.cancel();
     _modelSelectorNotifier?.dispose();
     _msgSub?.cancel();
+    _convStreamSub?.cancel();
     _connSub?.cancel();
     _errSub?.cancel();
     _newChatSub?.cancel();
