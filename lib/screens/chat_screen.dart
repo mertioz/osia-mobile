@@ -129,6 +129,11 @@ class _ChatScreenState extends State<ChatScreen> {
   // stayed on it) is unaffected — this is false there, so streaming is normal.
   bool _backgroundPlaceholder = false;
 
+  // WOR-75 diagnostic: the last render-branch string logged, so the build-path
+  // trace fires only when the branch CHANGES (no per-frame log spam).
+  // Diagnostic only — gated behind [ws.kOsiaDebugPlaceholder].
+  String? _debugLastBranch;
+
   // Pending attachment shown as a chip in the input bar. Only sent when
   // the user taps the send arrow (or hits enter).
   String? _pendingFilename;
@@ -266,6 +271,15 @@ class _ChatScreenState extends State<ChatScreen> {
             final displayed = _activeConversationId;
             if (displayed != null && _wsService.isPending(displayed)) {
               _backgroundPlaceholder = true;
+              if (ws.kOsiaDebugPlaceholder) {
+                debugPrint('[OSIA WOR-75] reconnect: displayed="$displayed" '
+                    'isPending=true → _backgroundPlaceholder=true');
+              }
+            } else if (ws.kOsiaDebugPlaceholder) {
+              debugPrint('[OSIA WOR-75] reconnect: displayed='
+                  '"${displayed ?? ""}" isPending='
+                  '${displayed != null && _wsService.isPending(displayed)} '
+                  '→ placeholder NOT set');
             }
           }
         });
@@ -464,6 +478,12 @@ class _ChatScreenState extends State<ChatScreen> {
         // reached via the reconnect re-request), so a first-token watchdog for
         // a possibly-lost in-flight turn must not linger.
         _cancelFirstTokenTimer();
+        if (ws.kOsiaDebugPlaceholder) {
+          debugPrint('[OSIA WOR-75] conversation_history applied for '
+              'id="${id ?? ""}" (${messages.length} msgs) → '
+              '_backgroundPlaceholder was=$_backgroundPlaceholder, now false; '
+              'renders persisted history');
+        }
         setState(() {
           _entries
             ..clear()
@@ -498,7 +518,14 @@ class _ChatScreenState extends State<ChatScreen> {
           // also makes the in-flight re-attach reconcile below a no-op: with no
           // buffer, [liveText] is empty and [streaming] is false, so we render
           // the recovered history cleanly instead of a stale partial bubble.
-          if (convId != null) _wsService.clearConvBuffer(convId);
+          if (convId != null) {
+            _wsService.clearConvBuffer(convId);
+            // WOR-75: clearConvBuffer no longer clears the pending flag, so do it
+            // explicitly here — this recovered history IS the finished reply, so
+            // the turn is over and no background placeholder should linger (e.g.
+            // a disconnect ate the terminal `done`, or it was untagged).
+            _wsService.clearPending(convId);
+          }
           final liveText =
               convId != null ? _wsService.bufferedText(convId) : '';
           final streaming =
@@ -567,7 +594,29 @@ class _ChatScreenState extends State<ChatScreen> {
   /// now routed by conversation id.
   void _onConvStream(ws.ConvStreamEvent event) {
     if (!mounted) return;
-    if (event.conversationId != _activeConversationId) return;
+    if (ws.kOsiaDebugPlaceholder && (event.done || event.error)) {
+      debugPrint('[OSIA WOR-75] _onConvStream TERMINAL: convId='
+          '"${event.conversationId}" done=${event.done} error=${event.error} '
+          'untagged=${event.untagged} '
+          'active="${_activeConversationId ?? ""}" '
+          'placeholderUp=$_backgroundPlaceholder '
+          'forActive=${event.conversationId == _activeConversationId}');
+    }
+    // WOR-75: an UNTAGGED terminal (done/error with no conversation_id) applies
+    // to the conversation on screen — the only turn we could be watching. Clear
+    // that conversation's pending so an untagged terminal can't leave it stuck
+    // true (and the placeholder up), then fall through to finalize the active
+    // turn exactly as a tagged terminal for it would. (Untagged events are only
+    // ever terminal, so the token-rendering path below is never reached for one.)
+    final bool untaggedTerminal = event.untagged && (event.done || event.error);
+    if (untaggedTerminal) {
+      final active = _activeConversationId;
+      if (active != null && active.isNotEmpty) {
+        _wsService.clearPending(active);
+      }
+    } else if (event.conversationId != _activeConversationId) {
+      return;
+    }
 
     // Any frame for the active turn is a sign of life — stand the no-response
     // watchdog down (moved here from the old streaming message cases).
@@ -644,10 +693,26 @@ class _ChatScreenState extends State<ChatScreen> {
     // background and hydrates on return. This bounds the buffer map (the common
     // accumulation path) without breaking the concurrency guarantee.
     final leaving = _activeConversationId;
-    if (leaving != null &&
-        leaving != conv.id &&
-        !_wsService.isStreaming(leaving)) {
+    // WOR-75: read the leaving conv's streaming state ONCE, before the clear
+    // below can drop its buffer.
+    final leavingStreaming =
+        leaving != null && _wsService.isStreaming(leaving);
+    if (leaving != null && leaving != conv.id && !leavingStreaming) {
+      // WOR-75 FIX: drop ONLY the disposable stream buffer. clearConvBuffer no
+      // longer touches the pending flag, so switching away KEEPS the leaving
+      // conv's pending (its turn may still be in flight) — that flag is exactly
+      // what makes the "OSIA is working in the background" placeholder show when
+      // the user returns. Pending clears only when the turn actually ends
+      // (terminal done/error) or its recovered reply arrives via history.
       _wsService.clearConvBuffer(leaving);
+    }
+    if (ws.kOsiaDebugPlaceholder) {
+      final cleared =
+          leaving != null && leaving != conv.id && !leavingStreaming;
+      debugPrint('[OSIA WOR-75] _loadConversation: leaving="${leaving ?? ""}" '
+          'leavingStreaming=$leavingStreaming isPending(leaving)='
+          '${leaving != null && _wsService.isPending(leaving)} → '
+          '${cleared ? "clearConvBuffer(leaving) — buffer dropped, PENDING KEPT" : "buffer/pending kept"}');
     }
     _requestConversationContent(conv.id);
     // The pending turn (and its watchdog) belonged to the conversation we're
@@ -660,6 +725,10 @@ class _ChatScreenState extends State<ChatScreen> {
     // deferred conversation_history re-fetch (sent by _requestConversationContent
     // above) once the turn ends.
     final pending = _wsService.isPending(conv.id);
+    if (ws.kOsiaDebugPlaceholder) {
+      debugPrint('[OSIA WOR-75] _loadConversation: target="${conv.id}" '
+          'isPending(target)=$pending → _backgroundPlaceholder=$pending');
+    }
     setState(() {
       _entries.clear();
       _thinking = false;
@@ -734,7 +803,14 @@ class _ChatScreenState extends State<ChatScreen> {
     // map can't grow unbounded (the new conversation starts fresh; other
     // conversations' background streams are untouched).
     final leaving = _activeConversationId;
-    if (leaving != null) _wsService.clearConvBuffer(leaving);
+    if (leaving != null) {
+      _wsService.clearConvBuffer(leaving);
+      // WOR-75: starting a new chat abandons the leaving conv from this view;
+      // clear its pending too (clearConvBuffer no longer does) so no stale
+      // placeholder lingers. If that conv keeps streaming tagged chunks in the
+      // background, _appendConvDelta re-marks it pending.
+      _wsService.clearPending(leaving);
+    }
     setState(() {
       _entries.clear();
       _thinking = false;
@@ -760,7 +836,12 @@ class _ChatScreenState extends State<ChatScreen> {
     // WOR-53: drop the buffer of the conversation we're leaving so the buffer
     // map can't grow unbounded (same hygiene as [_newConversation]).
     final leaving = _activeConversationId;
-    if (leaving != null) _wsService.clearConvBuffer(leaving);
+    if (leaving != null) {
+      _wsService.clearConvBuffer(leaving);
+      // WOR-75: clear its pending too (clearConvBuffer no longer does), same as
+      // [_newConversation], so no stale placeholder lingers for the reset chat.
+      _wsService.clearPending(leaving);
+    }
     setState(() {
       _entries.clear();
       _thinking = false;
@@ -936,6 +1017,11 @@ class _ChatScreenState extends State<ChatScreen> {
     // brand-new conversation has no id yet — its first streamed chunk carries
     // the id and marks it then.
     final sendingConv = _activeConversationId;
+    if (ws.kOsiaDebugPlaceholder) {
+      debugPrint('[OSIA WOR-75] _sendText: activeConversationId='
+          '${sendingConv == null ? "null" : "id=$sendingConv"} → '
+          '${(sendingConv != null && sendingConv.isNotEmpty) ? "markPending called" : "NO markPending (empty id)"}');
+    }
     if (sendingConv != null && sendingConv.isNotEmpty) {
       _wsService.markPending(sendingConv);
     }
@@ -1379,6 +1465,21 @@ class _ChatScreenState extends State<ChatScreen> {
     final double bottomSafe = MediaQuery.of(context).padding.bottom;
     final double inputBarReserve = _inputBarHeight > 0 ? _inputBarHeight : 112;
     final double listBottomPadding = bottomSafe + 10 + inputBarReserve + 16;
+
+    if (ws.kOsiaDebugPlaceholder) {
+      final branch = _backgroundPlaceholder
+          ? 'PLACEHOLDER'
+          : (_entries.isEmpty && !_thinking && !_noResponse)
+              ? 'EMPTY'
+              : 'LIST(${_entries.length} entries, streamingIdx=$_streamingIndex)';
+      if (branch != _debugLastBranch) {
+        _debugLastBranch = branch;
+        final active = _activeConversationId;
+        debugPrint('[OSIA WOR-75] build: active="${active ?? ""}" '
+            'branch=$branch isPending(active)='
+            '${active != null && _wsService.isPending(active)}');
+      }
+    }
 
     return Scaffold(
       key: _scaffoldKey,

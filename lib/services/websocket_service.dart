@@ -8,6 +8,16 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+// ── WOR-75 diagnostic flag ────────────────────────────────────────────────
+
+/// TEMPORARY instrumentation (WOR-75): when true, the background-work
+/// placeholder lifecycle — pending set/clear, the load-conversation gate, the
+/// render branch, and stream terminals — is traced via `debugPrint` under the
+/// `[OSIA WOR-75]` tag. Shared with chat_screen.dart (referenced there as
+/// `ws.kOsiaDebugPlaceholder`). Flip to `false` (or delete) to silence. Adds
+/// NO behaviour — logging only.
+const bool kOsiaDebugPlaceholder = true;
+
 // ── Connection state ──────────────────────────────────────────────────────
 
 /// Possible states of the WebSocket connection.
@@ -538,11 +548,19 @@ class ConvStreamEvent {
   final String? delta;
   final bool done;
   final bool error;
+
+  /// WOR-75: a terminal (done/error) frame that arrived WITHOUT a
+  /// conversation_id. The service can't route it to a specific buffer/pending
+  /// flag, so it broadcasts the terminal untagged and the chat screen applies it
+  /// to whatever conversation is currently active (the only turn it could be
+  /// watching). [conversationId] is empty for an untagged event.
+  final bool untagged;
   const ConvStreamEvent(
     this.conversationId, {
     this.delta,
     this.done = false,
     this.error = false,
+    this.untagged = false,
   });
 }
 
@@ -724,18 +742,47 @@ class WebSocketService {
   /// chunk carries the id and marks it then).
   void markPending(String id) {
     if (id.isNotEmpty) _pendingConvs.add(id);
+    if (kOsiaDebugPlaceholder) {
+      debugPrint(
+          '[OSIA WOR-75] markPending(id="$id") → pending=$_pendingConvs');
+    }
   }
 
-  /// Drop conversation [id]'s streamed-reply buffer (WOR-53). Called when a
-  /// conversation is deleted or the chat is reset to a new conversation, so the
-  /// buffer map can't grow unbounded. Never closes [convStreamStream] — that
-  /// happens only in [dispose].
+  /// Drop conversation [id]'s streamed-reply buffer (WOR-53). Called on
+  /// delete/new and on switch-away (buffer hygiene), so the buffer map can't
+  /// grow unbounded. Never closes [convStreamStream] — that happens only in
+  /// [dispose].
+  ///
+  /// WOR-75: this drops ONLY the disposable per-turn stream buffer; it does NOT
+  /// touch the [_pendingConvs] flag. The two are deliberately separate concerns:
+  /// the buffer is throwaway chunk text, while the pending flag means "this
+  /// conversation's turn is still in flight" and must SURVIVE a switch-away so
+  /// the "OSIA is working in the background" placeholder shows when the user
+  /// returns. Pending is cleared only when the turn actually ends
+  /// ([_finishConvStream] on terminal done/error) or, at the delete/new and
+  /// recovered-history call sites, explicitly via [clearPending].
   void clearConvBuffer(String id) {
     _streamBuffers.remove(id);
-    // WOR-75/WOR-53/WOR-62: a dropped/recovered conversation is no longer
-    // pending (delete/new, or a conversation_history re-fetch that recovered
-    // the finished reply). Clear its pending flag so no stale placeholder lingers.
-    _pendingConvs.remove(id);
+    if (kOsiaDebugPlaceholder) {
+      debugPrint('[OSIA WOR-75] clearConvBuffer(id="$id") → buffer dropped, '
+          'pending UNCHANGED=$_pendingConvs');
+    }
+  }
+
+  /// Clear conversation [id]'s in-flight (pending) flag WITHOUT touching its
+  /// stream buffer (WOR-75) — the counterpart to [markPending], for the call
+  /// sites where a turn's pending state ends for a reason other than a terminal
+  /// stream frame: the conversation was deleted or replaced by a new chat, or
+  /// its finished reply was recovered via a `conversation_history` re-fetch. Also
+  /// used to clear a stuck pending flag left by an UNTAGGED terminal for the
+  /// active conversation. No-op for an empty id.
+  void clearPending(String id) {
+    if (id.isEmpty) return;
+    final removed = _pendingConvs.remove(id);
+    if (kOsiaDebugPlaceholder) {
+      debugPrint('[OSIA WOR-75] clearPending(id="$id") removed=$removed → '
+          'pending=$_pendingConvs');
+    }
   }
 
   /// Current connection state.
@@ -830,6 +877,9 @@ class WebSocketService {
     _send({'type': 'delete_conversation', 'id': id});
     // WOR-53: the conversation is gone — drop any streamed-reply buffer for it.
     clearConvBuffer(id);
+    // WOR-75: ...and clear its pending flag (clearConvBuffer no longer does so),
+    // so no stale background placeholder lingers for a deleted conversation.
+    clearPending(id);
   }
 
   /// Ask the server for the list of available models.
@@ -1087,6 +1137,7 @@ class WebSocketService {
   void _appendConvDelta(String? convId, String delta) {
     if (convId == null || convId.isEmpty || _convStreamCtrl.isClosed) return;
     final st = _streamBuffers.putIfAbsent(convId, () => _ConvStreamState());
+    final wasStreaming = st.streaming;
     // First chunk of a fresh turn: drop the previous turn's text.
     if (!st.streaming) st.text.clear();
     final existing = st.text.toString();
@@ -1098,6 +1149,10 @@ class WebSocketService {
     st.text.write(delta);
     st.streaming = true;
     _pendingConvs.add(convId); // WOR-75/WOR-53/WOR-62: turn in flight.
+    if (kOsiaDebugPlaceholder && !wasStreaming) {
+      debugPrint('[OSIA WOR-75] _appendConvDelta FIRST chunk for id="$convId" '
+          '→ streaming=true, pending=$_pendingConvs');
+    }
     _capConvBuffers();
     _convStreamCtrl.add(ConvStreamEvent(convId, delta: delta));
   }
@@ -1114,6 +1169,10 @@ class WebSocketService {
       ..write(text);
     st.streaming = true;
     _pendingConvs.add(convId); // WOR-75/WOR-53/WOR-62: turn in flight.
+    if (kOsiaDebugPlaceholder) {
+      debugPrint('[OSIA WOR-75] _replaceConvText full reply for id="$convId" '
+          '→ streaming=true, pending=$_pendingConvs');
+    }
     _capConvBuffers();
     _convStreamCtrl.add(ConvStreamEvent(convId, delta: text));
   }
@@ -1123,10 +1182,29 @@ class WebSocketService {
   /// hydration on return) until the next turn resets it or [clearConvBuffer]
   /// drops it.
   void _finishConvStream(String? convId, {required bool error}) {
-    if (convId == null || convId.isEmpty || _convStreamCtrl.isClosed) return;
+    if (_convStreamCtrl.isClosed) return;
+    if (convId == null || convId.isEmpty) {
+      // WOR-75: an UNTAGGED terminal — the server didn't tell us which
+      // conversation finished, so we can't clear a specific buffer/pending flag
+      // in the service. Broadcast it untagged so the chat screen applies it to
+      // the conversation currently on screen (the only turn it could be
+      // watching) and clears THAT conversation's pending — otherwise an untagged
+      // done would leave pending stuck true and the background placeholder up.
+      if (kOsiaDebugPlaceholder) {
+        debugPrint('[OSIA WOR-75] _finishConvStream(error=$error) UNTAGGED — '
+            'broadcasting to active conv (no id to clear in service)');
+      }
+      _convStreamCtrl.add(
+          ConvStreamEvent('', done: !error, error: error, untagged: true));
+      return;
+    }
     final st = _streamBuffers[convId];
     if (st != null) st.streaming = false;
     _pendingConvs.remove(convId); // WOR-75/WOR-53/WOR-62: turn finished.
+    if (kOsiaDebugPlaceholder) {
+      debugPrint('[OSIA WOR-75] _finishConvStream(id="$convId", error=$error) '
+          '→ pending=$_pendingConvs');
+    }
     _convStreamCtrl.add(ConvStreamEvent(convId, done: !error, error: error));
   }
 
@@ -1301,6 +1379,10 @@ class WebSocketService {
             // Early error frames without a conversation_id are ignored by
             // [_finishConvStream]'s null guard.
             if (content == 'done' || content == 'error') {
+              if (kOsiaDebugPlaceholder) {
+                debugPrint('[OSIA WOR-75] status="$content" conversation_id='
+                    '${convId == null ? "null (UNTAGGED!)" : "id=$convId"}');
+              }
               _finishConvStream(convId, error: content == 'error');
             }
           }
