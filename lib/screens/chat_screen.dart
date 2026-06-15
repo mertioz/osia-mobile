@@ -116,6 +116,42 @@ class _ChatScreenState extends State<ChatScreen> {
   // Index of the entry currently receiving streamed chunks (null when idle).
   int? _streamingIndex;
 
+  // ── Feature 1: optimistic user message (in memory, mobile-only) ──────────
+  // The user's just-sent message is shown instantly (via _addEntry) AND retained
+  // here, keyed by conversation id, so any rebuild of _entries (a conversation
+  // switch that hydrates from the buffer, a reconnect/sleep re-fetch, or a still
+  // reply-less history) RE-INJECTS it — the question is NEVER missing above the
+  // assistant reply. In memory only (zero disk): the server already persists the
+  // user turn, so an app kill + re-fetch restores it. Dropped when an
+  // authoritative history that already contains the user message reconciles it
+  // (see [ConversationHistoryMessage]), and on new/delete/settings. Voice turns
+  // store their STT transcript here when it arrives.
+  final Map<String, String> _optimisticUser = {};
+  // A turn sent on a brand-new conversation that has no id yet. Migrated into
+  // [_optimisticUser] under the real id once the server assigns one (see the
+  // ActiveConversationMessage handler).
+  String? _optimisticUserNoId;
+
+  // ── Feature 2: smooth typewriter reveal (display-rate layer) ─────────────
+  // Chunk RECEPTION (the WOR-53 per-conv buffer, surfaced by _onConvStream) is
+  // decoupled from DISPLAY: the full buffered text is snapshotted into
+  // [_typeTarget] and a single timer reveals it toward the streaming bubble at a
+  // constant readable pace, instead of dumping each burst on arrival. This is
+  // purely a display-rate layer over the existing buffer — it never changes what
+  // is stored, the done/persistence logic, or the buffer hydration. Honors
+  // reduced motion (renders the full text immediately, no timer).
+  static const Duration _typewriterTick = Duration(milliseconds: 16); // ~60fps
+  // Single tunable: target reveal pace. ~200 chars/sec ≈ 5ms/char.
+  static const int _typewriterCharsPerSecond = 200;
+  // On a big burst, reveal at least this fraction of the backlog per tick so the
+  // reveal speeds up gently and never lags far behind the buffer.
+  static const double _typewriterCatchUpFactor = 0.08;
+  Timer? _typewriterTimer;
+  // Full text the typewriter is revealing into the active streaming bubble.
+  String _typeTarget = '';
+  // Characters of [_typeTarget] currently shown in the streaming bubble.
+  int _typeRevealed = 0;
+
   // WOR-75/WOR-53/WOR-62 (recovery poll): when the displayed conversation has an
   // in-flight turn whose streamed chunks never reached us — the socket dropped
   // during sleep/network loss, so its per-conversation stream buffer is empty —
@@ -359,6 +395,10 @@ class _ChatScreenState extends State<ChatScreen> {
         if (content.isNotEmpty) {
           _addEntry(_ChatEntry(
               content: content, isUser: true, isTranscript: true));
+          // Feature 1: retain the voice transcript (the user's "message" for a
+          // voice turn) so a switch-back / reconnect re-fetch re-injects it
+          // above the reply instead of dropping it.
+          _recordOptimisticUser(content);
         }
       case ws.ResponseChunkMessage():
         // WOR-53: streamed chunks are now rendered by [_onConvStream] (routed
@@ -447,6 +487,16 @@ class _ChatScreenState extends State<ChatScreen> {
           _activeConversationId = id;
           _activeConversationTitle = title;
         });
+        // Feature 1: a brand-new conversation just learned its id — migrate any
+        // no-id optimistic user message under it so it is retained / reconciled
+        // like any other (its first chunk also carries this id).
+        final adoptedId = id;
+        if (_optimisticUserNoId != null &&
+            adoptedId != null &&
+            adoptedId.isNotEmpty) {
+          _optimisticUser[adoptedId] = _optimisticUserNoId!;
+          _optimisticUserNoId = null;
+        }
       case ws.ConversationHistoryMessage(:final id, :final messages):
         // Capture the in-flight requested-load id BEFORE anything clears it: a
         // late/deferred history frame for a DIFFERENT conversation must not
@@ -518,6 +568,9 @@ class _ChatScreenState extends State<ChatScreen> {
         // reached via the reconnect re-request), so a first-token watchdog for
         // a possibly-lost in-flight turn must not linger.
         _cancelFirstTokenTimer();
+        // Feature 2: this view is being rebuilt from persisted history — drop any
+        // in-flight typewriter reveal so it can't keep writing into a stale slot.
+        _stopTypewriter();
         if (ws.kOsiaDebugPlaceholder) {
           debugPrint('[OSIA WOR-75] conversation_history applied for '
               'id="${id ?? ""}" (${messages.length} msgs) → '
@@ -532,7 +585,43 @@ class _ChatScreenState extends State<ChatScreen> {
                 )));
           _thinking = false;
           _noResponse = false;
+          // Feature 2: persisted history is shown in full — reset the reveal
+          // counters (a re-attached live bubble below sets them to fully shown).
+          _typeTarget = '';
+          _typeRevealed = 0;
           if (id != null && id.isNotEmpty) _activeConversationId = id;
+          // Feature 1: reconcile the optimistic user message against the
+          // authoritative history. If the history already contains this turn's
+          // user message (turn persisted), drop the optimistic copy — the server
+          // now owns it, so there is no duplicate bubble. If it does NOT yet
+          // (in-flight: the reply, or nothing, was persisted before the user
+          // turn surfaced here), re-inject it so the question is never missing
+          // above the (recovered) reply. Persistence is detected by POSITION
+          // (see below), not string match, so a file/image turn isn't duplicated.
+          if (effectiveConvId != null && effectiveConvId.isNotEmpty) {
+            final opt = _optimisticUser[effectiveConvId];
+            if (opt != null) {
+              // Detect a persisted user turn by POSITION, not by string match:
+              // a user message that sits after the last completed assistant
+              // reply IS this turn's question (whether or not its own reply is
+              // persisted yet, e.g. a mid-tool-call history ending in tool/
+              // system). Content matching would fail for a file/image turn,
+              // whose optimistic copy carries a client-only "📎 filename"
+              // prefix the server-persisted text never has — re-injecting then
+              // would duplicate the bubble. historyHasReply is the done case.
+              final lastUserIdx =
+                  messages.lastIndexWhere((m) => m.role == 'user');
+              final lastAssistantIdx =
+                  messages.lastIndexWhere((m) => m.role == 'assistant');
+              final userPersisted = historyHasReply ||
+                  (lastUserIdx >= 0 && lastUserIdx > lastAssistantIdx);
+              if (userPersisted) {
+                _optimisticUser.remove(effectiveConvId);
+              } else {
+                _entries.add(_ChatEntry(content: opt, isUser: true));
+              }
+            }
+          }
           // WOR-53: while a turn is in flight the persisted history doesn't yet
           // include its reply, so blindly reconciling would blank the in-flight
           // background reply we just returned to. Re-attach the live streaming
@@ -576,6 +665,9 @@ class _ChatScreenState extends State<ChatScreen> {
               isStreaming: true,
             ));
             _streamingIndex = _entries.length - 1;
+            // Feature 2: already on screen in full — reveal continues from here.
+            _typeTarget = liveText;
+            _typeRevealed = liveText.length;
           } else if (streaming && lastIsThisReply) {
             // Reply already shown via persisted history but the turn hasn't
             // ended — mark that entry streaming so the terminal `done`
@@ -584,6 +676,8 @@ class _ChatScreenState extends State<ChatScreen> {
             _entries[_entries.length - 1] =
                 _entries.last.copyWith(isStreaming: true);
             _streamingIndex = _entries.length - 1;
+            _typeTarget = liveText;
+            _typeRevealed = liveText.length;
           } else {
             _streamingIndex = null;
           }
@@ -661,15 +755,24 @@ class _ChatScreenState extends State<ChatScreen> {
       // Terminal frame for the active conversation — finalize the streaming
       // bubble (the streaming-finalize the old StatusMessage done/error did).
       final hadBubble = _streamingIndex != null;
+      // Feature 2: the turn ended — stop the reveal and FLUSH any buffered text
+      // not yet shown so the finalized bubble is always complete (no missing
+      // tail), regardless of how far the typewriter had got.
+      _stopTypewriter();
       setState(() {
         _awaitingResponse = false;
         _thinking = false;
         final idx = _streamingIndex;
         if (idx != null) {
-          _entries[idx] = _entries[idx].copyWith(isStreaming: false);
+          final full =
+              _typeTarget.isNotEmpty ? _typeTarget : _entries[idx].content;
+          _entries[idx] =
+              _entries[idx].copyWith(content: full, isStreaming: false);
           _streamingIndex = null;
         }
       });
+      _typeTarget = '';
+      _typeRevealed = 0;
       // WOR-75: a reply that produced NO streamed text — i.e. no live bubble and
       // an empty per-conversation buffer — leaves nothing on screen on `done`.
       // This is the Live API / voice-to-voice path (audio-only reply, no
@@ -690,36 +793,137 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // A token landed. Render the conversation's accumulated buffer text rather
-    // than appending the raw delta, so the live bubble always matches what a
-    // hydration on switch would show (single source of truth → no divergence).
+    // A token landed. The conversation's accumulated buffer text is the single
+    // source of truth (so the live bubble always matches a hydration on switch).
+    // Feature 2: instead of dumping the whole buffer on arrival, snapshot it into
+    // [_typeTarget] and let the typewriter timer reveal it at a constant pace.
     final text = _wsService.bufferedText(event.conversationId);
     if (text.isEmpty) return;
+    final bool reduced = Motion.reduced(context);
     setState(() {
       _thinking = false;
       _noResponse = false;
       final idx = _streamingIndex;
       if (idx != null) {
-        _entries[idx] = _entries[idx].copyWith(content: text);
+        // Existing streaming bubble — extend the reveal target. Under reduced
+        // motion show it all at once; otherwise the timer below catches up.
+        _typeTarget = text;
+        if (reduced) {
+          _typeRevealed = text.length;
+          _entries[idx] = _entries[idx].copyWith(content: text);
+        }
       } else if (_entries.isNotEmpty &&
           !_entries.last.isUser &&
           _entries.last.content == text) {
         // A history reload landed after the server persisted this reply, so
         // _entries already ends with it — reuse that entry rather than append
-        // a duplicate streaming bubble (WOR-53).
+        // a duplicate streaming bubble (WOR-53). It is already shown in full.
         _entries[_entries.length - 1] =
             _entries.last.copyWith(isStreaming: true);
         _streamingIndex = _entries.length - 1;
+        _typeTarget = text;
+        _typeRevealed = text.length;
       } else {
+        // New streaming bubble. Reduced motion shows the full text immediately;
+        // otherwise it starts empty and the typewriter reveals toward the target.
         _entries.add(_ChatEntry(
-          content: text,
+          content: reduced ? text : '',
           isUser: false,
           isStreaming: true,
         ));
         _streamingIndex = _entries.length - 1;
+        _typeTarget = text;
+        _typeRevealed = reduced ? text.length : 0;
       }
     });
-    _scrollToBottomAnimated();
+    if (reduced) {
+      // Reduced motion: full text is already shown. Cancel any timer a prior
+      // non-reduced token armed so a runtime toggle stops it immediately
+      // (otherwise it self-cancels on its next tick a frame later).
+      _stopTypewriter();
+      _scrollToBottomAnimated();
+    } else {
+      // Drive the reveal off the timer (it self-pins the scroll while writing).
+      _ensureTypewriter();
+    }
+  }
+
+  /// Feature 2: start the typewriter reveal timer if there is buffered text not
+  /// yet shown. Idempotent — a tick that catches up cancels the timer, and the
+  /// next token re-arms it, so no timer runs while the reveal is idle. Callers
+  /// gate on reduced motion (which shows the full text without a timer).
+  void _ensureTypewriter() {
+    if (_typewriterTimer != null) return;
+    if (_typeRevealed >= _typeTarget.length) return;
+    _typewriterTimer =
+        Timer.periodic(_typewriterTick, (_) => _onTypewriterTick());
+  }
+
+  /// One reveal step: advance the shown prefix of [_typeTarget] toward the full
+  /// buffered text at a constant readable pace (~[_typewriterCharsPerSecond]),
+  /// accelerating gently when a big burst leaves us far behind so the reveal
+  /// never lags. Self-cancels when caught up or the streaming bubble is gone.
+  void _onTypewriterTick() {
+    final idx = _streamingIndex;
+    if (!mounted || idx == null || idx < 0 || idx >= _entries.length) {
+      _stopTypewriter();
+      return;
+    }
+    // Honor a runtime reduced-motion toggle: reveal the rest immediately.
+    if (Motion.reduced(context)) {
+      _typeRevealed = _typeTarget.length;
+      setState(() {
+        _entries[idx] = _entries[idx].copyWith(content: _typeTarget);
+      });
+      _stopTypewriter();
+      return;
+    }
+    if (_typeRevealed >= _typeTarget.length) {
+      _stopTypewriter(); // caught up — the next token re-arms the timer.
+      return;
+    }
+    final remaining = _typeTarget.length - _typeRevealed;
+    // Constant base pace, derived from the single tunable, plus gentle catch-up.
+    final base =
+        (_typewriterCharsPerSecond * _typewriterTick.inMilliseconds / 1000)
+            .round();
+    var step = base < 1 ? 1 : base;
+    final catchUp = (remaining * _typewriterCatchUpFactor).ceil();
+    if (catchUp > step) step = catchUp;
+    if (step > remaining) step = remaining;
+    _typeRevealed += step;
+    final shown = _typeTarget.substring(0, _typeRevealed);
+    setState(() {
+      _entries[idx] = _entries[idx].copyWith(content: shown);
+    });
+    // Cheap auto-follow: keep pinned to the bottom only when already near it, so
+    // a manual scroll-up to read history isn't yanked back down.
+    if (_scrollCtrl.hasClients) {
+      final pos = _scrollCtrl.position;
+      if (pos.maxScrollExtent - pos.pixels < 120) {
+        _scrollCtrl.jumpTo(pos.maxScrollExtent);
+      }
+    }
+  }
+
+  /// Stop the typewriter reveal timer. Idempotent.
+  void _stopTypewriter() {
+    _typewriterTimer?.cancel();
+    _typewriterTimer = null;
+  }
+
+  /// Feature 1: record the user's just-sent message (or voice transcript) as the
+  /// optimistic copy for the active conversation, keyed by id so a rebuild of
+  /// _entries re-injects it until the server's history reconciles it. A brand-new
+  /// conversation has no id yet — stash it under [_optimisticUserNoId] and the
+  /// ActiveConversationMessage handler migrates it once the id is assigned.
+  void _recordOptimisticUser(String content) {
+    final convId = _activeConversationId;
+    if (convId != null && convId.isNotEmpty) {
+      _optimisticUser[convId] = content;
+    } else {
+      _optimisticUserNoId = content;
+    }
   }
 
   void _loadConversation(ws.Conversation conv) {
@@ -754,6 +958,14 @@ class _ChatScreenState extends State<ChatScreen> {
     // leaving — drop them so a late timeout can't fire on the new chat.
     _cancelFirstTokenTimer();
     _pendingTurn = null;
+    // Feature 2: a fresh view — stop any reveal aimed at the old streaming slot.
+    _stopTypewriter();
+    // Feature 1: a no-id optimistic stash belongs to a brand-new conversation
+    // we may be leaving before its id was assigned. We can't safely re-key it to
+    // an id once we've switched (an inbound active_conversation can't be told
+    // apart from an unrelated repoint), so drop it here — the server's history
+    // re-fetch restores the question on return. Prevents a stranded/leaked stash.
+    _optimisticUserNoId = null;
     // WOR-75/WOR-53/WOR-62: is the conversation we're switching TO mid-turn? If
     // so and its stream buffer is empty (chunks were lost on a dropped socket),
     // the recovery poll below re-fetches its content until the persisted reply
@@ -769,8 +981,20 @@ class _ChatScreenState extends State<ChatScreen> {
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
+      // Feature 2: reset the reveal counters for the new view (the seed below
+      // marks any hydrated text as fully shown so it isn't re-animated).
+      _typeTarget = '';
+      _typeRevealed = 0;
       _activeConversationId = conv.id;
       _activeConversationTitle = conv.title;
+      // Feature 1: seed this conversation's optimistic user message (the
+      // just-sent question) FIRST, so it sits above any assistant partial below
+      // — returning to a backgrounded turn never shows the reply without the
+      // question. Reconciled away when the server's history lands.
+      final optUser = _optimisticUser[conv.id];
+      if (optUser != null) {
+        _entries.add(_ChatEntry(content: optUser, isUser: true));
+      }
       // WOR-53/WOR-75: ALWAYS seed the view from this conversation's stream
       // buffer when it holds content — whether the turn is finished OR still in
       // flight (the WOR-53 background stream kept accumulating while we were
@@ -790,6 +1014,10 @@ class _ChatScreenState extends State<ChatScreen> {
           isStreaming: streaming,
         ));
         _streamingIndex = streaming ? _entries.length - 1 : null;
+        // Feature 2: the buffered text is already complete on screen — mark it
+        // fully revealed so the typewriter only animates NEW chunks from here.
+        _typeTarget = buffered;
+        _typeRevealed = buffered.length;
       }
     });
     // WOR-75/WOR-53/WOR-62 (recovery poll): switching INTO a pending conversation
@@ -846,6 +1074,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _cancelPendingConvLoad();
     _cancelFirstTokenTimer();
     _stopRecoveryPoll();
+    _stopTypewriter(); // Feature 2: no stale reveal into the cleared view.
     _pendingTurn = null;
     // WOR-53: drop the buffer of the conversation we're leaving so the buffer
     // map can't grow unbounded (the new conversation starts fresh; other
@@ -859,11 +1088,17 @@ class _ChatScreenState extends State<ChatScreen> {
       // background, _appendConvDelta re-marks it pending.
       _wsService.clearPending(leaving);
     }
+    // Feature 1: a brand-new chat — drop the leaving conv's optimistic copy
+    // (its history owns the user message now) and any no-id stash.
+    if (leaving != null) _optimisticUser.remove(leaving);
+    _optimisticUserNoId = null;
     setState(() {
       _entries.clear();
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
+      _typeTarget = '';
+      _typeRevealed = 0;
       _activeConversationId = null;
       _activeConversationTitle = null;
     });
@@ -880,6 +1115,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _cancelPendingConvLoad();
     _cancelFirstTokenTimer();
     _stopRecoveryPoll();
+    _stopTypewriter(); // Feature 2: no stale reveal into the cleared view.
     _pendingTurn = null;
     // WOR-53: drop the buffer of the conversation we're leaving so the buffer
     // map can't grow unbounded (same hygiene as [_newConversation]).
@@ -890,11 +1126,16 @@ class _ChatScreenState extends State<ChatScreen> {
       // [_newConversation], so no stale recovery poll lingers for the reset chat.
       _wsService.clearPending(leaving);
     }
+    // Feature 1: same optimistic hygiene as [_newConversation].
+    if (leaving != null) _optimisticUser.remove(leaving);
+    _optimisticUserNoId = null;
     setState(() {
       _entries.clear();
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
+      _typeTarget = '';
+      _typeRevealed = 0;
       _activeConversationId = null;
       _activeConversationTitle = null;
     });
@@ -929,12 +1170,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _wsService.sendDeleteConversation(conv.id);
     if (_pendingConvLoadId == conv.id) _cancelPendingConvLoad();
+    // Feature 1: the conversation is gone — drop its optimistic user message.
+    _optimisticUser.remove(conv.id);
     final deletingActive = _activeConversationId == conv.id;
     if (deletingActive) {
       // The emptied chat must not keep a recovery poll or a retry payload for a
       // turn that belonged to the now-deleted conversation.
       _cancelFirstTokenTimer();
       _stopRecoveryPoll();
+      _stopTypewriter(); // Feature 2: no stale reveal into the emptied view.
       _pendingTurn = null;
     }
     setState(() {
@@ -945,6 +1189,8 @@ class _ChatScreenState extends State<ChatScreen> {
         _thinking = false;
         _noResponse = false;
         _streamingIndex = null;
+        _typeTarget = '';
+        _typeRevealed = 0;
         _activeConversationId = null;
         _activeConversationTitle = null;
       }
@@ -1072,6 +1318,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (sendingConv != null && sendingConv.isNotEmpty) {
       _wsService.markPending(sendingConv);
     }
+    // Feature 1: retain the just-sent message in memory (keyed by conv id, or
+    // stashed until a brand-new conversation learns its id) so a switch-away /
+    // disconnect re-fetch re-injects it above the reply — it's never missing.
+    _recordOptimisticUser(displayContent);
 
     // Remember this exact turn so a no-response timeout can re-send it verbatim
     // without the user retyping (see [_retryLastTurn]).
@@ -1501,7 +1751,12 @@ class _ChatScreenState extends State<ChatScreen> {
     _cancelPendingConvLoad();
     _cancelFirstTokenTimer();
     _stopRecoveryPoll();
+    _stopTypewriter(); // Feature 2: the connection is being rebuilt.
     _pendingTurn = null;
+    // Feature 1: the service (and its buffers) is rebuilt below — drop the
+    // in-memory optimistic copies; the re-fetched history restores everything.
+    _optimisticUser.clear();
+    _optimisticUserNoId = null;
     _wsService.dispose();
     setState(() {
       _initialized = false;
@@ -1513,6 +1768,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _activeConversationId = null;
       _activeConversationTitle = null;
       _streamingIndex = null;
+      _typeTarget = '';
+      _typeRevealed = 0;
     });
     _initConnection();
   }
@@ -1532,6 +1789,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _convLoadRetry?.cancel();
     _firstTokenTimer?.cancel();
     _recoveryPoll?.cancel();
+    _typewriterTimer?.cancel(); // Feature 2: no leaked reveal timer.
     _modelSelectorNotifier?.dispose();
     _msgSub?.cancel();
     _convStreamSub?.cancel();
