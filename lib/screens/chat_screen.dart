@@ -1834,7 +1834,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 // partial/empty view. Only changes WHAT is rendered for the
                 // already-displayed conversation — never switches the view.
                 child: _backgroundPlaceholder
-                    ? _buildBackgroundPlaceholder(palette, strings)
+                    ? _buildBackgroundPlaceholder(
+                        palette, strings, listBottomPadding)
                     : _entries.isEmpty && !_thinking && !_noResponse
                     ? _buildEmptyState(palette, strings)
                     : ListView.builder(
@@ -1976,34 +1977,75 @@ class _ChatScreenState extends State<ChatScreen> {
   /// WOR-75/WOR-53/WOR-62: the "OSIA is working in the background" placeholder.
   /// Shown for the displayed conversation when it has an in-flight turn we are
   /// NOT watching stream live (the user switched back to it, or we reconnected
-  /// after a disconnect/sleep). A centered, gently-pulsing OSIA logo + the
-  /// localized line + the on-brand thinking animation. Replaced by the real
-  /// reply when the turn finishes (terminal frame or the deferred
-  /// conversation_history re-fetch). On-brand: background #0d0b12, violet
-  /// accent — reuses the same logo asset and [ThinkingIndicator] as the app.
-  Widget _buildBackgroundPlaceholder(OsiaPalette palette, OsiaStrings strings) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          const _PulsingLogo(),
-          const SizedBox(height: 18),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Text(
-              strings.osiaWorkingBackground,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-                color: palette.textPrimary.withValues(alpha: 0.85),
+  /// after a disconnect/sleep). Rendered as an assistant-style bubble pinned to
+  /// the bottom-left of the canvas — exactly where the reply will land — so it
+  /// reads as the answer about to arrive. A single inline row: a small,
+  /// gently-pulsing OSIA logo (which doubles as the thinking signal, so no
+  /// separate dots) next to the localized line, muted to read as "working, not
+  /// yet answered". Replaced by the real reply when the turn finishes (terminal
+  /// frame or the deferred conversation_history re-fetch). On-brand: grey
+  /// [OsiaPalette.surface] frame, violet [OsiaPalette.accent] hairline, same
+  /// logo asset as the app. [bottomInset] clears the floating input bar so the
+  /// bubble sits flush above it, like the message list's own bottom padding.
+  Widget _buildBackgroundPlaceholder(
+      OsiaPalette palette, OsiaStrings strings, double bottomInset) {
+    return Align(
+      alignment: Alignment.bottomLeft,
+      child: Padding(
+        // Match ChatBubble's horizontal margin (14) so the placeholder lines
+        // up with a real assistant reply; bottomInset clears the floating
+        // input bar exactly like the message list's bottom padding.
+        padding: EdgeInsets.fromLTRB(14, 4, 14, bottomInset),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.82,
+          ),
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            decoration: BoxDecoration(
+              // Grey card with a whisper of accent (the brand "grey + purple"),
+              // framed by a subtle violet hairline — same radius/border
+              // language as the chat bubbles, the small bottom-left corner
+              // anchoring it to the assistant side.
+              color: Color.alphaBlend(
+                palette.accent.withValues(alpha: 0.06),
+                palette.surface,
+              ),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+                bottomRight: Radius.circular(20),
+                bottomLeft: Radius.circular(6),
+              ),
+              border: Border.all(
+                color: palette.accent.withValues(alpha: 0.22),
+                width: 0.6,
               ),
             ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // The pulsing logo IS the thinking animation (reduced-motion
+                // → static), sized small to sit inline with the text line.
+                const _PulsingLogo(size: 22),
+                const SizedBox(width: 10),
+                Flexible(
+                  child: Text(
+                    strings.osiaWorkingBackground,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w500,
+                      color: palette.textMuted,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 14),
-          const ThinkingIndicator(),
-        ],
+        ),
       ),
     );
   }
@@ -2503,15 +2545,19 @@ class _MiniThinkingDotsState extends State<_MiniThinkingDots>
   }
 }
 
-/// The gently-pulsing OSIA logo at the center of the "working in the
-/// background" placeholder (WOR-75/WOR-53/WOR-62, see
+/// The gently-pulsing OSIA logo inside the "working in the background"
+/// placeholder bubble (WOR-75/WOR-53/WOR-62, see
 /// [_ChatScreenState._buildBackgroundPlaceholder]). A soft breathe — a small
 /// scale + opacity loop on [MotionDurations.pulse] — so the placeholder feels
-/// alive without distracting. Honors reduced motion by rendering the logo
-/// static (no loop). Uses the same `osia_logo_mark.png` asset as the empty
-/// state, so the placeholder stays on-brand.
+/// alive without distracting; it doubles as the thinking indicator, so no
+/// separate dots are needed. [size] sets the edge length (small for inline
+/// use). Honors reduced motion by rendering the logo static (no loop). Uses
+/// the same `osia_logo_mark.png` asset as the empty state, so the placeholder
+/// stays on-brand.
 class _PulsingLogo extends StatefulWidget {
-  const _PulsingLogo();
+  /// Edge length of the logo in logical pixels.
+  final double size;
+  const _PulsingLogo({this.size = 64});
 
   @override
   State<_PulsingLogo> createState() => _PulsingLogoState();
@@ -2519,8 +2565,6 @@ class _PulsingLogo extends StatefulWidget {
 
 class _PulsingLogoState extends State<_PulsingLogo>
     with SingleTickerProviderStateMixin {
-  static const double _size = 64;
-
   late final AnimationController _ctrl;
   bool _reduced = false;
 
@@ -2554,8 +2598,8 @@ class _PulsingLogoState extends State<_PulsingLogo>
   }
 
   Widget _logo() => SizedBox(
-        width: _size,
-        height: _size,
+        width: widget.size,
+        height: widget.size,
         child: Image.asset(
           'assets/osia_logo_mark.png',
           fit: BoxFit.contain,
