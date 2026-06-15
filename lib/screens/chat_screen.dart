@@ -116,42 +116,20 @@ class _ChatScreenState extends State<ChatScreen> {
   // Index of the entry currently receiving streamed chunks (null when idle).
   int? _streamingIndex;
 
-  // WOR-75/WOR-53/WOR-62 (simplified): true when the displayed conversation has
-  // an in-flight turn we are NOT watching stream live — the user switched back
-  // to it, or we reconnected after a disconnect/sleep. In that mode the chat
-  // shows the "OSIA is working in the background" placeholder (logo + localized
-  // text + thinking animation) INSTEAD of a partial/empty view, and the live
-  // [_onConvStream] render is suppressed. It is cleared — and the real reply
-  // rendered — when the turn's terminal frame arrives or the deferred
-  // conversation_history re-fetch (WOR-62) lands. This only changes WHAT is
-  // rendered for the already-displayed conversation; it NEVER switches the view
-  // (the WOR-75 guard stays). The active live-streaming conversation (user
-  // stayed on it) is unaffected — this is false there, so streaming is normal.
-  bool _backgroundPlaceholder = false;
-
-  // WOR-75 no-stuck safety net: a background-work watchdog that fires when a
-  // placeholder'd conversation goes silent on its OWN streamed channel. It is
-  // reset ONLY by this conversation's id-scoped streamed frames (response /
-  // response_chunk / terminal, via [_onConvStream] — which already routes by
-  // conversation id). Conversation-agnostic frames (status / audio / transcript)
-  // are deliberately NOT used as resets: they carry no conversation_id, so one
-  // conversation's traffic could otherwise hold another's watchdog open forever
-  // (the WOR-53 concurrency hazard). A turn that streams tokens therefore keeps
-  // its own indicator alive indefinitely; only a turn that is genuinely not
-  // streaming (e.g. a reconnect whose server never resumed the in-flight turn,
-  // so no terminal `done` will ever arrive) elapses — and on elapse it falls
-  // back to a normal load so the placeholder can never hang forever. The window
-  // is generous (well over [_firstTokenTimeout]) so a normal pre-first-token
-  // think/tool phase is not mistaken for a dead turn; if it ever does fire on a
-  // still-live turn the result is bounded and self-heals (the next streamed
-  // frame renders live).
-  static const Duration _placeholderSilenceTimeout = Duration(seconds: 45);
-  Timer? _placeholderWatchdog;
-
-  // WOR-75 diagnostic: the last render-branch string logged, so the build-path
-  // trace fires only when the branch CHANGES (no per-frame log spam).
-  // Diagnostic only — gated behind [ws.kOsiaDebugPlaceholder].
-  String? _debugLastBranch;
+  // WOR-75/WOR-53/WOR-62 (recovery poll): when the displayed conversation has an
+  // in-flight turn whose streamed chunks never reached us — the socket dropped
+  // during sleep/network loss, so its per-conversation stream buffer is empty —
+  // we can render neither a live partial nor an instant buffer hydration, and a
+  // mid-turn load_conversation only returns end-of-turn persisted state (no
+  // partial). This periodic poll re-fetches the displayed conversation's content
+  // every few seconds until its persisted reply lands, then self-cancels. It is
+  // gated to pending + EMPTY-buffer (see [_startRecoveryPoll]): while chunks are
+  // flowing the buffer is non-empty so the poll is OFF — the live stream renders
+  // instead — which keeps it silent during normal live streaming. It NEVER
+  // switches the view: it only re-requests the displayed conversation's own
+  // content, and the conversation_history handler's view-guard keeps the
+  // displayed conversation changing on explicit user tap alone.
+  Timer? _recoveryPoll;
 
   // Pending attachment shown as a chip in the input bar. Only sent when
   // the user taps the send arrow (or hits enter).
@@ -280,40 +258,31 @@ class _ChatScreenState extends State<ChatScreen> {
             if (openConv != null && openConv.isNotEmpty) {
               _requestConversationContent(openConv);
             }
-            // WOR-75/WOR-53/WOR-62: if the displayed conversation has an
-            // in-flight turn we weren't watching live (the socket dropped
-            // during sleep/network loss), show the background-work placeholder
-            // until the deferred conversation_history re-fetch above brings the
-            // finished reply. The live stream on the old socket is gone and the
-            // new socket won't resume it — so the placeholder, not a stale
-            // partial, is what we show. Never switches the view (WOR-75 guard).
+            // WOR-75/WOR-53/WOR-62 (recovery poll): if the displayed
+            // conversation has an in-flight turn we weren't watching live (the
+            // socket dropped during sleep/network loss), its live stream on the
+            // old socket is gone and the new socket won't resume it. Its stream
+            // buffer is likely empty, so start the recovery poll: it re-fetches
+            // the displayed conversation's content until the finished reply lands
+            // (alongside the one-shot _requestConversationContent above), then
+            // self-cancels. Non-destructive: any pre-disconnect content stays on
+            // screen and reconciles when a complete history arrives. Never
+            // switches the view (the conversation_history view-guard keeps the
+            // displayed conversation changing on explicit user tap).
             final displayed = _activeConversationId;
-            if (displayed != null && _wsService.isPending(displayed)) {
-              _backgroundPlaceholder = true;
-              // WOR-75 (fast dismiss): drop any stale pre-disconnect content so
-              // _entries is empty until the re-fetched conversation_history
-              // captures the current turn's reply-less history (user message)
-              // under the placeholder. This keeps "_entries non-empty" a reliable
-              // "user message captured" signal for the instant buffer-dismiss in
-              // [_onConvStream]: if a terminal somehow lands before that history,
-              // the empty _entries routes to the disk re-fetch fallback instead of
-              // rendering the reply against stale content. The placeholder hides
-              // _entries meanwhile, so this clear has no visual effect.
-              _entries.clear();
-              _streamingIndex = null;
-              // WOR-75 no-stuck: a reconnect may never resume the in-flight turn
-              // (no terminal `done` to dismiss the placeholder), so arm the
-              // silence watchdog as the fallback path.
-              _armPlaceholderWatchdog();
+            if (displayed != null &&
+                displayed.isNotEmpty &&
+                _wsService.isPending(displayed)) {
+              _startRecoveryPoll();
               if (ws.kOsiaDebugPlaceholder) {
                 debugPrint('[OSIA WOR-75] reconnect: displayed="$displayed" '
-                    'isPending=true → _backgroundPlaceholder=true');
+                    'isPending=true → recovery poll started');
               }
             } else if (ws.kOsiaDebugPlaceholder) {
               debugPrint('[OSIA WOR-75] reconnect: displayed='
                   '"${displayed ?? ""}" isPending='
                   '${displayed != null && _wsService.isPending(displayed)} '
-                  '→ placeholder NOT set');
+                  '→ recovery poll NOT started');
             }
           }
         });
@@ -432,14 +401,12 @@ class _ChatScreenState extends State<ChatScreen> {
         // multi-step task these arrive well before the final reply's first
         // token; without this the 12s timer would trip a false error mid-task.
         _cancelFirstTokenTimer();
-        // WOR-75: deliberately do NOT reset the placeholder watchdog here. A
-        // `status` frame carries no conversation_id (it is broadcast
-        // conversation-agnostically), so using it as a reset would let ANY
-        // conversation's status traffic hold a DIFFERENT placeholder'd
-        // conversation's watchdog open forever — breaking the no-stuck net under
-        // WOR-53 concurrency. The watchdog is reset only by id-scoped streamed
-        // frames in [_onConvStream] (which are already routed to the active
-        // conversation).
+        // WOR-75: a `status` frame is conversation-agnostic (no conversation_id),
+        // so it deliberately does NOT touch the recovery poll. That poll is gated
+        // purely on the DISPLAYED conversation's own pending + empty-buffer state
+        // (see [_startRecoveryPoll]) — never on broadcast status traffic — so one
+        // conversation's status frames can't disturb another's recovery (the
+        // WOR-53 concurrency guarantee).
         if (content == 'done' || content == 'error') {
           // The turn ended. WOR-53: finalizing the streaming bubble (clearing
           // `isStreaming` on its entry) is now handled by [_onConvStream],
@@ -513,75 +480,26 @@ class _ChatScreenState extends State<ChatScreen> {
           // still-pending load of a DIFFERENT conversation keeps waiting.
           return;
         }
-        // WOR-75: while the background-work placeholder is up for the displayed
-        // conversation and its turn is STILL in flight, an INCOMPLETE history
-        // (empty, or ending in the user's own message — the reply isn't
-        // persisted yet) must NOT dismiss the placeholder. The server answers
-        // our load_conversation instantly, BEFORE the in-flight reply is
-        // persisted, so this partial history would otherwise flash the
-        // placeholder away and render an empty/partial view (the WOR-75 bug).
-        // Keep the placeholder until a history that ENDS IN THE ASSISTANT REPLY
-        // arrives (turn finished) — the dismiss-on-done re-fetch in
-        // [_onConvStream] and the WOR-62 deferred server push both deliver
-        // exactly that. This only KEEPS an already-shown placeholder (the
-        // _backgroundPlaceholder guard), never creates one, so a conversation
-        // being actively watched live is untouched. Leave the pending-load id +
-        // retry armed so the one-shot retry re-polls as a secondary safety net.
         final effectiveConvId = hasId ? id : viewing;
         // Reply present == the history ENDS IN AN ASSISTANT message. Use the
         // exact 'assistant' role (not "anything but user"): a turn mid-tool-call
-        // can end in a 'tool'/'system' entry while the real reply isn't
-        // persisted yet, and that must keep the placeholder, not dismiss it.
+        // can end in a 'tool'/'system' entry while the real reply isn't persisted
+        // yet, and that must be treated as reply-less so it does not pass the
+        // no-blank guard below as if the finished reply had landed.
         final historyHasReply =
             messages.isNotEmpty && messages.last.role == 'assistant';
-        if (_backgroundPlaceholder &&
-            effectiveConvId != null &&
-            effectiveConvId.isNotEmpty &&
-            _wsService.isPending(effectiveConvId) &&
-            !historyHasReply) {
-          // WOR-75 (fast dismiss): the turn is still in flight, so the dismiss
-          // trigger is the terminal `done` (handled in [_onConvStream] from the
-          // per-conversation stream buffer) — NOT this history round-trip. KEEP
-          // the placeholder. But CAPTURE this reply-less persisted history (prior
-          // turns + the just-sent user message) into _entries UNDERNEATH the
-          // still-shown placeholder: it is invisible now (the build shows the
-          // placeholder, which covers _entries), and on `done` the buffered reply
-          // is appended to it so the full conversation renders INSTANTLY with no
-          // second disk fetch. The pending-load retry is left armed as a
-          // secondary safety net (and to recover via a complete history in the
-          // empty-buffer/wake fallback).
-          setState(() {
-            _entries
-              ..clear()
-              ..addAll(messages.map((m) => _ChatEntry(
-                    content: m.content,
-                    isUser: m.role == 'user',
-                  )));
-            _streamingIndex = null;
-          });
-          if (ws.kOsiaDebugPlaceholder) {
-            debugPrint('[OSIA WOR-75] conversation_history for id="${id ?? ""}" '
-                '(${messages.length} msgs) INCOMPLETE while pending → KEEP '
-                'placeholder, CAPTURE history into _entries (hidden) for instant '
-                'render on done; retry left armed');
-          }
-          return;
-        }
         // WOR-75 (no-blank): a STALE, reply-less history can still arrive for a
         // conversation whose reply we ALREADY hold in the stream buffer — e.g. a
         // retry-driven or in-flight load_conversation that the server answered
-        // BEFORE the reply was persisted, landing just after the buffer dismiss
-        // in [_onConvStream], or the deferred-fallback re-fetch racing
+        // BEFORE the reply was persisted, or the recovery poll's re-fetch racing
         // persistence. Letting it reach the apply path below would clear _entries
-        // AND drop the buffer (line ~621) and re-render WITHOUT the reply —
-        // blanking it with no recovery. Guard: if this history lacks the
-        // assistant reply but the service still holds this conversation's reply in
-        // its buffer, the on-screen reply (and disk) are already correct, so
-        // IGNORE the stale frame and keep the buffer-backed view (or, if the
-        // placeholder is still up post-`done`, keep waiting for a COMPLETE
-        // history). Only fires when the buffer is non-empty — buffer-empty +
-        // reply-less is the genuine empty/wake load and must pass through. The
-        // placeholder+pending case is already handled by the keep-branch above.
+        // AND drop the buffer and re-render WITHOUT the reply — blanking it with
+        // no recovery (the poll is OFF once the buffer is non-empty). Guard: if
+        // this history lacks the assistant reply but the service still holds this
+        // conversation's reply in its buffer, the on-screen reply (and disk) are
+        // already correct, so IGNORE the stale frame and keep the buffer-backed
+        // view. Only fires when the buffer is non-empty — buffer-empty +
+        // reply-less is the genuine empty/wake load and must pass through.
         if (!historyHasReply &&
             effectiveConvId != null &&
             effectiveConvId.isNotEmpty &&
@@ -589,8 +507,7 @@ class _ChatScreenState extends State<ChatScreen> {
           if (ws.kOsiaDebugPlaceholder) {
             debugPrint('[OSIA WOR-75] conversation_history for id="${id ?? ""}" '
                 '(${messages.length} msgs) STALE reply-less while buffer holds '
-                'the reply → IGNORE (keep on-screen reply, no blank); '
-                'placeholderUp=$_backgroundPlaceholder');
+                'the reply → IGNORE (keep on-screen reply, no blank)');
           }
           return;
         }
@@ -601,13 +518,9 @@ class _ChatScreenState extends State<ChatScreen> {
         // reached via the reconnect re-request), so a first-token watchdog for
         // a possibly-lost in-flight turn must not linger.
         _cancelFirstTokenTimer();
-        // WOR-75: this history dismisses the placeholder (below), so the
-        // no-stuck silence watchdog has done its job — stand it down.
-        _cancelPlaceholderWatchdog();
         if (ws.kOsiaDebugPlaceholder) {
           debugPrint('[OSIA WOR-75] conversation_history applied for '
               'id="${id ?? ""}" (${messages.length} msgs) → '
-              '_backgroundPlaceholder was=$_backgroundPlaceholder, now false; '
               'renders persisted history');
         }
         setState(() {
@@ -619,10 +532,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 )));
           _thinking = false;
           _noResponse = false;
-          // WOR-75/WOR-53/WOR-62: this history IS the recovered reply (the
-          // deferred re-fetch fires only once the turn has finished), so the
-          // background-work placeholder is done — render the real conversation.
-          _backgroundPlaceholder = false;
           if (id != null && id.isNotEmpty) _activeConversationId = id;
           // WOR-53: while a turn is in flight the persisted history doesn't yet
           // include its reply, so blindly reconciling would blank the in-flight
@@ -648,8 +557,8 @@ class _ChatScreenState extends State<ChatScreen> {
             _wsService.clearConvBuffer(convId);
             // WOR-75: clearConvBuffer no longer clears the pending flag, so do it
             // explicitly here — this recovered history IS the finished reply, so
-            // the turn is over and no background placeholder should linger (e.g.
-            // a disconnect ate the terminal `done`, or it was untagged).
+            // the turn is over and no recovery poll should linger (e.g. a
+            // disconnect ate the terminal `done`, or it was untagged).
             _wsService.clearPending(convId);
           }
           final liveText =
@@ -725,15 +634,15 @@ class _ChatScreenState extends State<ChatScreen> {
           '"${event.conversationId}" done=${event.done} error=${event.error} '
           'untagged=${event.untagged} '
           'active="${_activeConversationId ?? ""}" '
-          'placeholderUp=$_backgroundPlaceholder '
           'forActive=${event.conversationId == _activeConversationId}');
     }
     // WOR-75: an UNTAGGED terminal (done/error with no conversation_id) applies
     // to the conversation on screen — the only turn we could be watching. Clear
     // that conversation's pending so an untagged terminal can't leave it stuck
-    // true (and the placeholder up), then fall through to finalize the active
-    // turn exactly as a tagged terminal for it would. (Untagged events are only
-    // ever terminal, so the token-rendering path below is never reached for one.)
+    // true (and a recovery poll running on its empty buffer), then fall through
+    // to finalize the active turn exactly as a tagged terminal for it would.
+    // (Untagged events are only ever terminal, so the token-rendering path below
+    // is never reached for one.)
     final bool untaggedTerminal = event.untagged && (event.done || event.error);
     if (untaggedTerminal) {
       final active = _activeConversationId;
@@ -747,107 +656,6 @@ class _ChatScreenState extends State<ChatScreen> {
     // Any frame for the active turn is a sign of life — stand the no-response
     // watchdog down (moved here from the old streaming message cases).
     _cancelFirstTokenTimer();
-
-    // WOR-75/WOR-53/WOR-62: while the background-work placeholder is up for this
-    // conversation (the user switched back to it, or we reconnected, and are NOT
-    // watching it stream live), do NOT render the live partial into the view —
-    // the placeholder stays up until the turn's TERMINAL frame. The placeholder
-    // is NOT dismissed by a conversation_history round-trip anymore: the instant
-    // the terminal `done`/`error` lands, it is dismissed and the reply rendered
-    // DIRECTLY from the per-conversation stream buffer (which already holds the
-    // complete reply), with no disk re-fetch. The disk re-fetch survives only as
-    // the fallback for the empty-buffer case (sleep/wake: the chunks never
-    // arrived, WOR-62).
-    if (_backgroundPlaceholder) {
-      // WOR-75 no-stuck: any frame for this conversation (a token, or this
-      // terminal) is a sign of life — reset the silence watchdog so it only
-      // fires when the turn is genuinely not progressing.
-      _armPlaceholderWatchdog();
-      if (event.done || event.error) {
-        // The turn ended for the conversation whose placeholder is up
-        // (switch-back, or a tagged/untagged background stream we weren't
-        // watching). The per-conversation stream buffer ALREADY holds the
-        // complete reply (filled by _appendConvDelta / _replaceConvText as it
-        // streamed in the background).
-        final displayed = _activeConversationId;
-        final reply = (displayed != null && displayed.isNotEmpty)
-            ? _wsService.bufferedText(displayed)
-            : '';
-        // _entries non-empty ⇒ the conversation_history keep-branch already
-        // captured this turn's reply-less history (prior turns + the just-sent
-        // user message) under the placeholder. Only then can we render the full
-        // conversation from the buffer WITHOUT a disk fetch. If the terminal
-        // wins the race against that history (entries still empty), rendering the
-        // reply alone would drop the user message — so that case falls through to
-        // the re-fetch fallback, which (post-`done`, the reply is persisted)
-        // returns a COMPLETE history with both the user message and the reply.
-        if (reply.isNotEmpty && _entries.isNotEmpty) {
-          // Buffer has the reply AND the user message is captured → INSTANT
-          // dismiss + render from buffer. No load_conversation, no waiting. The
-          // rendered view is the captured history + this buffered reply.
-          _cancelPlaceholderWatchdog();
-          // A late stray history for this conv must not arrive after dismiss and
-          // blank the just-rendered reply — drop any in-flight load + retry.
-          _cancelPendingConvLoad();
-          if (displayed != null && displayed.isNotEmpty) {
-            _wsService.clearPending(displayed);
-          }
-          if (ws.kOsiaDebugPlaceholder) {
-            debugPrint('[OSIA WOR-75] _onConvStream TERMINAL while placeholder '
-                'up for "$displayed" → buffer has reply (${reply.length} chars) '
-                '→ INSTANT dismiss + render from buffer (no disk re-fetch)');
-          }
-          setState(() {
-            _awaitingResponse = false;
-            _thinking = false;
-            _noResponse = false;
-            _backgroundPlaceholder = false;
-            // Append the buffered assistant reply to the captured history, unless
-            // a raced complete history already left it as the last entry.
-            final lastIsReply = _entries.isNotEmpty &&
-                !_entries.last.isUser &&
-                _entries.last.content == reply;
-            if (lastIsReply) {
-              _entries[_entries.length - 1] =
-                  _entries.last.copyWith(isStreaming: false);
-            } else {
-              _entries.add(_ChatEntry(content: reply, isUser: false));
-            }
-            _streamingIndex = null;
-          });
-          _scrollToBottomAnimated();
-        } else {
-          // Fallback path — taken when EITHER:
-          //  • the buffer is empty: the chunks never arrived (socket was down
-          //    during generation: sleep/wake, WOR-62; or an audio-only Live-API
-          //    reply), or
-          //  • the buffer has the reply but _entries is empty: the terminal won
-          //    the race against the switch-back conversation_history, so the user
-          //    message isn't captured yet and rendering the reply alone would
-          //    drop it.
-          // In both, fall back to a disk re-fetch and KEEP the placeholder until
-          // a COMPLETE history lands (the conversation_history handler dismisses
-          // it). Post-`done` the reply is persisted, so that history carries BOTH
-          // the user message and the reply. The no-stuck watchdog stays armed
-          // (re-armed above) as the backstop if neither the history nor a usable
-          // done resolves it.
-          setState(() {
-            _awaitingResponse = false;
-            _thinking = false;
-          });
-          if (ws.kOsiaDebugPlaceholder) {
-            debugPrint('[OSIA WOR-75] _onConvStream TERMINAL while placeholder '
-                'up for "$displayed" → buffer empty=${reply.isEmpty} '
-                'entriesEmpty=${_entries.isEmpty} → fallback disk re-fetch '
-                '(keep placeholder until complete history)');
-          }
-          if (displayed != null && displayed.isNotEmpty) {
-            _requestConversationContent(displayed);
-          }
-        }
-      }
-      return;
-    }
 
     if (event.done || event.error) {
       // Terminal frame for the active conversation — finalize the streaming
@@ -865,12 +673,11 @@ class _ChatScreenState extends State<ChatScreen> {
       // WOR-75: a reply that produced NO streamed text — i.e. no live bubble and
       // an empty per-conversation buffer — leaves nothing on screen on `done`.
       // This is the Live API / voice-to-voice path (audio-only reply, no
-      // response_chunk) and also the recovery tail when the silence watchdog
-      // already dismissed the placeholder before the turn finished: in both, the
-      // terminal lands here (placeholder branch above skipped, _streamingIndex
-      // null) and would otherwise render nothing. Re-fetch so the persisted
-      // reply is shown. Tightly guarded so a normal text turn (non-empty buffer
-      // or a live bubble) never triggers a spurious reload. Uses the active id
+      // response_chunk) and also the empty-buffer recovery case (sleep/wake: the
+      // chunks were lost): in both the terminal lands here with _streamingIndex
+      // null and would otherwise render nothing. Re-fetch so the persisted reply
+      // is shown. Tightly guarded so a normal text turn (non-empty buffer or a
+      // live bubble) never triggers a spurious reload. Uses the active id
       // (= event id for a tagged terminal; the only turn we watch for untagged).
       final displayed = _activeConversationId;
       if (event.done &&
@@ -929,9 +736,9 @@ class _ChatScreenState extends State<ChatScreen> {
       // WOR-75 FIX: drop ONLY the disposable stream buffer. clearConvBuffer no
       // longer touches the pending flag, so switching away KEEPS the leaving
       // conv's pending (its turn may still be in flight) — that flag is exactly
-      // what makes the "OSIA is working in the background" placeholder show when
-      // the user returns. Pending clears only when the turn actually ends
-      // (terminal done/error) or its recovered reply arrives via history.
+      // what drives the recovery poll (and buffer hydration) when the user
+      // returns to it. Pending clears only when the turn actually ends (terminal
+      // done/error) or its recovered reply arrives via history.
       _wsService.clearConvBuffer(leaving);
     }
     if (ws.kOsiaDebugPlaceholder) {
@@ -947,15 +754,15 @@ class _ChatScreenState extends State<ChatScreen> {
     // leaving — drop them so a late timeout can't fire on the new chat.
     _cancelFirstTokenTimer();
     _pendingTurn = null;
-    // WOR-75/WOR-53/WOR-62 (simplified): is the conversation we're switching TO
-    // mid-turn? If so we show the background-work placeholder instead of
-    // replaying its partial buffer — the finished reply arrives via the
-    // deferred conversation_history re-fetch (sent by _requestConversationContent
-    // above) once the turn ends.
+    // WOR-75/WOR-53/WOR-62: is the conversation we're switching TO mid-turn? If
+    // so and its stream buffer is empty (chunks were lost on a dropped socket),
+    // the recovery poll below re-fetches its content until the persisted reply
+    // lands. When the buffer DOES hold content (the WOR-53 background stream kept
+    // accumulating) we hydrate from it immediately in the setState below.
     final pending = _wsService.isPending(conv.id);
     if (ws.kOsiaDebugPlaceholder) {
       debugPrint('[OSIA WOR-75] _loadConversation: target="${conv.id}" '
-          'isPending(target)=$pending → _backgroundPlaceholder=$pending');
+          'isPending(target)=$pending → recovery poll=$pending');
     }
     setState(() {
       _entries.clear();
@@ -964,32 +771,36 @@ class _ChatScreenState extends State<ChatScreen> {
       _streamingIndex = null;
       _activeConversationId = conv.id;
       _activeConversationTitle = conv.title;
-      _backgroundPlaceholder = pending;
-      if (!pending) {
-        // WOR-53: a finished conversation's buffer (if any) still holds its
-        // reply — seed the view from it so the switch isn't blank; the
-        // load_conversation→conversation_history round-trip reconciles to
-        // persisted history right after. (A pending conversation skips this and
-        // shows the placeholder instead of a partial bubble.)
-        final buffered = _wsService.bufferedText(conv.id);
-        if (buffered.isNotEmpty) {
-          final streaming = _wsService.isStreaming(conv.id);
-          _entries.add(_ChatEntry(
-            content: buffered,
-            isUser: false,
-            isStreaming: streaming,
-          ));
-          _streamingIndex = streaming ? _entries.length - 1 : null;
-        }
+      // WOR-53/WOR-75: ALWAYS seed the view from this conversation's stream
+      // buffer when it holds content — whether the turn is finished OR still in
+      // flight (the WOR-53 background stream kept accumulating while we were
+      // away). Returning to a conversation that generated in the background
+      // therefore immediately shows its accumulated partial/full reply from the
+      // buffer instead of a blank view; the
+      // load_conversation→conversation_history round-trip reconciles to persisted
+      // history right after, and live chunks (if the turn is still streaming)
+      // keep updating the bubble via [_onConvStream]. An empty buffer (sleep/wake:
+      // chunks were lost) leaves the view to the recovery poll below.
+      final buffered = _wsService.bufferedText(conv.id);
+      if (buffered.isNotEmpty) {
+        final streaming = _wsService.isStreaming(conv.id);
+        _entries.add(_ChatEntry(
+          content: buffered,
+          isUser: false,
+          isStreaming: streaming,
+        ));
+        _streamingIndex = streaming ? _entries.length - 1 : null;
       }
     });
-    // WOR-75 no-stuck: arm the silence watchdog when switching INTO a pending
-    // conversation (placeholder shown) so a never-finishing turn can't hang it;
-    // otherwise drop any watchdog from the conversation we just left.
+    // WOR-75/WOR-53/WOR-62 (recovery poll): switching INTO a pending conversation
+    // — start the poll so an empty-buffer (sleep/wake) turn whose reply we can't
+    // stream live is re-fetched until it lands (the poll self-cancels once the
+    // buffer fills or the turn ends). Switching into a settled conversation drops
+    // any poll left over from the one we just left.
     if (pending) {
-      _armPlaceholderWatchdog();
+      _startRecoveryPoll();
     } else {
-      _cancelPlaceholderWatchdog();
+      _stopRecoveryPoll();
     }
     Navigator.of(context).maybePop();
   }
@@ -1034,7 +845,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _wsService.sendNewConversation();
     _cancelPendingConvLoad();
     _cancelFirstTokenTimer();
-    _cancelPlaceholderWatchdog();
+    _stopRecoveryPoll();
     _pendingTurn = null;
     // WOR-53: drop the buffer of the conversation we're leaving so the buffer
     // map can't grow unbounded (the new conversation starts fresh; other
@@ -1044,7 +855,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _wsService.clearConvBuffer(leaving);
       // WOR-75: starting a new chat abandons the leaving conv from this view;
       // clear its pending too (clearConvBuffer no longer does) so no stale
-      // placeholder lingers. If that conv keeps streaming tagged chunks in the
+      // recovery poll lingers. If that conv keeps streaming tagged chunks in the
       // background, _appendConvDelta re-marks it pending.
       _wsService.clearPending(leaving);
     }
@@ -1053,7 +864,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
-      _backgroundPlaceholder = false;
       _activeConversationId = null;
       _activeConversationTitle = null;
     });
@@ -1069,7 +879,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     _cancelPendingConvLoad();
     _cancelFirstTokenTimer();
-    _cancelPlaceholderWatchdog();
+    _stopRecoveryPoll();
     _pendingTurn = null;
     // WOR-53: drop the buffer of the conversation we're leaving so the buffer
     // map can't grow unbounded (same hygiene as [_newConversation]).
@@ -1077,7 +887,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (leaving != null) {
       _wsService.clearConvBuffer(leaving);
       // WOR-75: clear its pending too (clearConvBuffer no longer does), same as
-      // [_newConversation], so no stale placeholder lingers for the reset chat.
+      // [_newConversation], so no stale recovery poll lingers for the reset chat.
       _wsService.clearPending(leaving);
     }
     setState(() {
@@ -1085,7 +895,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
-      _backgroundPlaceholder = false;
       _activeConversationId = null;
       _activeConversationTitle = null;
     });
@@ -1122,10 +931,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_pendingConvLoadId == conv.id) _cancelPendingConvLoad();
     final deletingActive = _activeConversationId == conv.id;
     if (deletingActive) {
-      // The emptied chat must not keep a watchdog or a retry payload for a
+      // The emptied chat must not keep a recovery poll or a retry payload for a
       // turn that belonged to the now-deleted conversation.
       _cancelFirstTokenTimer();
-      _cancelPlaceholderWatchdog();
+      _stopRecoveryPoll();
       _pendingTurn = null;
     }
     setState(() {
@@ -1136,7 +945,6 @@ class _ChatScreenState extends State<ChatScreen> {
         _thinking = false;
         _noResponse = false;
         _streamingIndex = null;
-        _backgroundPlaceholder = false;
         _activeConversationId = null;
         _activeConversationTitle = null;
       }
@@ -1251,10 +1059,10 @@ class _ChatScreenState extends State<ChatScreen> {
             : strings.hereIsFile(filename ?? ''));
     _wsService.sendText(prompt);
     // WOR-75/WOR-53/WOR-62: mark this conversation's turn in flight at send
-    // time (when its id is known) so switching away and straight back shows the
-    // background-work placeholder even before the first chunk arrives. A
-    // brand-new conversation has no id yet — its first streamed chunk carries
-    // the id and marks it then.
+    // time (when its id is known) so switching away and straight back arms the
+    // recovery poll (and, once chunks have accumulated, buffer hydration) even
+    // before the first chunk arrives. A brand-new conversation has no id yet —
+    // its first streamed chunk carries the id and marks it then.
     final sendingConv = _activeConversationId;
     if (ws.kOsiaDebugPlaceholder) {
       debugPrint('[OSIA WOR-75] _sendText: activeConversationId='
@@ -1284,13 +1092,15 @@ class _ChatScreenState extends State<ChatScreen> {
       // first token, to mask network + agent-construction latency.
       _thinking = true;
       _noResponse = false;
-      // The user is actively engaged on this conversation — never the
-      // background-work placeholder (WOR-75/WOR-53/WOR-62).
-      _backgroundPlaceholder = false;
     });
-    // WOR-75: the user is now engaged on this conversation (live), so any
-    // background-work watchdog left from a prior switch-back to it stands down.
-    _cancelPlaceholderWatchdog();
+    // WOR-75/WOR-53/WOR-62: the user is now engaged LIVE on this conversation, so
+    // any recovery poll left over from a prior switch-back / wake stands down —
+    // the live stream renders chunks as they arrive, and if the socket later
+    // drops mid-turn the reconnect branch re-arms the poll. (Deliberately NOT
+    // started here: while the buffer is still empty pre-first-token the poll
+    // would spuriously re-fetch a reply-less history and clear the thinking
+    // indicator / cancel the no-response watchdog mid-turn.)
+    _stopRecoveryPoll();
     // Arm the 12s no-response watchdog (cancelled at the first sign of life
     // from the server for this turn — see [_onMessage]).
     _armFirstTokenTimer();
@@ -1320,50 +1130,48 @@ class _ChatScreenState extends State<ChatScreen> {
     _firstTokenTimer = null;
   }
 
-  /// WOR-75 no-stuck safety net. Arm (or re-arm) the background-work watchdog
-  /// for the conversation currently showing the placeholder. Called when the
-  /// placeholder is raised (switch-back / reconnect) and re-armed on each of the
-  /// conversation's OWN id-scoped streamed frames (via [_onConvStream]), so it
-  /// elapses only when that conversation's stream goes silent — not when some
-  /// other conversation is busy (see [_placeholderSilenceTimeout]). No-op unless
-  /// the placeholder is up for a concrete conversation.
-  void _armPlaceholderWatchdog() {
-    _placeholderWatchdog?.cancel();
-    if (!_backgroundPlaceholder) {
-      _placeholderWatchdog = null;
-      return;
-    }
-    final convId = _activeConversationId;
-    if (convId == null || convId.isEmpty) {
-      _placeholderWatchdog = null;
-      return;
-    }
-    _placeholderWatchdog = Timer(_placeholderSilenceTimeout, () {
-      if (!mounted) return;
-      // Self-guard: only act if the SAME conversation is STILL showing the
-      // placeholder (it didn't already resolve, and the user didn't switch
-      // away). Otherwise the turn already recovered or moved on.
-      if (!_backgroundPlaceholder) return;
-      if (_activeConversationId != convId) return;
-      if (ws.kOsiaDebugPlaceholder) {
-        debugPrint('[OSIA WOR-75] placeholder watchdog: total silence for '
-            '"$convId" → force-resolve (clearPending + normal re-load)');
+  /// WOR-75/WOR-53/WOR-62 recovery poll. Start (or restart) the periodic
+  /// re-fetch of the DISPLAYED conversation's content. Each tick re-checks the
+  /// gate and self-cancels the moment it no longer holds — the poll is active
+  /// ONLY while a concrete conversation is displayed, its turn is still pending,
+  /// and its stream buffer is EMPTY (chunks were lost, e.g. sleep/wake, so we
+  /// cannot render the reply live and must re-fetch). The instant chunks flow the
+  /// buffer is non-empty, so the poll stops itself and the live stream renders
+  /// instead — it never runs during normal live streaming. It reads
+  /// [_activeConversationId] inside the tick so a conversation switch is picked
+  /// up, and only ever re-requests the displayed conversation's own content
+  /// (never re-routes the view — the conversation_history view-guard owns that).
+  void _startRecoveryPoll() {
+    _recoveryPoll?.cancel();
+    _recoveryPoll = Timer.periodic(const Duration(seconds: 3), (_) {
+      final active = _activeConversationId;
+      final shouldPoll = mounted &&
+          active != null &&
+          active.isNotEmpty &&
+          _wsService.isPending(active) &&
+          _wsService.bufferedText(active).isEmpty;
+      if (!shouldPoll) {
+        // Gate no longer holds (turn ended / buffer filled / switched away /
+        // unmounted) — stop polling. No leaked timer.
+        _recoveryPoll?.cancel();
+        _recoveryPoll = null;
+        return;
       }
-      // No frame arrived in the whole timeout — the turn is not progressing
-      // (very likely a reconnect that never resumed it, so no terminal `done`
-      // will ever come). Clear the in-flight flag so the re-fetched history
-      // renders through the keep-branch's pass-through (pending now false) and
-      // dismisses the placeholder to the real — possibly reply-less —
-      // conversation, instead of hanging forever.
-      _wsService.clearPending(convId);
-      _requestConversationContent(convId);
+      if (ws.kOsiaDebugPlaceholder) {
+        debugPrint('[OSIA WOR-75] recovery poll: pending + empty buffer for '
+            '"$active" → re-fetch conversation content');
+      }
+      // Reuse the existing load round-trip; the conversation_history handler
+      // reconciles non-destructively (no-blank guard keeps a buffer-backed view,
+      // and a complete post-done history renders the reply).
+      _requestConversationContent(active);
     });
   }
 
-  /// Cancel the background-work watchdog. Idempotent.
-  void _cancelPlaceholderWatchdog() {
-    _placeholderWatchdog?.cancel();
-    _placeholderWatchdog = null;
+  /// Stop the recovery poll. Idempotent.
+  void _stopRecoveryPoll() {
+    _recoveryPoll?.cancel();
+    _recoveryPoll = null;
   }
 
   /// The watchdog elapsed with TOTAL silence from the server — not a single
@@ -1407,7 +1215,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     _wsService.sendText(turn.prompt);
     // WOR-75/WOR-53/WOR-62: re-mark the displayed conversation's turn in flight
-    // (see [_sendText]) so a switch-away-and-back shows the placeholder.
+    // (see [_sendText]) so a switch-away-and-back arms the recovery poll / buffer
+    // hydration.
     final retryConv = _activeConversationId;
     if (retryConv != null && retryConv.isNotEmpty) {
       _wsService.markPending(retryConv);
@@ -1416,10 +1225,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _awaitingResponse = true;
       _thinking = true;
       _noResponse = false;
-      _backgroundPlaceholder = false;
     });
-    // WOR-75: user engaged live on this conversation — stand the watchdog down.
-    _cancelPlaceholderWatchdog();
+    // WOR-75/WOR-53/WOR-62: user engaged LIVE on this conversation — stand any
+    // recovery poll down (the live stream renders chunks; a later mid-turn
+    // disconnect re-arms it via the reconnect branch). Deliberately NOT started
+    // here, so the no-response watchdog below stays the sole send-path safety net.
+    _stopRecoveryPoll();
     _speakRequested = false;
     _armFirstTokenTimer();
     _scrollToBottomAnimated();
@@ -1468,14 +1279,15 @@ class _ChatScreenState extends State<ChatScreen> {
         _wsService.sendAudio(base64Wav);
         _awaitingResponse = true;
         // WOR-75/WOR-53/WOR-62: mark the displayed conversation's turn in flight
-        // (see [_sendText]); the user is engaged, so never the placeholder.
+        // (see [_sendText]).
         final voiceConv = _activeConversationId;
         if (voiceConv != null && voiceConv.isNotEmpty) {
           _wsService.markPending(voiceConv);
         }
-        _backgroundPlaceholder = false;
-        // WOR-75: user engaged live — stand the background-work watchdog down.
-        _cancelPlaceholderWatchdog();
+        // WOR-75/WOR-53/WOR-62: user engaged LIVE — stand any recovery poll down
+        // (the live stream renders chunks; a later mid-turn disconnect re-arms it
+        // via the reconnect branch). Deliberately NOT started here.
+        _stopRecoveryPoll();
         // Same as _sendText: a new turn invalidates stale speak requests.
         _speakRequested = false;
       }
@@ -1688,7 +1500,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _configSub?.cancel();
     _cancelPendingConvLoad();
     _cancelFirstTokenTimer();
-    _cancelPlaceholderWatchdog();
+    _stopRecoveryPoll();
     _pendingTurn = null;
     _wsService.dispose();
     setState(() {
@@ -1701,7 +1513,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _activeConversationId = null;
       _activeConversationTitle = null;
       _streamingIndex = null;
-      _backgroundPlaceholder = false;
     });
     _initConnection();
   }
@@ -1720,7 +1531,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _modelLoadTimeout?.cancel();
     _convLoadRetry?.cancel();
     _firstTokenTimer?.cancel();
-    _placeholderWatchdog?.cancel();
+    _recoveryPoll?.cancel();
     _modelSelectorNotifier?.dispose();
     _msgSub?.cancel();
     _convStreamSub?.cancel();
@@ -1759,21 +1570,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final double bottomSafe = MediaQuery.of(context).padding.bottom;
     final double inputBarReserve = _inputBarHeight > 0 ? _inputBarHeight : 112;
     final double listBottomPadding = bottomSafe + 10 + inputBarReserve + 16;
-
-    if (ws.kOsiaDebugPlaceholder) {
-      final branch = _backgroundPlaceholder
-          ? 'PLACEHOLDER'
-          : (_entries.isEmpty && !_thinking && !_noResponse)
-              ? 'EMPTY'
-              : 'LIST(${_entries.length} entries, streamingIdx=$_streamingIndex)';
-      if (branch != _debugLastBranch) {
-        _debugLastBranch = branch;
-        final active = _activeConversationId;
-        debugPrint('[OSIA WOR-75] build: active="${active ?? ""}" '
-            'branch=$branch isPending(active)='
-            '${active != null && _wsService.isPending(active)}');
-      }
-    }
 
     return Scaffold(
       key: _scaffoldKey,
@@ -1828,15 +1624,7 @@ class _ChatScreenState extends State<ChatScreen> {
           Column(
             children: [
               Expanded(
-                // WOR-75/WOR-53/WOR-62: when the displayed conversation has an
-                // in-flight turn we're not watching live (switch-back /
-                // reconnect), show the background-work placeholder instead of a
-                // partial/empty view. Only changes WHAT is rendered for the
-                // already-displayed conversation — never switches the view.
-                child: _backgroundPlaceholder
-                    ? _buildBackgroundPlaceholder(
-                        palette, strings, listBottomPadding)
-                    : _entries.isEmpty && !_thinking && !_noResponse
+                child: _entries.isEmpty && !_thinking && !_noResponse
                     ? _buildEmptyState(palette, strings)
                     : ListView.builder(
                         controller: _scrollCtrl,
@@ -1970,82 +1758,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  /// WOR-75/WOR-53/WOR-62: the "OSIA is working in the background" placeholder.
-  /// Shown for the displayed conversation when it has an in-flight turn we are
-  /// NOT watching stream live (the user switched back to it, or we reconnected
-  /// after a disconnect/sleep). Rendered as an assistant-style bubble pinned to
-  /// the bottom-left of the canvas — exactly where the reply will land — so it
-  /// reads as the answer about to arrive. A single inline row: a small,
-  /// gently-pulsing OSIA logo (which doubles as the thinking signal, so no
-  /// separate dots) next to the localized line, muted to read as "working, not
-  /// yet answered". Replaced by the real reply when the turn finishes (terminal
-  /// frame or the deferred conversation_history re-fetch). On-brand: grey
-  /// [OsiaPalette.surface] frame, violet [OsiaPalette.accent] hairline, same
-  /// logo asset as the app. [bottomInset] clears the floating input bar so the
-  /// bubble sits flush above it, like the message list's own bottom padding.
-  Widget _buildBackgroundPlaceholder(
-      OsiaPalette palette, OsiaStrings strings, double bottomInset) {
-    return Align(
-      alignment: Alignment.bottomLeft,
-      child: Padding(
-        // Match ChatBubble's horizontal margin (14) so the placeholder lines
-        // up with a real assistant reply; bottomInset clears the floating
-        // input bar exactly like the message list's bottom padding.
-        padding: EdgeInsets.fromLTRB(14, 4, 14, bottomInset),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.82,
-          ),
-          child: Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-            decoration: BoxDecoration(
-              // Grey card with a whisper of accent (the brand "grey + purple"),
-              // framed by a subtle violet hairline — same radius/border
-              // language as the chat bubbles, the small bottom-left corner
-              // anchoring it to the assistant side.
-              color: Color.alphaBlend(
-                palette.accent.withValues(alpha: 0.06),
-                palette.surface,
-              ),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(20),
-                topRight: Radius.circular(20),
-                bottomRight: Radius.circular(20),
-                bottomLeft: Radius.circular(6),
-              ),
-              border: Border.all(
-                color: palette.accent.withValues(alpha: 0.22),
-                width: 0.6,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // The pulsing logo IS the thinking animation (reduced-motion
-                // → static), sized small to sit inline with the text line.
-                const _PulsingLogo(size: 22),
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    strings.osiaWorkingBackground,
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w500,
-                      color: palette.textMuted,
-                      height: 1.3,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -2541,89 +2253,6 @@ class _MiniThinkingDotsState extends State<_MiniThinkingDots>
                     .transform(tri.clamp(0.0, 1.0).toDouble());
               }),
             ),
-    );
-  }
-}
-
-/// The gently-pulsing OSIA logo inside the "working in the background"
-/// placeholder bubble (WOR-75/WOR-53/WOR-62, see
-/// [_ChatScreenState._buildBackgroundPlaceholder]). A soft breathe — a small
-/// scale + opacity loop on [MotionDurations.pulse] — so the placeholder feels
-/// alive without distracting; it doubles as the thinking indicator, so no
-/// separate dots are needed. [size] sets the edge length (small for inline
-/// use). Honors reduced motion by rendering the logo static (no loop). Uses
-/// the same `osia_logo_mark.png` asset as the empty state, so the placeholder
-/// stays on-brand.
-class _PulsingLogo extends StatefulWidget {
-  /// Edge length of the logo in logical pixels.
-  final double size;
-  const _PulsingLogo({this.size = 64});
-
-  @override
-  State<_PulsingLogo> createState() => _PulsingLogoState();
-}
-
-class _PulsingLogoState extends State<_PulsingLogo>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  bool _reduced = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: MotionDurations.pulse,
-    );
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Re-sync on every dependency change so a runtime reduced-motion toggle is
-    // honored: hold the logo static when reduced, otherwise keep the soft
-    // breathe looping (reverse so it eases in and out, never snapping).
-    _reduced = Motion.reduced(context);
-    if (_reduced) {
-      _ctrl.stop();
-    } else if (!_ctrl.isAnimating) {
-      _ctrl.repeat(reverse: true);
-    }
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  Widget _logo() => SizedBox(
-        width: widget.size,
-        height: widget.size,
-        child: Image.asset(
-          'assets/osia_logo_mark.png',
-          fit: BoxFit.contain,
-          filterQuality: FilterQuality.medium,
-        ),
-      );
-
-  @override
-  Widget build(BuildContext context) {
-    if (_reduced) return _logo();
-    return AnimatedBuilder(
-      animation: _ctrl,
-      child: _logo(),
-      builder: (context, child) {
-        // easeInOut over the [0,1] loop value → a soft, symmetric breathe.
-        final eased = MotionCurves.loop.transform(_ctrl.value);
-        // Both ranges stay safely within [0,1] for Opacity (no spring here).
-        final opacity = 0.7 + 0.3 * eased;
-        final scale = 0.94 + 0.06 * eased;
-        return Opacity(
-          opacity: opacity,
-          child: Transform.scale(scale: scale, child: child),
-        );
-      },
     );
   }
 }
