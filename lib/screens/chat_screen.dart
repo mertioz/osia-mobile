@@ -1226,6 +1226,127 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  /// Long-press action sheet for a conversation row (WOR-76): an on-brand
+  /// bottom sheet offering Rename and Delete. Delete keeps its existing confirm
+  /// dialog and full behaviour; Rename opens the pre-filled rename dialog. Swipe
+  /// still deletes a row directly, so no delete path is lost.
+  Future<void> _showConversationActions(ws.Conversation conv) async {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.edit_outlined, color: palette.accent),
+              title: Text(strings.rename,
+                  style: TextStyle(color: palette.textPrimary)),
+              onTap: () => Navigator.of(ctx).pop('rename'),
+            ),
+            ListTile(
+              leading:
+                  Icon(Icons.delete_outline_rounded, color: palette.error),
+              title:
+                  Text(strings.delete, style: TextStyle(color: palette.error)),
+              onTap: () => Navigator.of(ctx).pop('delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'rename') {
+      await _renameConversation(conv);
+    } else if (action == 'delete') {
+      await _deleteConversation(conv);
+    }
+  }
+
+  /// Rename dialog for a conversation (WOR-76). Pre-fills the current title,
+  /// trims, rejects empty/whitespace (confirm stays disabled), caps length at 60
+  /// (the server caps too), and on confirm sends `rename_conversation` via the
+  /// WS service. The renamed title appears automatically when the server
+  /// broadcasts the updated `conversations` list — handled by the existing
+  /// [ws.ConversationsMessage] case — so there is no local list mutation here.
+  Future<void> _renameConversation(ws.Conversation conv) async {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final controller = TextEditingController(text: conv.title);
+    // Pre-select the existing title so the user can overwrite it in one stroke.
+    controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: controller.text.length,
+    );
+    try {
+      final newTitle = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(strings.renameConversationTitle),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 60,
+            textInputAction: TextInputAction.done,
+            style: TextStyle(color: palette.textPrimary, fontSize: 15),
+            decoration: InputDecoration(
+              hintText: strings.renameConversationHint,
+              // Keep the dialog compact — no character counter.
+              counterText: '',
+            ),
+            onSubmitted: (_) {
+              final t = controller.text.trim();
+              if (t.isNotEmpty) Navigator.of(ctx).pop(t);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text(strings.cancel,
+                  style: TextStyle(color: palette.textMuted)),
+            ),
+            // Confirm enables only when the trimmed title is non-empty.
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: controller,
+              builder: (_, value, _) {
+                final enabled = value.text.trim().isNotEmpty;
+                return TextButton(
+                  onPressed: enabled
+                      ? () => Navigator.of(ctx).pop(controller.text.trim())
+                      : null,
+                  child: Text(
+                    strings.rename,
+                    style: TextStyle(
+                      color: enabled
+                          ? palette.accent
+                          : palette.textMuted.withValues(alpha: 0.4),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      );
+      if (newTitle == null) return;
+      final trimmed = newTitle.trim();
+      // Defence in depth + skip a no-op rename.
+      if (trimmed.isEmpty || trimmed == conv.title) return;
+      _wsService.sendRenameConversation(conv.id, trimmed);
+      // The broadcast `conversations` frame refreshes the drawer list, but the
+      // app-bar title reads [_activeConversationTitle], which that handler does
+      // not touch. Keep the header consistent when renaming the conversation
+      // currently on screen. Confined to this new feature path — the protected
+      // ConversationsMessage handler stays untouched.
+      if (mounted && conv.id == _activeConversationId) {
+        setState(() => _activeConversationTitle = trimmed);
+      }
+    } finally {
+      controller.dispose();
+    }
+  }
+
   String _formatConversationDate(DateTime? date, OsiaStrings strings) {
     if (date == null) return '';
     final now = DateTime.now();
@@ -2263,7 +2384,7 @@ class _ChatScreenState extends State<ChatScreen> {
           child: InkWell(
             borderRadius: BorderRadius.circular(12),
             onTap: () => _loadConversation(conv),
-            onLongPress: () => _deleteConversation(conv),
+            onLongPress: () => _showConversationActions(conv),
             child: AnimatedContainer(
               duration: MotionDurations.medium,
               curve: MotionCurves.enter,

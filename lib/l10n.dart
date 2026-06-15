@@ -36,6 +36,7 @@ class OsiaStrings {
   final String delete;
   final String retry;
   final String save;
+  final String rename;
 
   // ── Connection screen ──
   final String enterYourToken;
@@ -56,6 +57,8 @@ class OsiaStrings {
   final String messageHint;
   final String deleteConversationTitle;
   final String deleteConversationBodyTemplate; // {title}
+  final String renameConversationTitle;
+  final String renameConversationHint;
   final String today;
   final String yesterday;
   final String daysAgoTemplate; // {n}
@@ -271,6 +274,7 @@ class OsiaStrings {
     required this.delete,
     required this.retry,
     required this.save,
+    required this.rename,
     required this.enterYourToken,
     required this.connect,
     required this.connectingEllipsis,
@@ -287,6 +291,8 @@ class OsiaStrings {
     required this.messageHint,
     required this.deleteConversationTitle,
     required this.deleteConversationBodyTemplate,
+    required this.renameConversationTitle,
+    required this.renameConversationHint,
     required this.today,
     required this.yesterday,
     required this.daysAgoTemplate,
@@ -549,6 +555,9 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   messageHint: 'Message OSIA…',
   deleteConversationTitle: 'Delete conversation?',
   deleteConversationBodyTemplate: '"{title}" will be permanently deleted.',
+  rename: 'Rename',
+  renameConversationTitle: 'Rename conversation',
+  renameConversationHint: 'Conversation name',
   today: 'Today',
   yesterday: 'Yesterday',
   daysAgoTemplate: '{n} days ago',
@@ -763,6 +772,9 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   messageHint: 'Message OSIA…',
   deleteConversationTitle: 'Supprimer la conversation ?',
   deleteConversationBodyTemplate: '« {title} » sera supprimée définitivement.',
+  rename: 'Renommer',
+  renameConversationTitle: 'Renommer la conversation',
+  renameConversationHint: 'Nom de la conversation',
   today: "Aujourd'hui",
   yesterday: 'Hier',
   daysAgoTemplate: 'Il y a {n} j',
@@ -978,6 +990,9 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   messageHint: '发送给 OSIA…',
   deleteConversationTitle: '删除对话？',
   deleteConversationBodyTemplate: '"{title}" 将被永久删除。',
+  rename: '重命名',
+  renameConversationTitle: '重命名对话',
+  renameConversationHint: '对话名称',
   today: '今天',
   yesterday: '昨天',
   daysAgoTemplate: '{n} 天前',
@@ -1185,6 +1200,9 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   messageHint: 'OSIA にメッセージ…',
   deleteConversationTitle: '会話を削除しますか？',
   deleteConversationBodyTemplate: '「{title}」は完全に削除されます。',
+  rename: '名前を変更',
+  renameConversationTitle: '会話の名前を変更',
+  renameConversationHint: '会話名',
   today: '今日',
   yesterday: '昨日',
   daysAgoTemplate: '{n} 日前',
@@ -1396,6 +1414,9 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   messageHint: 'Nachricht an OSIA…',
   deleteConversationTitle: 'Unterhaltung löschen?',
   deleteConversationBodyTemplate: '„{title}" wird dauerhaft gelöscht.',
+  rename: 'Umbenennen',
+  renameConversationTitle: 'Unterhaltung umbenennen',
+  renameConversationHint: 'Name der Unterhaltung',
   today: 'Heute',
   yesterday: 'Gestern',
   daysAgoTemplate: 'Vor {n} Tagen',
@@ -1614,6 +1635,9 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   messageHint: 'Mensaje a OSIA…',
   deleteConversationTitle: '¿Eliminar conversación?',
   deleteConversationBodyTemplate: '«{title}» se eliminará permanentemente.',
+  rename: 'Cambiar nombre',
+  renameConversationTitle: 'Cambiar nombre de la conversación',
+  renameConversationHint: 'Nombre de la conversación',
   today: 'Hoy',
   yesterday: 'Ayer',
   daysAgoTemplate: 'Hace {n} días',

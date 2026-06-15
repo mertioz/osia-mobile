@@ -882,6 +882,17 @@ class WebSocketService {
     clearPending(id);
   }
 
+  /// Ask the server to rename conversation [id] to [title] (WOR-76). The server
+  /// renames, acks with `{"type":"conversation_renamed", ...}` — which the
+  /// client ignores: it lands in [_onData]'s `default` branch and is never
+  /// emitted onto the sealed [messageStream] — then broadcasts the updated
+  /// `conversations` list to all clients, refreshing the sidebar via the
+  /// existing [ConversationsMessage] handler. Additive: touches nothing on the
+  /// streaming / pending / reconnect paths.
+  void sendRenameConversation(String id, String title) {
+    _send({'type': 'rename_conversation', 'id': id, 'title': title});
+  }
+
   /// Ask the server for the list of available models.
   void sendGetModels() {
     _send({'type': 'get_models'});
