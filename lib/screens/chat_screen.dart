@@ -576,6 +576,13 @@ class _ChatScreenState extends State<ChatScreen> {
               'id="${id ?? ""}" (${messages.length} msgs) → '
               'renders persisted history');
         }
+        // Polish: capture whether this conversation's turn is still in flight
+        // BEFORE the apply path below clears its pending flag, so a hydrated
+        // pending conversation with no reply yet can re-show the thinking
+        // indicator (applied at the end of this setState).
+        final bool wasPending = effectiveConvId != null &&
+            effectiveConvId.isNotEmpty &&
+            _wsService.isPending(effectiveConvId);
         setState(() {
           _entries
             ..clear()
@@ -680,6 +687,17 @@ class _ChatScreenState extends State<ChatScreen> {
             _typeRevealed = liveText.length;
           } else {
             _streamingIndex = null;
+          }
+          // Polish: a hydrated conversation whose turn is still pending but
+          // whose reply hasn't started rendering — no live streaming bubble was
+          // re-attached above AND the persisted history doesn't yet end with the
+          // assistant reply — shows the SAME pre-stream thinking indicator as the
+          // initial send (returning mid-think looks identical to just having
+          // sent). Mid-stream (a streaming bubble) or finished (historyHasReply)
+          // keeps it off, so there's never a double indicator or dots over a
+          // reply. Dismissed by the first chunk / done like the live-send dots.
+          if (wasPending && _streamingIndex == null && !historyHasReply) {
+            _thinking = true;
           }
         });
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1018,6 +1036,17 @@ class _ChatScreenState extends State<ChatScreen> {
         // fully revealed so the typewriter only animates NEW chunks from here.
         _typeTarget = buffered;
         _typeRevealed = buffered.length;
+      }
+      // Polish: returning to a pending conversation whose reply hasn't started
+      // rendering yet (no chunks buffered, so no streaming bubble was seeded
+      // above) shows the SAME pre-stream thinking indicator as the initial
+      // send — user bubble + thinking dots, identical to having just sent the
+      // message. When the buffer DID hold content a streaming bubble is on
+      // screen instead, so this stays off and the reply (typewriter) renders,
+      // not the dots. Dismissed by the first chunk / done exactly like the
+      // live-send indicator (see [_onConvStream]).
+      if (pending && buffered.isEmpty) {
+        _thinking = true;
       }
     });
     // WOR-75/WOR-53/WOR-62 (recovery poll): switching INTO a pending conversation
