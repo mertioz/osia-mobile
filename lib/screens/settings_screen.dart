@@ -250,7 +250,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // ── Appearance ───────────────────────────────────────────
-              _SectionHeader(label: strings.appearance, palette: palette),
+              _SectionHeader(
+                label: strings.appearance,
+                subtitle: strings.appearanceSub,
+                description: strings.appearanceDesc,
+                palette: palette,
+              ),
               _SectionCard(
                 palette: palette,
                 child: Column(
@@ -272,7 +277,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
 
               // ── Language ─────────────────────────────────────────────
-              _SectionHeader(label: strings.language, palette: palette),
+              _SectionHeader(
+                label: strings.language,
+                subtitle: strings.languageSub,
+                description: strings.languageDesc,
+                palette: palette,
+              ),
               _SectionCard(
                 palette: palette,
                 child: _LanguageDropdown(
@@ -283,7 +293,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
 
               // ── Voice ────────────────────────────────────────────────
-              _SectionHeader(label: strings.voiceSection, palette: palette),
+              _SectionHeader(
+                label: strings.voiceSection,
+                subtitle: strings.voiceSectionSub,
+                description: strings.voiceSectionDesc,
+                palette: palette,
+              ),
               _SectionCard(
                 palette: palette,
                 padding: EdgeInsets.zero,
@@ -298,7 +313,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
 
               // ── APIs & Providers ─────────────────────────────────────
-              _SectionHeader(label: strings.providersTitle, palette: palette),
+              _SectionHeader(
+                label: strings.providersTitle,
+                subtitle: strings.providersSub,
+                description: strings.providersDesc,
+                palette: palette,
+              ),
               _SectionCard(
                 palette: palette,
                 padding: EdgeInsets.zero,
@@ -328,7 +348,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
 
               // ── Legal ────────────────────────────────────────────────
-              _SectionHeader(label: strings.legal, palette: palette),
+              _SectionHeader(
+                label: strings.legal,
+                subtitle: strings.legalSub,
+                description: strings.legalDesc,
+                palette: palette,
+              ),
               _SectionCard(
                 palette: palette,
                 padding: EdgeInsets.zero,
@@ -358,6 +383,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // ── Connection ───────────────────────────────────────────
               _SectionHeader(
                 label: strings.connectionSection,
+                subtitle: strings.connectionSectionSub,
+                description: strings.connectionSectionDesc,
                 palette: palette,
               ),
               _SectionCard(
@@ -449,20 +476,60 @@ class _SettingsScreenState extends State<SettingsScreen> {
 class _SectionHeader extends StatelessWidget {
   final String label;
   final OsiaPalette palette;
-  const _SectionHeader({required this.label, required this.palette});
+
+  /// Optional ~6-word subtitle shown under the uppercase title, and an
+  /// optional ~2-sentence pedagogical description under that (WOR-78).
+  /// Both wrap freely and are omitted when null, so the bare-title layout
+  /// is preserved for any caller that doesn't supply them.
+  final String? subtitle;
+  final String? description;
+
+  const _SectionHeader({
+    required this.label,
+    required this.palette,
+    this.subtitle,
+    this.description,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 22, 4, 8),
-      child: Text(
-        label.toUpperCase(),
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          color: palette.textMuted,
-          letterSpacing: 1.1,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: palette.textMuted,
+              letterSpacing: 1.1,
+            ),
+          ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              subtitle!,
+              style: TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+                color: palette.textPrimary,
+              ),
+            ),
+          ],
+          if (description != null) ...[
+            const SizedBox(height: 3),
+            Text(
+              description!,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                color: palette.textMuted,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

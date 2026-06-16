@@ -112,6 +112,22 @@ class OsiaStrings {
   final String makeDonation;
   final String linkOpenFailed;
 
+  // ── Settings section descriptions (WOR-78) ──
+  // Short subtitle (~6 words) + a ~2-sentence pedagogical description shown
+  // under each settings section title. Mirrors the PC settings copy.
+  final String appearanceSub;
+  final String appearanceDesc;
+  final String languageSub;
+  final String languageDesc;
+  final String voiceSectionSub;
+  final String voiceSectionDesc;
+  final String providersSub;
+  final String providersDesc;
+  final String legalSub;
+  final String legalDesc;
+  final String connectionSectionSub;
+  final String connectionSectionDesc;
+
   // ── APIs & Providers ──
   final String providersTitle;
   final String configureProviders;
@@ -341,6 +357,18 @@ class OsiaStrings {
     required this.disconnectConfirmBody,
     required this.makeDonation,
     required this.linkOpenFailed,
+    required this.appearanceSub,
+    required this.appearanceDesc,
+    required this.languageSub,
+    required this.languageDesc,
+    required this.voiceSectionSub,
+    required this.voiceSectionDesc,
+    required this.providersSub,
+    required this.providersDesc,
+    required this.legalSub,
+    required this.legalDesc,
+    required this.connectionSectionSub,
+    required this.connectionSectionDesc,
     required this.providersTitle,
     required this.configureProviders,
     required this.liveApi,
@@ -609,6 +637,24 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
       'Your token will be erased from this device. Your theme and language are kept.',
   makeDonation: 'Make a donation',
   linkOpenFailed: 'Could not open the link.',
+  appearanceSub: 'Theme color for the whole app',
+  appearanceDesc:
+      'Pick the accent and background palette OSIA uses everywhere. Your choice is saved on this device and applied instantly.',
+  languageSub: 'Interface language for the app',
+  languageDesc:
+      'Choose the language for every label, button and message. The whole interface updates the moment you pick one.',
+  voiceSectionSub: 'How OSIA reads replies aloud',
+  voiceSectionDesc:
+      'Choose whether OSIA speaks its answers aloud. With automatic read-aloud off, you can still tap the speaker icon under any message to hear it.',
+  providersSub: 'AI, voice and transcription keys',
+  providersDesc:
+      'Connect your AI, voice (TTS) and speech (STT) providers with their API keys. Enable Live API for real-time voice-to-voice, which replaces separate transcription and speech.',
+  legalSub: 'Terms and privacy documents',
+  legalDesc:
+      'Read the Terms of Service and Privacy Policy for OSIA. They explain how the app works and how your data is handled.',
+  connectionSectionSub: 'Manage the link to your PC',
+  connectionSectionDesc:
+      'Restart the OSIA server on your PC remotely, or disconnect this device. Disconnecting erases your saved token but keeps your theme and language.',
   providersTitle: 'APIs & Providers',
   configureProviders: 'Configure APIs & Providers',
   liveApi: 'Live API',
@@ -826,6 +872,24 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
       'Votre token sera effacé de cet appareil. Votre thème et votre langue sont conservés.',
   makeDonation: 'Faire un don',
   linkOpenFailed: "Impossible d'ouvrir le lien.",
+  appearanceSub: "Couleur du thème de l'application",
+  appearanceDesc:
+      "Choisissez la palette d'accent et d'arrière-plan qu'OSIA utilise partout. Votre choix est enregistré sur cet appareil et appliqué instantanément.",
+  languageSub: "Langue de l'interface",
+  languageDesc:
+      "Choisissez la langue de chaque libellé, bouton et message. Toute l'interface se met à jour dès que vous en sélectionnez une.",
+  voiceSectionSub: 'Comment OSIA lit ses réponses',
+  voiceSectionDesc:
+      "Choisissez si OSIA lit ses réponses à voix haute. Avec la lecture automatique désactivée, vous pouvez toujours toucher l'icône haut-parleur sous un message pour l'écouter.",
+  providersSub: 'Clés IA, voix et transcription',
+  providersDesc:
+      "Connectez vos fournisseurs d'IA, de voix (TTS) et de transcription (STT) avec leurs clés API. Activez l'API Live pour la voix à voix en temps réel, qui remplace la transcription et la synthèse séparées.",
+  legalSub: 'Conditions et confidentialité',
+  legalDesc:
+      "Consultez les conditions d'utilisation et la politique de confidentialité d'OSIA. Elles expliquent le fonctionnement de l'application et le traitement de vos données.",
+  connectionSectionSub: 'Gérer le lien avec votre PC',
+  connectionSectionDesc:
+      'Redémarrez le serveur OSIA sur votre PC à distance, ou déconnectez cet appareil. La déconnexion efface votre token enregistré mais conserve votre thème et votre langue.',
   providersTitle: 'API et fournisseurs',
   configureProviders: 'Configurer les API et fournisseurs',
   liveApi: 'API Live',
@@ -1041,6 +1105,19 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   disconnectConfirmBody: '您的令牌将从此设备中删除。您的主题和语言将被保留。',
   makeDonation: '捐赠支持',
   linkOpenFailed: '无法打开链接。',
+  appearanceSub: '整个应用的主题颜色',
+  appearanceDesc: '选择 OSIA 在各处使用的强调色和背景配色。您的选择会保存在本设备上并立即应用。',
+  languageSub: '应用界面语言',
+  languageDesc: '选择每个标签、按钮和消息所用的语言。选定后整个界面会立即更新。',
+  voiceSectionSub: 'OSIA 如何朗读回复',
+  voiceSectionDesc: '选择 OSIA 是否朗读其答案。关闭自动朗读后，您仍可点按任意消息下方的扬声器图标来收听。',
+  providersSub: 'AI、语音和转录密钥',
+  providersDesc:
+      '连接您的 AI、语音 (TTS) 和转录 (STT) 提供商及其 API 密钥。启用实时 API 可进行实时语音对话，它会取代单独的转录与语音合成。',
+  legalSub: '条款与隐私文件',
+  legalDesc: '阅读 OSIA 的服务条款和隐私政策。它们说明了应用的工作方式以及如何处理您的数据。',
+  connectionSectionSub: '管理与电脑的连接',
+  connectionSectionDesc: '远程重启您电脑上的 OSIA 服务器，或断开此设备。断开连接会清除已保存的令牌，但保留您的主题和语言。',
   providersTitle: 'API 与提供商',
   configureProviders: '配置 API 与提供商',
   liveApi: '实时 API',
@@ -1251,6 +1328,21 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   disconnectConfirmBody: 'トークンはこのデバイスから消去されます。テーマと言語は保持されます。',
   makeDonation: '寄付をする',
   linkOpenFailed: 'リンクを開けませんでした。',
+  appearanceSub: 'アプリ全体のテーマカラー',
+  appearanceDesc: 'OSIA が全体で使うアクセントと背景の配色を選びます。選択内容はこのデバイスに保存され、すぐに適用されます。',
+  languageSub: 'アプリの表示言語',
+  languageDesc: 'すべてのラベル・ボタン・メッセージの言語を選びます。選ぶとインターフェイス全体がすぐに切り替わります。',
+  voiceSectionSub: 'OSIA が応答を読み上げる方法',
+  voiceSectionDesc:
+      'OSIA が回答を読み上げるかどうかを選びます。自動読み上げをオフにしても、メッセージ下のスピーカーアイコンをタップすれば聞けます。',
+  providersSub: 'AI・音声・文字起こしのキー',
+  providersDesc:
+      'AI、音声 (TTS)、文字起こし (STT) のプロバイダーとその API キーを接続します。ライブ API を有効にするとリアルタイムの音声対話になり、個別の STT/TTS に代わります。',
+  legalSub: '規約とプライバシー文書',
+  legalDesc: 'OSIA の利用規約とプライバシーポリシーを確認できます。アプリの仕組みとデータの取り扱いについて説明しています。',
+  connectionSectionSub: 'PC との接続を管理',
+  connectionSectionDesc:
+      'PC 上の OSIA サーバーをリモートで再起動したり、このデバイスを切断したりできます。切断すると保存済みのトークンは消去されますが、テーマと言語は保持されます。',
   providersTitle: 'API とプロバイダー',
   configureProviders: 'API とプロバイダーを設定',
   liveApi: 'ライブ API',
@@ -1470,6 +1562,24 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
       'Ihr Token wird von diesem Gerät gelöscht. Ihr Thema und Ihre Sprache bleiben erhalten.',
   makeDonation: 'Spenden',
   linkOpenFailed: 'Der Link konnte nicht geöffnet werden.',
+  appearanceSub: 'Themenfarbe der gesamten App',
+  appearanceDesc:
+      'Wählen Sie die Akzent- und Hintergrundpalette, die OSIA überall verwendet. Ihre Wahl wird auf diesem Gerät gespeichert und sofort angewendet.',
+  languageSub: 'Sprache der Benutzeroberfläche',
+  languageDesc:
+      'Wählen Sie die Sprache für jede Beschriftung, jede Schaltfläche und jede Nachricht. Die gesamte Oberfläche wird sofort aktualisiert, sobald Sie eine auswählen.',
+  voiceSectionSub: 'Wie OSIA Antworten vorliest',
+  voiceSectionDesc:
+      'Legen Sie fest, ob OSIA seine Antworten vorliest. Ist das automatische Vorlesen aus, können Sie eine Nachricht weiterhin über das Lautsprechersymbol darunter anhören.',
+  providersSub: 'Schlüssel für KI, Stimme, Transkription',
+  providersDesc:
+      'Verbinden Sie Ihre Anbieter für KI, Sprache (TTS) und Transkription (STT) mit ihren API-Schlüsseln. Aktivieren Sie die Live-API für Echtzeit-Sprachdialog, der separate Transkription und Sprachausgabe ersetzt.',
+  legalSub: 'Nutzungsbedingungen und Datenschutz',
+  legalDesc:
+      'Lesen Sie die Nutzungsbedingungen und die Datenschutzerklärung von OSIA. Sie erläutern, wie die App funktioniert und wie Ihre Daten verarbeitet werden.',
+  connectionSectionSub: 'Verbindung zum PC verwalten',
+  connectionSectionDesc:
+      'Starten Sie den OSIA-Server auf Ihrem PC aus der Ferne neu oder trennen Sie dieses Gerät. Beim Trennen wird Ihr gespeichertes Token gelöscht, Thema und Sprache bleiben erhalten.',
   providersTitle: 'APIs & Anbieter',
   configureProviders: 'APIs & Anbieter konfigurieren',
   liveApi: 'Live-API',
@@ -1689,6 +1799,24 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
       'Tu token se borrará de este dispositivo. Tu tema e idioma se conservan.',
   makeDonation: 'Hacer una donación',
   linkOpenFailed: 'No se pudo abrir el enlace.',
+  appearanceSub: 'Color del tema de la app',
+  appearanceDesc:
+      'Elige la paleta de acento y fondo que OSIA usa en todas partes. Tu elección se guarda en este dispositivo y se aplica al instante.',
+  languageSub: 'Idioma de la interfaz',
+  languageDesc:
+      'Elige el idioma de cada etiqueta, botón y mensaje. Toda la interfaz se actualiza en cuanto seleccionas uno.',
+  voiceSectionSub: 'Cómo OSIA lee las respuestas',
+  voiceSectionDesc:
+      'Elige si OSIA lee sus respuestas en voz alta. Con la lectura automática desactivada, aún puedes tocar el icono del altavoz bajo cualquier mensaje para escucharlo.',
+  providersSub: 'Claves de IA, voz y transcripción',
+  providersDesc:
+      'Conecta tus proveedores de IA, voz (TTS) y transcripción (STT) con sus claves API. Activa la API Live para voz a voz en tiempo real, que reemplaza la transcripción y la síntesis por separado.',
+  legalSub: 'Términos y privacidad',
+  legalDesc:
+      'Lee los términos de servicio y la política de privacidad de OSIA. Explican cómo funciona la app y cómo se tratan tus datos.',
+  connectionSectionSub: 'Gestiona el enlace con tu PC',
+  connectionSectionDesc:
+      'Reinicia el servidor OSIA de tu PC de forma remota o desconecta este dispositivo. Desconectar borra tu token guardado pero conserva tu tema e idioma.',
   providersTitle: 'API y proveedores',
   configureProviders: 'Configurar API y proveedores',
   liveApi: 'API Live',
