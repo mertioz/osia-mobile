@@ -23,6 +23,12 @@ const Curve _kBarAnimCurve = MotionCurves.enter;
 /// the chat content shows faintly underneath.
 class GlassInputBar extends StatelessWidget {
   final TextEditingController textController;
+  /// Optional external focus handle for the text field. When provided, the
+  /// chat screen owns it so it can conditionally request focus (new empty
+  /// chat → open the keyboard) or unfocus (existing conversation → keep it
+  /// down). When null the field falls back to its own internal node, so the
+  /// manual-tap-to-focus behaviour is unchanged either way. Additive only.
+  final FocusNode? focusNode;
   final bool isRecording;
   final bool hasText;
   final VoidCallback onSend;
@@ -42,6 +48,7 @@ class GlassInputBar extends StatelessWidget {
   const GlassInputBar({
     super.key,
     required this.textController,
+    this.focusNode,
     required this.isRecording,
     required this.hasText,
     required this.onSend,
@@ -115,6 +122,7 @@ class GlassInputBar extends StatelessWidget {
                 alignment: Alignment.topCenter,
                 child: TextField(
                   controller: textController,
+                  focusNode: focusNode,
                   minLines: 1,
                   maxLines: 5,
                   textInputAction: TextInputAction.send,

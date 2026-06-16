@@ -56,6 +56,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // State
   final TextEditingController _textCtrl = TextEditingController();
+  // WOR-78 Fix A (refined): focus handle for the input bar's text field, owned
+  // here so the keyboard is CONDITIONAL on where the user lands — focus it on a
+  // brand-new empty chat (keyboard opens to type the first message), unfocus it
+  // when opening/switching to an existing conversation (keyboard stays down to
+  // read). Passed into [GlassInputBar]; a manual tap still focuses it in both
+  // cases. See [_applyInputFocus], [_newConversation], [_loadConversation].
+  final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _scrollCtrl = ScrollController();
   // The floating input bar is drawn in a Stack on top of the message list, so
   // the list reserves bottom padding equal to the bar's measured height to keep
@@ -216,13 +223,15 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _pendingHandoff = widget.handoff;
     _initConnection();
-    // WOR-78 Fix A: never auto-open the keyboard when entering a conversation.
-    // The chat input has no autofocus, but a soft keyboard can ride in from the
-    // previous screen (e.g. the connection token field) across the route swap.
-    // Clear focus once, after the first frame, so entering/returning to a
-    // conversation starts with the keyboard down — the user opens it only by
-    // tapping the input. Runs once per mount, so switching conversations (same
-    // State, no re-init) never refocuses, and tapping the field still focuses.
+    // WOR-78 Fix A (refined): launch-leak guard. On first mount a soft keyboard
+    // can ride in from the previous screen (e.g. the connection token field)
+    // across the route swap, and at launch we resume the last (existing)
+    // conversation — which must start with the keyboard DOWN for reading. Clear
+    // focus once, after the first frame, so the resumed conversation opens with
+    // the keyboard closed. The CONDITIONAL per-action focus (open for a new
+    // chat, keep closed for an existing one) is handled at the explicit user
+    // actions via [_applyInputFocus] — see [_newConversation]/[_loadConversation]
+    // — since switching conversations reuses this State and never re-runs init.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) FocusManager.instance.primaryFocus?.unfocus();
     });
@@ -957,6 +966,24 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// WOR-78 Fix A (refined): apply the CONDITIONAL keyboard behaviour after a
+  /// new-chat / conversation-open action. [focus] true → request focus on the
+  /// input so the keyboard opens (brand-new empty chat); false → unfocus so it
+  /// stays down (existing conversation / switch). Deferred to after the frame so
+  /// it wins the race against the drawer-pop restoring focus to the input (which
+  /// would otherwise reopen the keyboard when switching into an existing
+  /// conversation). A manual tap on the field still focuses it in either case.
+  void _applyInputFocus({required bool focus}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (focus) {
+        _inputFocusNode.requestFocus();
+      } else {
+        FocusManager.instance.primaryFocus?.unfocus();
+      }
+    });
+  }
+
   void _loadConversation(ws.Conversation conv) {
     // WOR-53: free the buffer of the conversation we're leaving IF its turn has
     // finished — a still-streaming one is kept so it keeps accumulating in the
@@ -1072,6 +1099,9 @@ class _ChatScreenState extends State<ChatScreen> {
     } else {
       _stopRecoveryPoll();
     }
+    // WOR-78 Fix A (refined): opening/switching to an EXISTING conversation —
+    // keep the keyboard down so the user reads first and types when they choose.
+    _applyInputFocus(focus: false);
     Navigator.of(context).maybePop();
   }
 
@@ -1144,6 +1174,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _activeConversationId = null;
       _activeConversationTitle = null;
     });
+    // WOR-78 Fix A (refined): a brand-new empty chat — focus the input so the
+    // keyboard opens and the user can type the first message immediately.
+    _applyInputFocus(focus: true);
     Navigator.of(context).maybePop();
   }
 
@@ -1963,6 +1996,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _wsService.dispose();
     _audioService.dispose();
     _textCtrl.dispose();
+    _inputFocusNode.dispose();
     _scrollCtrl.dispose();
     super.dispose();
   }
@@ -2127,6 +2161,7 @@ class _ChatScreenState extends State<ChatScreen> {
             child: GlassInputBar(
               key: _inputBarKey,
               textController: _textCtrl,
+              focusNode: _inputFocusNode,
               isRecording: _audioService.isRecording,
               hasText: _canSend,
               onSend: _sendText,
