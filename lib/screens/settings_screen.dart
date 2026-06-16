@@ -52,8 +52,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   StreamSubscription? _restartStatusSub;
   Timer? _restartTimeout;
 
-  /// Whether OSIA reads responses aloud automatically (ON by default).
-  bool _autoTts = true;
+  /// Whether OSIA reads responses aloud automatically (OFF by default).
+  bool _autoTts = false;
 
   /// Whether the voice-to-voice Live API is enabled (OFF by default).
   bool _liveApi = false;

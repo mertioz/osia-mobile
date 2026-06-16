@@ -200,8 +200,9 @@ class _ChatScreenState extends State<ChatScreen> {
   _PendingTurn? _pendingTurn;
 
   // Auto-TTS preference (Settings → Voice). When false, audio frames that
-  // arrive with a response are not played automatically.
-  bool _autoTts = true;
+  // arrive with a response are not played automatically. WOR-78 Fix B: defaults
+  // OFF until the persisted preference is read in _initConnection — opt-in only.
+  bool _autoTts = false;
   // True right after the user taps the speaker button on a message, so the
   // resulting TTS audio plays even when auto-TTS is off. Reset on playback.
   bool _speakRequested = false;
@@ -215,6 +216,16 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _pendingHandoff = widget.handoff;
     _initConnection();
+    // WOR-78 Fix A: never auto-open the keyboard when entering a conversation.
+    // The chat input has no autofocus, but a soft keyboard can ride in from the
+    // previous screen (e.g. the connection token field) across the route swap.
+    // Clear focus once, after the first frame, so entering/returning to a
+    // conversation starts with the keyboard down — the user opens it only by
+    // tapping the input. Runs once per mount, so switching conversations (same
+    // State, no re-init) never refocuses, and tapping the field still focuses.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) FocusManager.instance.primaryFocus?.unfocus();
+    });
   }
 
   Future<void> _initConnection() async {
@@ -238,7 +249,9 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) {
       debugPrint(
           '[OSIA Chat] storage read failed during init: $e — using defaults');
-      _autoTts = true;
+      // WOR-78 Fix B: when the preference is unreadable, default auto-TTS OFF
+      // (don't auto-read aloud on an unknown state).
+      _autoTts = false;
     }
 
     // WOR-64: the server host is no longer persisted — it is resolved fresh

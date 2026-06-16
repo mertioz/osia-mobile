@@ -111,11 +111,13 @@ class StorageService {
     await _storage.write(key: _keyAutoTts, value: enabled ? 'true' : 'false');
   }
 
-  /// Whether OSIA reads responses aloud automatically. Defaults to true
-  /// when the user never touched the toggle.
+  /// Whether OSIA reads responses aloud automatically. WOR-78 Fix B: defaults
+  /// to false (off) when the user never touched the toggle. An explicit enable
+  /// persisted via [setAutoTts] (stored as 'true') is still honoured, so a user
+  /// who already turned it on keeps their setting; only the unset default flips.
   Future<bool> getAutoTts() async {
     final raw = await _safeRead(_keyAutoTts);
-    return raw != 'false';
+    return raw == 'true';
   }
 
   // ── Live API ─────────────────────────────────────────────────────────
