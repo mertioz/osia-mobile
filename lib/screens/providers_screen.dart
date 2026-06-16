@@ -180,6 +180,73 @@ List<ProviderEntry> providersFor(ProviderCategory category) {
   }
 }
 
+// ── TTS / STT selectors (WOR-78.2) ──────────────────────────────────────
+//
+// Mirror of the PC's voice/speech selectors. The chosen TTS provider + voice
+// and the STT provider are plain settings (`tts_provider`, `tts_voice`,
+// `stt_provider`) written with `set_setting` — the server's whitelist already
+// accepts them, so this is purely additive on the mobile side. The stored
+// value is the dropdown key; the label is a brand proper noun (not localized).
+
+/// TTS provider value → display label (mirrors the `providersFor(tts)` names).
+const Map<String, String> _kTtsProviderLabels = {
+  'local': 'Kokoro',
+  'openai': 'OpenAI TTS',
+  'google': 'Google TTS (Gemini)',
+};
+
+/// TTS provider dropdown order (default: `local` / Kokoro).
+const List<String> _kTtsProviderOrder = ['local', 'openai', 'google'];
+
+/// OpenAI TTS voices, mirroring the PC list exactly. Default: `nova`.
+const List<String> _kOpenAiVoices = [
+  'alloy', 'ash', 'coral', 'echo', 'fable', 'marin',
+  'nova', 'onyx', 'sage', 'shimmer',
+];
+
+/// Google (Gemini) TTS voices, mirroring the PC list exactly. Default: `Kore`.
+const List<String> _kGoogleVoices = [
+  'Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Aoede',
+  'Callirrhoe', 'Autonoe', 'Enceladus', 'Iapetus', 'Umbriel', 'Algieba',
+  'Despina', 'Erinome', 'Algenib', 'Rasalgethi', 'Laomedeia', 'Achernar',
+  'Alnilam', 'Schedar', 'Gacrux', 'Pulcherrima', 'Achird', 'Zubenelgenubi',
+  'Vindemiatrix', 'Sadachbia', 'Sadaltager', 'Sulafat',
+];
+
+/// Selectable voices for a TTS provider — empty when the provider has none
+/// (Kokoro/local has no user-selectable voice, matching the PC).
+List<String> _ttsVoicesFor(String provider) {
+  switch (provider) {
+    case 'openai':
+      return _kOpenAiVoices;
+    case 'google':
+      return _kGoogleVoices;
+    default:
+      return const [];
+  }
+}
+
+/// Default voice for a TTS provider ('' when the provider has none).
+String _defaultTtsVoice(String provider) {
+  switch (provider) {
+    case 'openai':
+      return 'nova';
+    case 'google':
+      return 'Kore';
+    default:
+      return '';
+  }
+}
+
+/// STT provider value → display label (brand proper nouns, not localized).
+const Map<String, String> _kSttProviderLabels = {
+  'local': 'faster-whisper',
+  'groq': 'Groq Whisper',
+};
+
+/// STT provider dropdown order (default: `local` / faster-whisper).
+const List<String> _kSttProviderOrder = ['local', 'groq'];
+
 String _categoryTitle(ProviderCategory category, OsiaStrings s) {
   switch (category) {
     case ProviderCategory.voiceToVoice:
@@ -446,6 +513,17 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                                     .toString(),
                             visionModel: (config.settings['vision_model'] ?? '')
                                 .toString(),
+                            // TTS / STT selectors (WOR-78.2) — read from the
+                            // same config snapshot; only the matching screen
+                            // (tts / stt) renders and uses these.
+                            ttsProvider:
+                                (config.settings['tts_provider'] ?? '')
+                                    .toString(),
+                            ttsVoice: (config.settings['tts_voice'] ?? '')
+                                .toString(),
+                            sttProvider:
+                                (config.settings['stt_provider'] ?? '')
+                                    .toString(),
                           ),
                         ),
                       ),
@@ -950,6 +1028,277 @@ class _VisionCompanionCardState extends State<_VisionCompanionCard> {
   }
 }
 
+// ── TTS / STT selector cards (WOR-78.2) ─────────────────────────────────
+
+/// Compact selector shown at the top of the Voice Providers (TTS) screen,
+/// above the API-key list. Mirrors the PC: pick the TTS provider, and — for
+/// the cloud providers that expose named voices (OpenAI, Google/Gemini) — the
+/// voice. Kokoro (local) has no user-selectable voice, so the voice field
+/// reads a disabled "Automatic". Both are persisted with `set_setting`
+/// (`tts_provider` / `tts_voice`); the landing re-pulls config on pop, so the
+/// selection round-trips on re-open.
+class _TtsSelectorCard extends StatefulWidget {
+  final ws.WebSocketService wsService;
+
+  /// Current `tts_provider` / `tts_voice` from the config snapshot.
+  final String initialProvider;
+  final String initialVoice;
+
+  const _TtsSelectorCard({
+    required this.wsService,
+    required this.initialProvider,
+    required this.initialVoice,
+  });
+
+  @override
+  State<_TtsSelectorCard> createState() => _TtsSelectorCardState();
+}
+
+class _TtsSelectorCardState extends State<_TtsSelectorCard> {
+  late String _provider;
+  late String _voice;
+
+  @override
+  void initState() {
+    super.initState();
+    _provider = _kTtsProviderOrder.contains(widget.initialProvider)
+        ? widget.initialProvider
+        : 'local';
+    _voice = _resolveVoice(_provider, widget.initialVoice);
+  }
+
+  /// [preferred] when it is a valid voice for [provider], else that provider's
+  /// default ('' for providers with no selectable voice, i.e. Kokoro).
+  String _resolveVoice(String provider, String preferred) {
+    final voices = _ttsVoicesFor(provider);
+    if (voices.isEmpty) return '';
+    if (voices.contains(preferred)) return preferred;
+    return _defaultTtsVoice(provider);
+  }
+
+  void _onProviderChanged(String provider) {
+    final voice = _resolveVoice(provider, _voice);
+    setState(() {
+      _provider = provider;
+      _voice = voice;
+    });
+    widget.wsService.sendSetSetting('tts_provider', provider);
+    // Mirror the vision card: persist the (re-defaulted) voice too, so the
+    // server never keeps a voice that doesn't belong to the new provider.
+    // Kokoro has no voice ('') — leave the stored tts_voice untouched there.
+    if (voice.isNotEmpty) widget.wsService.sendSetSetting('tts_voice', voice);
+  }
+
+  void _onVoiceChanged(String voice) {
+    setState(() => _voice = voice);
+    widget.wsService.sendSetSetting('tts_voice', voice);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+
+    // Clamp the rendered values so DropdownButton always finds its value among
+    // the items (its "exactly one match" invariant).
+    final provider =
+        _kTtsProviderOrder.contains(_provider) ? _provider : 'local';
+    final voices = _ttsVoicesFor(provider);
+    final voice = voices.contains(_voice)
+        ? _voice
+        : (voices.isNotEmpty ? voices.first : '');
+
+    return _OsiaCard(
+      palette: palette,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _FieldLabel(strings.ttsProviderLabel, palette),
+          const SizedBox(height: 8),
+          _selectorDropdown<String>(
+            palette: palette,
+            value: provider,
+            items: [
+              for (final p in _kTtsProviderOrder)
+                DropdownMenuItem(
+                  value: p,
+                  child: Text(
+                    _kTtsProviderLabels[p] ?? p,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        TextStyle(fontSize: 14.5, color: palette.textPrimary),
+                  ),
+                ),
+            ],
+            onChanged: (v) {
+              if (v != null && v != _provider) _onProviderChanged(v);
+            },
+          ),
+          const SizedBox(height: 14),
+          _FieldLabel(strings.ttsVoiceLabel, palette),
+          const SizedBox(height: 8),
+          // Cloud providers expose named voices; Kokoro (local) does not, so it
+          // shows a disabled "Automatic" placeholder instead of a picker.
+          if (voices.isEmpty)
+            _DisabledField(label: strings.ttsVoiceAutomatic, palette: palette)
+          else
+            _selectorDropdown<String>(
+              palette: palette,
+              value: voice.isNotEmpty ? voice : null,
+              items: [
+                for (final v in voices)
+                  DropdownMenuItem(
+                    value: v,
+                    child: Text(
+                      v,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 14.5, color: palette.textPrimary),
+                    ),
+                  ),
+              ],
+              onChanged: (v) {
+                if (v != null && v != _voice) _onVoiceChanged(v);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Compact selector shown at the top of the Whisper Providers (STT) screen,
+/// above the API-key list. Mirrors the PC's speech-to-text provider picker
+/// (faster-whisper local, or Groq Whisper). Persisted with `set_setting`
+/// (`stt_provider`). No model-size / fallback pickers — those stay on the PC
+/// for now (deferred).
+class _SttSelectorCard extends StatefulWidget {
+  final ws.WebSocketService wsService;
+
+  /// Current `stt_provider` from the config snapshot.
+  final String initialProvider;
+
+  const _SttSelectorCard({
+    required this.wsService,
+    required this.initialProvider,
+  });
+
+  @override
+  State<_SttSelectorCard> createState() => _SttSelectorCardState();
+}
+
+class _SttSelectorCardState extends State<_SttSelectorCard> {
+  late String _provider;
+
+  @override
+  void initState() {
+    super.initState();
+    _provider = _kSttProviderOrder.contains(widget.initialProvider)
+        ? widget.initialProvider
+        : 'local';
+  }
+
+  void _onProviderChanged(String provider) {
+    setState(() => _provider = provider);
+    widget.wsService.sendSetSetting('stt_provider', provider);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+
+    final provider =
+        _kSttProviderOrder.contains(_provider) ? _provider : 'local';
+
+    return _OsiaCard(
+      palette: palette,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _FieldLabel(strings.sttProviderLabel, palette),
+          const SizedBox(height: 8),
+          _selectorDropdown<String>(
+            palette: palette,
+            value: provider,
+            items: [
+              for (final p in _kSttProviderOrder)
+                DropdownMenuItem(
+                  value: p,
+                  child: Text(
+                    _kSttProviderLabels[p] ?? p,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        TextStyle(fontSize: 14.5, color: palette.textPrimary),
+                  ),
+                ),
+            ],
+            onChanged: (v) {
+              if (v != null && v != _provider) _onProviderChanged(v);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Disabled, dropdown-shaped field used when a provider exposes no
+/// user-selectable value (e.g. Kokoro's voice → "Automatic"). Reads as inert:
+/// muted text, no chevron, not tappable.
+class _DisabledField extends StatelessWidget {
+  final String label;
+  final OsiaPalette palette;
+  const _DisabledField({required this.label, required this.palette});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
+      decoration: BoxDecoration(
+        color: palette.surfaceElevated.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: palette.border),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: 14.5, color: palette.textMuted),
+      ),
+    );
+  }
+}
+
+/// Styled dropdown for the TTS/STT selector cards — mirrors the vision card's
+/// inset-field dropdown (elevated fill so it reads against the card surface).
+Widget _selectorDropdown<T>({
+  required OsiaPalette palette,
+  required T? value,
+  required List<DropdownMenuItem<T>> items,
+  required ValueChanged<T?> onChanged,
+}) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14),
+    decoration: BoxDecoration(
+      color: palette.surfaceElevated,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: palette.border),
+    ),
+    child: DropdownButtonHideUnderline(
+      child: DropdownButton<T>(
+        value: value,
+        isExpanded: true,
+        dropdownColor: palette.surfaceElevated,
+        borderRadius: BorderRadius.circular(14),
+        icon: Icon(Icons.keyboard_arrow_down_rounded, color: palette.accent),
+        style: TextStyle(color: palette.textPrimary, fontSize: 14.5),
+        items: items,
+        onChanged: onChanged,
+      ),
+    ),
+  );
+}
+
 // ── Provider list for one category ──────────────────────────────────────
 
 class _ProviderListScreen extends StatelessWidget {
@@ -980,6 +1329,14 @@ class _ProviderListScreen extends StatelessWidget {
   final String visionProvider;
   final String visionModel;
 
+  /// Current `tts_provider` / `tts_voice` / `stt_provider` from the config
+  /// snapshot (WOR-78.2). Only the TTS screen reads the first two; only the STT
+  /// screen reads the third. Empty for the other categories / when unset — the
+  /// selector cards then fall back to their local defaults.
+  final String ttsProvider;
+  final String ttsVoice;
+  final String sttProvider;
+
   const _ProviderListScreen({
     required this.category,
     required this.wsService,
@@ -990,6 +1347,9 @@ class _ProviderListScreen extends StatelessWidget {
     this.visionModels = const [],
     this.visionProvider = '',
     this.visionModel = '',
+    this.ttsProvider = '',
+    this.ttsVoice = '',
+    this.sttProvider = '',
   });
 
   bool _isKeySet(ProviderEntry entry) =>
@@ -1024,6 +1384,24 @@ class _ProviderListScreen extends StatelessWidget {
                     fontSize: 12.5, height: 1.4, color: palette.textMuted),
               ),
               const SizedBox(height: 16),
+              // ── TTS / STT selector (WOR-78.2) ──
+              // Mirrors the PC's voice/speech selectors. Sits above the API-key
+              // list (which stays untouched below). Only built for its category.
+              if (category == ProviderCategory.tts) ...[
+                _TtsSelectorCard(
+                  wsService: wsService,
+                  initialProvider: ttsProvider,
+                  initialVoice: ttsVoice,
+                ),
+                const SizedBox(height: 16),
+              ],
+              if (category == ProviderCategory.stt) ...[
+                _SttSelectorCard(
+                  wsService: wsService,
+                  initialProvider: sttProvider,
+                ),
+                const SizedBox(height: 16),
+              ],
               _OsiaCard(
                 palette: palette,
                 child: Column(

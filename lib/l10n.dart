@@ -171,6 +171,12 @@ class OsiaStrings {
   final String visionModel;
   final String visionHint;
 
+  // ── TTS / STT selectors (WOR-78.2) ──
+  final String ttsProviderLabel;
+  final String ttsVoiceLabel;
+  final String sttProviderLabel;
+  final String ttsVoiceAutomatic;
+
   // ── Common (config sections) ──
   final String add;
   final String edit;
@@ -410,6 +416,10 @@ class OsiaStrings {
     required this.visionProvider,
     required this.visionModel,
     required this.visionHint,
+    required this.ttsProviderLabel,
+    required this.ttsVoiceLabel,
+    required this.sttProviderLabel,
+    required this.ttsVoiceAutomatic,
     required this.add,
     required this.edit,
     required this.close,
@@ -701,6 +711,10 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   visionModel: 'Vision model',
   visionHint:
       'Useful if your main model does not handle images (e.g. DeepSeek, Groq, Llama, Mistral).',
+  ttsProviderLabel: 'TTS provider',
+  ttsVoiceLabel: 'Voice',
+  sttProviderLabel: 'Speech-to-text provider',
+  ttsVoiceAutomatic: 'Automatic',
   add: 'Add',
   edit: 'Edit',
   close: 'Close',
@@ -942,6 +956,10 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   visionModel: 'Modèle vision',
   visionHint:
       'Utile si votre modèle principal ne gère pas les images (ex: DeepSeek, Groq, Llama, Mistral).',
+  ttsProviderLabel: 'Fournisseur TTS',
+  ttsVoiceLabel: 'Voix',
+  sttProviderLabel: 'Fournisseur de reconnaissance vocale',
+  ttsVoiceAutomatic: 'Automatique',
   add: 'Ajouter',
   edit: 'Modifier',
   close: 'Fermer',
@@ -1176,6 +1194,10 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   visionProvider: '视觉提供商',
   visionModel: '视觉模型',
   visionHint: '如果您的主模型不支持图像（例如 DeepSeek、Groq、Llama、Mistral），此功能很有用。',
+  ttsProviderLabel: 'TTS 提供商',
+  ttsVoiceLabel: '语音',
+  sttProviderLabel: '语音转文字提供商',
+  ttsVoiceAutomatic: '自动',
   add: '添加',
   edit: '编辑',
   close: '关闭',
@@ -1409,6 +1431,10 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   visionProvider: 'ビジョンプロバイダー',
   visionModel: 'ビジョンモデル',
   visionHint: 'メインモデルが画像を扱えない場合に便利です（例：DeepSeek、Groq、Llama、Mistral）。',
+  ttsProviderLabel: 'TTS プロバイダー',
+  ttsVoiceLabel: '音声',
+  sttProviderLabel: '音声認識プロバイダー',
+  ttsVoiceAutomatic: '自動',
   add: '追加',
   edit: '編集',
   close: '閉じる',
@@ -1653,6 +1679,10 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   visionModel: 'Vision-Modell',
   visionHint:
       'Nützlich, wenn Ihr Hauptmodell keine Bilder verarbeiten kann (z. B. DeepSeek, Groq, Llama, Mistral).',
+  ttsProviderLabel: 'TTS-Anbieter',
+  ttsVoiceLabel: 'Stimme',
+  sttProviderLabel: 'Spracherkennungs-Anbieter',
+  ttsVoiceAutomatic: 'Automatisch',
   add: 'Hinzufügen',
   edit: 'Bearbeiten',
   close: 'Schließen',
@@ -1894,6 +1924,10 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   visionModel: 'Modelo de visión',
   visionHint:
       'Útil si tu modelo principal no admite imágenes (p. ej. DeepSeek, Groq, Llama, Mistral).',
+  ttsProviderLabel: 'Proveedor de TTS',
+  ttsVoiceLabel: 'Voz',
+  sttProviderLabel: 'Proveedor de voz a texto',
+  ttsVoiceAutomatic: 'Automático',
   add: 'Añadir',
   edit: 'Editar',
   close: 'Cerrar',
