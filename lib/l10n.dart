@@ -112,21 +112,17 @@ class OsiaStrings {
   final String makeDonation;
   final String linkOpenFailed;
 
-  // ── Settings section descriptions (WOR-78) ──
-  // Short subtitle (~6 words) + a ~2-sentence pedagogical description shown
-  // under each settings section title. Mirrors the PC settings copy.
+  // ── Settings section subtitles (WOR-78) ──
+  // Short subtitle (~6 words) shown under each settings section title.
+  // Mirrors the PC settings copy. The longer 2-sentence descriptions were
+  // moved out of the main settings screen to the provider config screens
+  // (WOR-78 point 1).
   final String appearanceSub;
-  final String appearanceDesc;
   final String languageSub;
-  final String languageDesc;
   final String voiceSectionSub;
-  final String voiceSectionDesc;
   final String providersSub;
-  final String providersDesc;
   final String legalSub;
-  final String legalDesc;
   final String connectionSectionSub;
-  final String connectionSectionDesc;
 
   // ── APIs & Providers ──
   final String providersTitle;
@@ -134,9 +130,21 @@ class OsiaStrings {
   final String liveApi;
   final String liveApiNotice;
   final String catVoiceToVoice;
+  final String catVoiceToVoiceSub;
   final String catAiProviders;
+  final String catAiProvidersSub;
   final String catTtsProviders;
+  final String catTtsProvidersSub;
   final String catSttProviders;
+  final String catSttProvidersSub;
+  // Config-screen 2-sentence descriptions shown at the top of each provider
+  // config screen (WOR-78 point 1).
+  final String liveapiDesc;
+  final String aiProvidersDesc;
+  final String voiceProvidersDesc;
+  final String whisperProvidersDesc;
+  final String personalityDesc;
+  final String heartbeatDesc;
   final String apiKey;
   final String apiKeyHint;
   final String getApiKey;
@@ -358,25 +366,29 @@ class OsiaStrings {
     required this.makeDonation,
     required this.linkOpenFailed,
     required this.appearanceSub,
-    required this.appearanceDesc,
     required this.languageSub,
-    required this.languageDesc,
     required this.voiceSectionSub,
-    required this.voiceSectionDesc,
     required this.providersSub,
-    required this.providersDesc,
     required this.legalSub,
-    required this.legalDesc,
     required this.connectionSectionSub,
-    required this.connectionSectionDesc,
     required this.providersTitle,
     required this.configureProviders,
     required this.liveApi,
     required this.liveApiNotice,
     required this.catVoiceToVoice,
+    required this.catVoiceToVoiceSub,
     required this.catAiProviders,
+    required this.catAiProvidersSub,
     required this.catTtsProviders,
+    required this.catTtsProvidersSub,
     required this.catSttProviders,
+    required this.catSttProvidersSub,
+    required this.liveapiDesc,
+    required this.aiProvidersDesc,
+    required this.voiceProvidersDesc,
+    required this.whisperProvidersDesc,
+    required this.personalityDesc,
+    required this.heartbeatDesc,
     required this.apiKey,
     required this.apiKeyHint,
     required this.getApiKey,
@@ -638,31 +650,35 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   makeDonation: 'Make a donation',
   linkOpenFailed: 'Could not open the link.',
   appearanceSub: 'Theme color for the whole app',
-  appearanceDesc:
-      'Pick the accent and background palette OSIA uses everywhere. Your choice is saved on this device and applied instantly.',
   languageSub: 'Interface language for the app',
-  languageDesc:
-      'Choose the language for every label, button and message. The whole interface updates the moment you pick one.',
   voiceSectionSub: 'How OSIA reads replies aloud',
-  voiceSectionDesc:
-      'Choose whether OSIA speaks its answers aloud. With automatic read-aloud off, you can still tap the speaker icon under any message to hear it.',
   providersSub: 'AI, voice and transcription keys',
-  providersDesc:
-      'Connect your AI, voice (TTS) and speech (STT) providers with their API keys. Enable Live API for real-time voice-to-voice, which replaces separate transcription and speech.',
   legalSub: 'Terms and privacy documents',
-  legalDesc:
-      'Read the Terms of Service and Privacy Policy for OSIA. They explain how the app works and how your data is handled.',
   connectionSectionSub: 'Manage the link to your PC',
-  connectionSectionDesc:
-      'Restart the OSIA server on your PC remotely, or disconnect this device. Disconnecting erases your saved token but keeps your theme and language.',
   providersTitle: 'APIs & Providers',
   configureProviders: 'Configure APIs & Providers',
   liveApi: 'Live API',
   liveApiNotice: 'When enabled, STT and TTS are automatically disabled.',
   catVoiceToVoice: 'Voice-to-voice (Live API)',
+  catVoiceToVoiceSub: 'Real-time spoken conversation with OSIA',
   catAiProviders: 'AI Providers',
+  catAiProvidersSub: 'API keys for chat AI models',
   catTtsProviders: 'Voice Providers (TTS)',
+  catTtsProvidersSub: 'Voices that read replies aloud',
   catSttProviders: 'Whisper Providers (STT)',
+  catSttProvidersSub: 'Turn your speech into text',
+  liveapiDesc:
+      'Speak naturally and hear OSIA reply in real time, with no separate transcription step. Add the API key for the provider you want to use for live voice.',
+  aiProvidersDesc:
+      "Connect the AI providers that power OSIA's chat and reasoning. Paste an API key for each provider you want to enable — keys are stored on your device.",
+  voiceProvidersDesc:
+      "Choose how OSIA speaks its replies aloud. Local voices run on your device for free; cloud voices need the matching provider's API key.",
+  whisperProvidersDesc:
+      'Choose how OSIA turns your speech into text. faster-whisper runs locally for free, while Groq Whisper needs an API key.',
+  personalityDesc:
+      'Give OSIA a consistent character and add custom skills it can use. These shape how OSIA talks and what extra abilities it has.',
+  heartbeatDesc:
+      "Let OSIA watch your device's CPU, memory, disk and temperatures. It can alert you aloud when a metric crosses a threshold you set.",
   apiKey: 'API key',
   apiKeyHint: 'Paste your API key',
   getApiKey: 'Get API key',
@@ -697,7 +713,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   catPersonalitySkillsSub: "OSIA's identity and custom skills",
   cronTitle: 'Scheduled Tasks',
   cronSubtitle:
-      'OSIA runs each task on its schedule, just like a spoken command.',
+      'Have OSIA run a task on its own at set times — a daily summary, an hourly check. Write it in plain language and pick a repeating interval or a one-time date.',
   cronEmpty: 'No scheduled tasks yet.',
   cronAddTask: 'Add a task',
   cronEditTask: 'Edit task',
@@ -724,7 +740,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   cronLoadingConversations: 'Loading…',
   hierarchyTitle: 'AI Hierarchy',
   hierarchySubtitle:
-      'Order the models OSIA tries for each task type. The first reachable one is used. When off, your selected model is always used.',
+      'Route work through an ordered list of models instead of one. If a model hits a technical error, OSIA automatically falls back to the next in the chain.',
   hierarchyEnable: 'Enable hierarchy',
   hierarchyActive: 'AI hierarchy active',
   hierarchyHeavy: 'Heavy tasks',
@@ -873,32 +889,36 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   makeDonation: 'Faire un don',
   linkOpenFailed: "Impossible d'ouvrir le lien.",
   appearanceSub: "Couleur du thème de l'application",
-  appearanceDesc:
-      "Choisissez la palette d'accent et d'arrière-plan qu'OSIA utilise partout. Votre choix est enregistré sur cet appareil et appliqué instantanément.",
   languageSub: "Langue de l'interface",
-  languageDesc:
-      "Choisissez la langue de chaque libellé, bouton et message. Toute l'interface se met à jour dès que vous en sélectionnez une.",
   voiceSectionSub: 'Comment OSIA lit ses réponses',
-  voiceSectionDesc:
-      "Choisissez si OSIA lit ses réponses à voix haute. Avec la lecture automatique désactivée, vous pouvez toujours toucher l'icône haut-parleur sous un message pour l'écouter.",
   providersSub: 'Clés IA, voix et transcription',
-  providersDesc:
-      "Connectez vos fournisseurs d'IA, de voix (TTS) et de transcription (STT) avec leurs clés API. Activez l'API Live pour la voix à voix en temps réel, qui remplace la transcription et la synthèse séparées.",
   legalSub: 'Conditions et confidentialité',
-  legalDesc:
-      "Consultez les conditions d'utilisation et la politique de confidentialité d'OSIA. Elles expliquent le fonctionnement de l'application et le traitement de vos données.",
   connectionSectionSub: 'Gérer le lien avec votre PC',
-  connectionSectionDesc:
-      'Redémarrez le serveur OSIA sur votre PC à distance, ou déconnectez cet appareil. La déconnexion efface votre token enregistré mais conserve votre thème et votre langue.',
   providersTitle: 'API et fournisseurs',
   configureProviders: 'Configurer les API et fournisseurs',
   liveApi: 'API Live',
   liveApiNotice:
       'Une fois activé, la transcription (STT) et la synthèse vocale (TTS) sont automatiquement désactivées.',
   catVoiceToVoice: 'Voix à voix (API Live)',
+  catVoiceToVoiceSub: 'Conversation vocale en temps réel avec OSIA',
   catAiProviders: 'Fournisseurs IA',
+  catAiProvidersSub: 'Clés API pour les modèles de chat IA',
   catTtsProviders: 'Fournisseurs vocaux (TTS)',
+  catTtsProvidersSub: 'Des voix qui lisent les réponses à voix haute',
   catSttProviders: 'Fournisseurs Whisper (STT)',
+  catSttProvidersSub: 'Transformez votre voix en texte',
+  liveapiDesc:
+      "Parlez naturellement et entendez OSIA répondre en temps réel, sans étape de transcription séparée. Ajoutez la clé API du fournisseur que vous voulez utiliser pour la voix en direct.",
+  aiProvidersDesc:
+      "Connectez les fournisseurs d'IA qui alimentent le chat et le raisonnement d'OSIA. Collez une clé API pour chaque fournisseur à activer — les clés sont stockées sur votre appareil.",
+  voiceProvidersDesc:
+      "Choisissez comment OSIA lit ses réponses à voix haute. Les voix locales s'exécutent gratuitement sur votre appareil ; les voix cloud nécessitent la clé API du fournisseur correspondant.",
+  whisperProvidersDesc:
+      "Choisissez comment OSIA transforme votre voix en texte. faster-whisper s'exécute localement gratuitement, tandis que Groq Whisper nécessite une clé API.",
+  personalityDesc:
+      "Donnez à OSIA un caractère cohérent et ajoutez des skills personnalisés qu'il peut utiliser. Ils façonnent la manière dont OSIA parle et ses capacités supplémentaires.",
+  heartbeatDesc:
+      "Laissez OSIA surveiller le processeur, la mémoire, le disque et les températures de votre appareil. Il peut vous alerter à voix haute quand une mesure dépasse un seuil que vous définissez.",
   apiKey: 'Clé API',
   apiKeyHint: 'Collez votre clé API',
   getApiKey: 'Obtenir une clé API',
@@ -934,7 +954,7 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   catPersonalitySkillsSub: "L'identité d'OSIA et ses skills personnalisés",
   cronTitle: 'Tâches planifiées',
   cronSubtitle:
-      'OSIA exécute chaque tâche à son horaire, comme une commande vocale.',
+      'Laissez OSIA exécuter une tâche toute seule à des moments définis — un résumé quotidien, une vérification horaire. Décrivez-la en langage clair et choisissez un intervalle récurrent ou une date unique.',
   cronEmpty: 'Aucune tâche planifiée pour le moment.',
   cronAddTask: 'Ajouter une tâche',
   cronEditTask: 'Modifier la tâche',
@@ -961,7 +981,7 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   cronLoadingConversations: 'Chargement…',
   hierarchyTitle: 'Hiérarchie IA',
   hierarchySubtitle:
-      "Ordonnez les modèles qu'OSIA essaie pour chaque type de tâche. Le premier disponible est utilisé. Si désactivé, votre modèle sélectionné est toujours utilisé.",
+      "Faites passer le travail par une liste ordonnée de modèles plutôt qu'un seul. Si un modèle rencontre une erreur technique, OSIA bascule automatiquement vers le suivant dans la chaîne.",
   hierarchyEnable: 'Activer la hiérarchie',
   hierarchyActive: 'Hiérarchie IA active',
   hierarchyHeavy: 'Tâches lourdes',
@@ -1106,26 +1126,35 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   makeDonation: '捐赠支持',
   linkOpenFailed: '无法打开链接。',
   appearanceSub: '整个应用的主题颜色',
-  appearanceDesc: '选择 OSIA 在各处使用的强调色和背景配色。您的选择会保存在本设备上并立即应用。',
   languageSub: '应用界面语言',
-  languageDesc: '选择每个标签、按钮和消息所用的语言。选定后整个界面会立即更新。',
   voiceSectionSub: 'OSIA 如何朗读回复',
-  voiceSectionDesc: '选择 OSIA 是否朗读其答案。关闭自动朗读后，您仍可点按任意消息下方的扬声器图标来收听。',
   providersSub: 'AI、语音和转录密钥',
-  providersDesc:
-      '连接您的 AI、语音 (TTS) 和转录 (STT) 提供商及其 API 密钥。启用实时 API 可进行实时语音对话，它会取代单独的转录与语音合成。',
   legalSub: '条款与隐私文件',
-  legalDesc: '阅读 OSIA 的服务条款和隐私政策。它们说明了应用的工作方式以及如何处理您的数据。',
   connectionSectionSub: '管理与电脑的连接',
-  connectionSectionDesc: '远程重启您电脑上的 OSIA 服务器，或断开此设备。断开连接会清除已保存的令牌，但保留您的主题和语言。',
   providersTitle: 'API 与提供商',
   configureProviders: '配置 API 与提供商',
   liveApi: '实时 API',
   liveApiNotice: '启用后，语音转文字 (STT) 和文字转语音 (TTS) 将自动停用。',
   catVoiceToVoice: '语音对话（实时 API）',
+  catVoiceToVoiceSub: '与 OSIA 进行实时语音对话',
   catAiProviders: 'AI 提供商',
+  catAiProvidersSub: '聊天 AI 模型的 API 密钥',
   catTtsProviders: '语音提供商 (TTS)',
+  catTtsProvidersSub: '朗读回复的语音',
   catSttProviders: 'Whisper 提供商 (STT)',
+  catSttProvidersSub: '将您的语音转换为文字',
+  liveapiDesc:
+      '自然地说话，实时听到 OSIA 的回复，无需单独的转录步骤。添加您想用于实时语音的提供商的 API 密钥。',
+  aiProvidersDesc:
+      '连接为 OSIA 的聊天和推理提供支持的 AI 提供商。为每个要启用的提供商粘贴 API 密钥——密钥保存在您的设备上。',
+  voiceProvidersDesc:
+      '选择 OSIA 如何朗读其回复。本地语音在您的设备上免费运行；云端语音需要相应提供商的 API 密钥。',
+  whisperProvidersDesc:
+      '选择 OSIA 如何将您的语音转换为文字。faster-whisper 在本地免费运行，而 Groq Whisper 需要 API 密钥。',
+  personalityDesc:
+      '赋予 OSIA 一致的性格，并添加它可以使用的自定义技能。它们决定了 OSIA 的说话方式及其额外能力。',
+  heartbeatDesc:
+      '让 OSIA 监测您设备的 CPU、内存、磁盘和温度。当某项指标超过您设定的阈值时，它可以语音提醒您。',
   apiKey: 'API 密钥',
   apiKeyHint: '粘贴您的 API 密钥',
   getApiKey: '获取 API 密钥',
@@ -1158,7 +1187,8 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   catPersonalitySkills: '个性与技能',
   catPersonalitySkillsSub: 'OSIA 的身份与自定义技能',
   cronTitle: '定时任务',
-  cronSubtitle: 'OSIA 会按计划执行每个任务，就像语音命令一样。',
+  cronSubtitle:
+      '让 OSIA 在设定的时间自动运行任务——例如每日摘要或每小时检查。用自然语言描述它，并选择重复间隔或一次性日期。',
   cronEmpty: '暂无定时任务。',
   cronAddTask: '添加任务',
   cronEditTask: '编辑任务',
@@ -1185,7 +1215,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   cronLoadingConversations: '加载中…',
   hierarchyTitle: 'AI 层级',
   hierarchySubtitle:
-      '为每种任务类型排列 OSIA 尝试的模型顺序。使用第一个可用的模型。关闭时，始终使用您选择的模型。',
+      '让工作通过一个有序的模型列表处理，而不是单个模型。如果某个模型遇到技术错误，OSIA 会自动回退到链中的下一个。',
   hierarchyEnable: '启用层级',
   hierarchyActive: 'AI层级已启用',
   hierarchyHeavy: '重型任务',
@@ -1329,28 +1359,35 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   makeDonation: '寄付をする',
   linkOpenFailed: 'リンクを開けませんでした。',
   appearanceSub: 'アプリ全体のテーマカラー',
-  appearanceDesc: 'OSIA が全体で使うアクセントと背景の配色を選びます。選択内容はこのデバイスに保存され、すぐに適用されます。',
   languageSub: 'アプリの表示言語',
-  languageDesc: 'すべてのラベル・ボタン・メッセージの言語を選びます。選ぶとインターフェイス全体がすぐに切り替わります。',
   voiceSectionSub: 'OSIA が応答を読み上げる方法',
-  voiceSectionDesc:
-      'OSIA が回答を読み上げるかどうかを選びます。自動読み上げをオフにしても、メッセージ下のスピーカーアイコンをタップすれば聞けます。',
   providersSub: 'AI・音声・文字起こしのキー',
-  providersDesc:
-      'AI、音声 (TTS)、文字起こし (STT) のプロバイダーとその API キーを接続します。ライブ API を有効にするとリアルタイムの音声対話になり、個別の STT/TTS に代わります。',
   legalSub: '規約とプライバシー文書',
-  legalDesc: 'OSIA の利用規約とプライバシーポリシーを確認できます。アプリの仕組みとデータの取り扱いについて説明しています。',
   connectionSectionSub: 'PC との接続を管理',
-  connectionSectionDesc:
-      'PC 上の OSIA サーバーをリモートで再起動したり、このデバイスを切断したりできます。切断すると保存済みのトークンは消去されますが、テーマと言語は保持されます。',
   providersTitle: 'API とプロバイダー',
   configureProviders: 'API とプロバイダーを設定',
   liveApi: 'ライブ API',
   liveApiNotice: '有効にすると、音声認識 (STT) と音声合成 (TTS) は自動的に無効になります。',
   catVoiceToVoice: '音声対音声（ライブ API）',
+  catVoiceToVoiceSub: 'OSIA とのリアルタイム音声会話',
   catAiProviders: 'AI プロバイダー',
+  catAiProvidersSub: 'チャット AI モデル用の API キー',
   catTtsProviders: '音声プロバイダー (TTS)',
+  catTtsProvidersSub: '応答を読み上げる音声',
   catSttProviders: 'Whisper プロバイダー (STT)',
+  catSttProvidersSub: 'あなたの音声を文字に変換',
+  liveapiDesc:
+      '自然に話しかけ、OSIA の応答をリアルタイムで聞けます。個別の文字起こしは不要です。ライブ音声に使いたいプロバイダーの API キーを追加してください。',
+  aiProvidersDesc:
+      'OSIA のチャットと推論を支える AI プロバイダーを接続します。有効にしたいプロバイダーごとに API キーを貼り付けてください。キーはこのデバイスに保存されます。',
+  voiceProvidersDesc:
+      'OSIA が応答を読み上げる方法を選びます。ローカル音声はデバイス上で無料で動作し、クラウド音声には対応するプロバイダーの API キーが必要です。',
+  whisperProvidersDesc:
+      'OSIA があなたの音声を文字に変換する方法を選びます。faster-whisper はローカルで無料で動作し、Groq Whisper には API キーが必要です。',
+  personalityDesc:
+      'OSIA に一貫した性格を与え、使用できるカスタムスキルを追加します。これらは OSIA の話し方と追加の能力を形づくります。',
+  heartbeatDesc:
+      'OSIA がデバイスの CPU・メモリ・ディスク・温度を監視できます。指標が設定したしきい値を超えたとき、音声で知らせます。',
   apiKey: 'API キー',
   apiKeyHint: 'API キーを貼り付け',
   getApiKey: 'API キーを取得',
@@ -1383,7 +1420,8 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   catPersonalitySkills: '個性とスキル',
   catPersonalitySkillsSub: 'OSIA のアイデンティティとカスタムスキル',
   cronTitle: 'スケジュールタスク',
-  cronSubtitle: 'OSIA は各タスクを音声コマンドと同じようにスケジュールどおり実行します。',
+  cronSubtitle:
+      '設定した時刻に OSIA がタスクを自動で実行します（毎日の要約や毎時のチェックなど）。タスクは平易な言葉で書き、繰り返す間隔または一度きりの日付を選びます。',
   cronEmpty: 'スケジュールタスクはまだありません。',
   cronAddTask: 'タスクを追加',
   cronEditTask: 'タスクを編集',
@@ -1410,7 +1448,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   cronLoadingConversations: '読み込み中…',
   hierarchyTitle: 'AI 階層',
   hierarchySubtitle:
-      'タスクの種類ごとに OSIA が試すモデルの順序を決めます。最初に利用可能なものが使われます。オフのときは選択中のモデルが常に使われます。',
+      '1 つのモデルではなく、順序付けられたモデルのリストで処理を行います。あるモデルが技術的なエラーになった場合、OSIA は自動的にチェーン内の次のモデルへ切り替えます。',
   hierarchyEnable: '階層を有効化',
   hierarchyActive: 'AIヒエラルキー有効',
   hierarchyHeavy: '重いタスク',
@@ -1563,31 +1601,35 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   makeDonation: 'Spenden',
   linkOpenFailed: 'Der Link konnte nicht geöffnet werden.',
   appearanceSub: 'Themenfarbe der gesamten App',
-  appearanceDesc:
-      'Wählen Sie die Akzent- und Hintergrundpalette, die OSIA überall verwendet. Ihre Wahl wird auf diesem Gerät gespeichert und sofort angewendet.',
   languageSub: 'Sprache der Benutzeroberfläche',
-  languageDesc:
-      'Wählen Sie die Sprache für jede Beschriftung, jede Schaltfläche und jede Nachricht. Die gesamte Oberfläche wird sofort aktualisiert, sobald Sie eine auswählen.',
   voiceSectionSub: 'Wie OSIA Antworten vorliest',
-  voiceSectionDesc:
-      'Legen Sie fest, ob OSIA seine Antworten vorliest. Ist das automatische Vorlesen aus, können Sie eine Nachricht weiterhin über das Lautsprechersymbol darunter anhören.',
   providersSub: 'Schlüssel für KI, Stimme, Transkription',
-  providersDesc:
-      'Verbinden Sie Ihre Anbieter für KI, Sprache (TTS) und Transkription (STT) mit ihren API-Schlüsseln. Aktivieren Sie die Live-API für Echtzeit-Sprachdialog, der separate Transkription und Sprachausgabe ersetzt.',
   legalSub: 'Nutzungsbedingungen und Datenschutz',
-  legalDesc:
-      'Lesen Sie die Nutzungsbedingungen und die Datenschutzerklärung von OSIA. Sie erläutern, wie die App funktioniert und wie Ihre Daten verarbeitet werden.',
   connectionSectionSub: 'Verbindung zum PC verwalten',
-  connectionSectionDesc:
-      'Starten Sie den OSIA-Server auf Ihrem PC aus der Ferne neu oder trennen Sie dieses Gerät. Beim Trennen wird Ihr gespeichertes Token gelöscht, Thema und Sprache bleiben erhalten.',
   providersTitle: 'APIs & Anbieter',
   configureProviders: 'APIs & Anbieter konfigurieren',
   liveApi: 'Live-API',
   liveApiNotice: 'Wenn aktiviert, werden STT und TTS automatisch deaktiviert.',
   catVoiceToVoice: 'Sprache-zu-Sprache (Live-API)',
+  catVoiceToVoiceSub: 'Gesprochener Echtzeit-Dialog mit OSIA',
   catAiProviders: 'KI-Anbieter',
+  catAiProvidersSub: 'API-Schlüssel für Chat-KI-Modelle',
   catTtsProviders: 'Sprachanbieter (TTS)',
+  catTtsProvidersSub: 'Stimmen, die Antworten vorlesen',
   catSttProviders: 'Whisper-Anbieter (STT)',
+  catSttProvidersSub: 'Wandelt Ihre Sprache in Text um',
+  liveapiDesc:
+      'Sprechen Sie natürlich und hören Sie OSIA in Echtzeit antworten, ohne separaten Transkriptionsschritt. Fügen Sie den API-Schlüssel des Anbieters hinzu, den Sie für Live-Stimme verwenden möchten.',
+  aiProvidersDesc:
+      'Verbinden Sie die KI-Anbieter, die OSIAs Chat und Schlussfolgern antreiben. Fügen Sie für jeden Anbieter, den Sie aktivieren möchten, einen API-Schlüssel ein — die Schlüssel werden auf Ihrem Gerät gespeichert.',
+  voiceProvidersDesc:
+      'Wählen Sie, wie OSIA seine Antworten vorliest. Lokale Stimmen laufen kostenlos auf Ihrem Gerät; Cloud-Stimmen benötigen den API-Schlüssel des jeweiligen Anbieters.',
+  whisperProvidersDesc:
+      'Wählen Sie, wie OSIA Ihre Sprache in Text umwandelt. faster-whisper läuft lokal und kostenlos, während Groq Whisper einen API-Schlüssel benötigt.',
+  personalityDesc:
+      'Geben Sie OSIA einen beständigen Charakter und fügen Sie eigene Skills hinzu, die es nutzen kann. Sie prägen, wie OSIA spricht und welche zusätzlichen Fähigkeiten es hat.',
+  heartbeatDesc:
+      'Lassen Sie OSIA CPU, Arbeitsspeicher, Festplatte und Temperaturen Ihres Geräts überwachen. Es kann Sie laut warnen, wenn ein Messwert einen von Ihnen festgelegten Schwellenwert überschreitet.',
   apiKey: 'API-Schlüssel',
   apiKeyHint: 'API-Schlüssel einfügen',
   getApiKey: 'API-Schlüssel erhalten',
@@ -1623,7 +1665,7 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   catPersonalitySkillsSub: 'OSIAs Identität und eigene Skills',
   cronTitle: 'Geplante Aufgaben',
   cronSubtitle:
-      'OSIA führt jede Aufgabe nach Zeitplan aus, wie einen Sprachbefehl.',
+      'Lassen Sie OSIA eine Aufgabe zu festgelegten Zeiten von selbst ausführen — eine tägliche Zusammenfassung, eine stündliche Prüfung. Beschreiben Sie sie in einfacher Sprache und wählen Sie ein wiederkehrendes Intervall oder ein einmaliges Datum.',
   cronEmpty: 'Noch keine geplanten Aufgaben.',
   cronAddTask: 'Aufgabe hinzufügen',
   cronEditTask: 'Aufgabe bearbeiten',
@@ -1650,7 +1692,7 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   cronLoadingConversations: 'Wird geladen…',
   hierarchyTitle: 'KI-Hierarchie',
   hierarchySubtitle:
-      'Ordnen Sie die Modelle, die OSIA je Aufgabentyp versucht. Das erste erreichbare wird verwendet. Wenn aus, wird immer Ihr gewähltes Modell genutzt.',
+      'Leiten Sie die Arbeit durch eine geordnete Liste von Modellen statt durch ein einzelnes. Stößt ein Modell auf einen technischen Fehler, wechselt OSIA automatisch zum nächsten in der Kette.',
   hierarchyEnable: 'Hierarchie aktivieren',
   hierarchyActive: 'KI-Hierarchie aktiv',
   hierarchyHeavy: 'Schwere Aufgaben',
@@ -1800,31 +1842,35 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   makeDonation: 'Hacer una donación',
   linkOpenFailed: 'No se pudo abrir el enlace.',
   appearanceSub: 'Color del tema de la app',
-  appearanceDesc:
-      'Elige la paleta de acento y fondo que OSIA usa en todas partes. Tu elección se guarda en este dispositivo y se aplica al instante.',
   languageSub: 'Idioma de la interfaz',
-  languageDesc:
-      'Elige el idioma de cada etiqueta, botón y mensaje. Toda la interfaz se actualiza en cuanto seleccionas uno.',
   voiceSectionSub: 'Cómo OSIA lee las respuestas',
-  voiceSectionDesc:
-      'Elige si OSIA lee sus respuestas en voz alta. Con la lectura automática desactivada, aún puedes tocar el icono del altavoz bajo cualquier mensaje para escucharlo.',
   providersSub: 'Claves de IA, voz y transcripción',
-  providersDesc:
-      'Conecta tus proveedores de IA, voz (TTS) y transcripción (STT) con sus claves API. Activa la API Live para voz a voz en tiempo real, que reemplaza la transcripción y la síntesis por separado.',
   legalSub: 'Términos y privacidad',
-  legalDesc:
-      'Lee los términos de servicio y la política de privacidad de OSIA. Explican cómo funciona la app y cómo se tratan tus datos.',
   connectionSectionSub: 'Gestiona el enlace con tu PC',
-  connectionSectionDesc:
-      'Reinicia el servidor OSIA de tu PC de forma remota o desconecta este dispositivo. Desconectar borra tu token guardado pero conserva tu tema e idioma.',
   providersTitle: 'API y proveedores',
   configureProviders: 'Configurar API y proveedores',
   liveApi: 'API Live',
   liveApiNotice: 'Cuando está activado, STT y TTS se desactivan automáticamente.',
   catVoiceToVoice: 'Voz a voz (API Live)',
+  catVoiceToVoiceSub: 'Conversación hablada en tiempo real con OSIA',
   catAiProviders: 'Proveedores de IA',
+  catAiProvidersSub: 'Claves API para modelos de chat de IA',
   catTtsProviders: 'Proveedores de voz (TTS)',
+  catTtsProvidersSub: 'Voces que leen las respuestas en voz alta',
   catSttProviders: 'Proveedores Whisper (STT)',
+  catSttProvidersSub: 'Convierte tu voz en texto',
+  liveapiDesc:
+      'Habla con naturalidad y escucha a OSIA responder en tiempo real, sin un paso de transcripción aparte. Añade la clave API del proveedor que quieras usar para la voz en directo.',
+  aiProvidersDesc:
+      'Conecta los proveedores de IA que impulsan el chat y el razonamiento de OSIA. Pega una clave API para cada proveedor que quieras activar — las claves se guardan en tu dispositivo.',
+  voiceProvidersDesc:
+      'Elige cómo OSIA lee sus respuestas en voz alta. Las voces locales funcionan gratis en tu dispositivo; las voces en la nube necesitan la clave API del proveedor correspondiente.',
+  whisperProvidersDesc:
+      'Elige cómo OSIA convierte tu voz en texto. faster-whisper funciona localmente y gratis, mientras que Groq Whisper necesita una clave API.',
+  personalityDesc:
+      'Da a OSIA un carácter coherente y añade skills personalizados que pueda usar. Estos definen cómo habla OSIA y qué capacidades adicionales tiene.',
+  heartbeatDesc:
+      'Deja que OSIA vigile la CPU, la memoria, el disco y las temperaturas de tu dispositivo. Puede avisarte en voz alta cuando una métrica supere un umbral que tú definas.',
   apiKey: 'Clave API',
   apiKeyHint: 'Pega tu clave API',
   getApiKey: 'Obtener clave API',
@@ -1860,7 +1906,7 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   catPersonalitySkillsSub: 'La identidad de OSIA y sus skills personalizados',
   cronTitle: 'Tareas programadas',
   cronSubtitle:
-      'OSIA ejecuta cada tarea según su horario, como un comando de voz.',
+      'Deja que OSIA ejecute una tarea por su cuenta a horas fijas — un resumen diario, una comprobación cada hora. Descríbela en lenguaje natural y elige un intervalo recurrente o una fecha única.',
   cronEmpty: 'Aún no hay tareas programadas.',
   cronAddTask: 'Añadir una tarea',
   cronEditTask: 'Editar tarea',
@@ -1887,7 +1933,7 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   cronLoadingConversations: 'Cargando…',
   hierarchyTitle: 'Jerarquía de IA',
   hierarchySubtitle:
-      'Ordena los modelos que OSIA prueba para cada tipo de tarea. Se usa el primero disponible. Si está desactivada, siempre se usa tu modelo seleccionado.',
+      'Dirige el trabajo a través de una lista ordenada de modelos en lugar de uno solo. Si un modelo sufre un error técnico, OSIA recurre automáticamente al siguiente de la cadena.',
   hierarchyEnable: 'Activar jerarquía',
   hierarchyActive: 'Jerarquía IA activa',
   hierarchyHeavy: 'Tareas pesadas',

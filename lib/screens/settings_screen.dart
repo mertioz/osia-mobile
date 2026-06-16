@@ -253,7 +253,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _SectionHeader(
                 label: strings.appearance,
                 subtitle: strings.appearanceSub,
-                description: strings.appearanceDesc,
                 palette: palette,
               ),
               _SectionCard(
@@ -280,7 +279,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _SectionHeader(
                 label: strings.language,
                 subtitle: strings.languageSub,
-                description: strings.languageDesc,
                 palette: palette,
               ),
               _SectionCard(
@@ -296,7 +294,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _SectionHeader(
                 label: strings.voiceSection,
                 subtitle: strings.voiceSectionSub,
-                description: strings.voiceSectionDesc,
                 palette: palette,
               ),
               _SectionCard(
@@ -316,7 +313,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _SectionHeader(
                 label: strings.providersTitle,
                 subtitle: strings.providersSub,
-                description: strings.providersDesc,
                 palette: palette,
               ),
               _SectionCard(
@@ -351,7 +347,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _SectionHeader(
                 label: strings.legal,
                 subtitle: strings.legalSub,
-                description: strings.legalDesc,
                 palette: palette,
               ),
               _SectionCard(
@@ -384,7 +379,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _SectionHeader(
                 label: strings.connectionSection,
                 subtitle: strings.connectionSectionSub,
-                description: strings.connectionSectionDesc,
                 palette: palette,
               ),
               _SectionCard(
@@ -477,18 +471,15 @@ class _SectionHeader extends StatelessWidget {
   final String label;
   final OsiaPalette palette;
 
-  /// Optional ~6-word subtitle shown under the uppercase title, and an
-  /// optional ~2-sentence pedagogical description under that (WOR-78).
-  /// Both wrap freely and are omitted when null, so the bare-title layout
-  /// is preserved for any caller that doesn't supply them.
+  /// Optional ~6-word subtitle shown under the uppercase title (WOR-78).
+  /// It wraps freely and is omitted when null, so the bare-title layout
+  /// is preserved for any caller that doesn't supply it.
   final String? subtitle;
-  final String? description;
 
   const _SectionHeader({
     required this.label,
     required this.palette,
     this.subtitle,
-    this.description,
   });
 
   @override
@@ -515,17 +506,6 @@ class _SectionHeader extends StatelessWidget {
                 fontSize: 13.5,
                 fontWeight: FontWeight.w600,
                 color: palette.textPrimary,
-              ),
-            ),
-          ],
-          if (description != null) ...[
-            const SizedBox(height: 3),
-            Text(
-              description!,
-              style: TextStyle(
-                fontSize: 12,
-                height: 1.35,
-                color: palette.textMuted,
               ),
             ),
           ],

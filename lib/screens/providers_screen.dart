@@ -193,6 +193,36 @@ String _categoryTitle(ProviderCategory category, OsiaStrings s) {
   }
 }
 
+/// The short (~5-7 word) subtitle shown on each API-key category card
+/// (WOR-78 point 1) — replaces the comma-joined brand list.
+String _categorySub(ProviderCategory category, OsiaStrings s) {
+  switch (category) {
+    case ProviderCategory.voiceToVoice:
+      return s.catVoiceToVoiceSub;
+    case ProviderCategory.ai:
+      return s.catAiProvidersSub;
+    case ProviderCategory.tts:
+      return s.catTtsProvidersSub;
+    case ProviderCategory.stt:
+      return s.catSttProvidersSub;
+  }
+}
+
+/// The ~2-sentence description shown at the top of each provider config
+/// screen (WOR-78 point 1).
+String _categoryDesc(ProviderCategory category, OsiaStrings s) {
+  switch (category) {
+    case ProviderCategory.voiceToVoice:
+      return s.liveapiDesc;
+    case ProviderCategory.ai:
+      return s.aiProvidersDesc;
+    case ProviderCategory.tts:
+      return s.voiceProvidersDesc;
+    case ProviderCategory.stt:
+      return s.whisperProvidersDesc;
+  }
+}
+
 IconData _categoryIcon(ProviderCategory category) {
   switch (category) {
     case ProviderCategory.voiceToVoice:
@@ -391,10 +421,9 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                       _CategoryTile(
                         icon: _categoryIcon(category),
                         title: _categoryTitle(category, strings),
-                        // Subtitle is the comma-joined brand list —
-                        // language-neutral proper nouns, so it isn't localized.
-                        subtitle:
-                            providersFor(category).map((p) => p.name).join(', '),
+                        // Short localized description (WOR-78 point 1). The
+                        // brand list now lives only on the config screen.
+                        subtitle: _categorySub(category, strings),
                         palette: palette,
                         onTap: () => _open(
                           _ProviderListScreen(
@@ -989,6 +1018,12 @@ class _ProviderListScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Text(
+                _categoryDesc(category, strings),
+                style: TextStyle(
+                    fontSize: 12.5, height: 1.4, color: palette.textMuted),
+              ),
+              const SizedBox(height: 16),
               _OsiaCard(
                 palette: palette,
                 child: Column(
@@ -3428,7 +3463,15 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+              child: Text(
+                strings.personalityDesc,
+                style: TextStyle(
+                    fontSize: 12.5, height: 1.4, color: palette.textMuted),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
               child: _SegmentedToggle(
                 labels: [strings.tabPersonality, strings.tabSkills],
                 index: _tab,
@@ -3777,6 +3820,12 @@ class _HeartbeatScreenState extends State<_HeartbeatScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Text(
+                strings.heartbeatDesc,
+                style: TextStyle(
+                    fontSize: 12.5, height: 1.4, color: palette.textMuted),
+              ),
+              const SizedBox(height: 16),
               // ── Enable monitoring ──
               _OsiaCard(
                 palette: palette,
