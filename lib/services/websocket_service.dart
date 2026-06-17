@@ -573,6 +573,61 @@ class _ConvStreamState {
   bool streaming = false;
 }
 
+/// Live status of a single MCP server (WOR-44 Phase 4), one entry of an
+/// `mcp_status` frame's `servers` map. [status] is one of `disconnected`,
+/// `connecting`, `connected`, `failed`; [error] is a short failure message
+/// (`''` when none); [tools] is the count of tools the server exposes.
+class McpServerStatus {
+  final String status;
+  final String error;
+  final int tools;
+  const McpServerStatus({
+    required this.status,
+    this.error = '',
+    this.tools = 0,
+  });
+
+  factory McpServerStatus.fromJson(Map<String, dynamic> json) {
+    final raw = (json['status'] ?? '').toString().trim();
+    return McpServerStatus(
+      status: raw.isEmpty ? 'disconnected' : raw,
+      error: (json['error'] ?? '').toString(),
+      tools: json['tools'] is num ? (json['tools'] as num).toInt() : 0,
+    );
+  }
+}
+
+/// A live MCP connector status push (`mcp_status`, WOR-44 Phase 4). Like
+/// [ConfigData], [HeartbeatDataMessage] and the other standalone stream
+/// messages, this is deliberately NOT part of the sealed [OsiaMessage]
+/// hierarchy: chat_screen.dart switches over OsiaMessage exhaustively with no
+/// `default`, so adding a sealed subtype would break its compile (and CLAUDE.md
+/// forbids touching that path). It rides its own
+/// [WebSocketService.mcpStatusStream], exactly like config/heartbeat.
+///
+/// The server pushes a frame on every status transition (scoped to the
+/// changing server) and replies with the full set to a `mcp_status` request,
+/// so consumers MERGE [servers] into their local view rather than replacing it.
+class McpStatusMessage {
+  /// `{serverId: status}` for the servers this frame reports.
+  final Map<String, McpServerStatus> servers;
+  const McpStatusMessage(this.servers);
+
+  factory McpStatusMessage.fromJson(Map<String, dynamic> json) {
+    final out = <String, McpServerStatus>{};
+    final raw = json['servers'];
+    if (raw is Map) {
+      raw.forEach((k, v) {
+        if (v is Map) {
+          out[k.toString()] =
+              McpServerStatus.fromJson(v.cast<String, dynamic>());
+        }
+      });
+    }
+    return McpStatusMessage(out);
+  }
+}
+
 // ── WebSocket service ─────────────────────────────────────────────────────
 
 /// Manages the WebSocket connection to the OSIA PC server.
@@ -635,6 +690,9 @@ class WebSocketService {
 
   final StreamController<AutonomousProgressMessage> _autonomousCtrl =
       StreamController<AutonomousProgressMessage>.broadcast();
+
+  final StreamController<McpStatusMessage> _mcpStatusCtrl =
+      StreamController<McpStatusMessage>.broadcast();
 
   // ── Per-conversation stream buffers (WOR-53) ──────────────────────────
   //
@@ -708,6 +766,13 @@ class WebSocketService {
   /// Phase 5). Kept off [messageStream] for the same reason as [configStream].
   Stream<AutonomousProgressMessage> get autonomousStream =>
       _autonomousCtrl.stream;
+
+  /// Stream of live MCP connector status pushes (`mcp_status`, WOR-44 Phase 4).
+  /// Kept off [messageStream] for the same reason as [configStream]. Each event
+  /// reports a subset of servers (a transition broadcast is scoped to the
+  /// changing server; a `mcp_status` request reply carries the full set), so
+  /// listeners merge events into their local view.
+  Stream<McpStatusMessage> get mcpStatusStream => _mcpStatusCtrl.stream;
 
   /// Stream of per-conversation streamed-reply events (`response_chunk` /
   /// `response` / terminal `status`, WOR-53). Kept off [messageStream] for the
@@ -1020,6 +1085,39 @@ class WebSocketService {
     _send({'type': 'get_autonomous_status'});
   }
 
+  // ── MCP / Connectors (WOR-44 Phase 4) ──
+  //
+  // The PC accepts these actions and broadcasts `mcp_status` frames (surfaced
+  // on [mcpStatusStream]) on every status transition. Purely additive: they
+  // reuse the same [_send] path as every other command and touch nothing on
+  // the chat / streaming / sealed-message path. The server keeps tokens in its
+  // gitignored store (set via [sendSetApiKey] under `mcp:<id>`) and the server
+  // list in `settings.json` `mcp_servers` (set via [sendSetSetting], always
+  // with `env: {}` — never a token) — these actions only drive connection.
+
+  /// Connect the saved MCP server [id]. The PC immediately broadcasts an
+  /// optimistic `connecting` status, then the resolved status when the
+  /// handshake settles — both arrive on [mcpStatusStream].
+  void sendMcpConnect(String id) {
+    _send({'type': 'mcp_connect', 'id': id});
+  }
+
+  /// Disconnect the MCP server [id]. The resolved status arrives on
+  /// [mcpStatusStream].
+  void sendMcpDisconnect(String id) {
+    _send({'type': 'mcp_disconnect', 'id': id});
+  }
+
+  /// Ask the PC for current MCP connector status. With [id] null the reply
+  /// reports every known server; otherwise just that one. The reply arrives on
+  /// [mcpStatusStream] as an [McpStatusMessage].
+  void sendMcpStatus([String? id]) {
+    _send({
+      'type': 'mcp_status',
+      if (id != null && id.isNotEmpty) 'id': id,
+    });
+  }
+
   /// Persist the personality document (`~/.osia/personality.md`) on the PC.
   void sendSetPersonality(String text) {
     _send({'type': 'set_personality', 'text': text});
@@ -1077,6 +1175,7 @@ class WebSocketService {
     _newChatCtrl.close();
     _conversationsListCtrl.close();
     _autonomousCtrl.close();
+    _mcpStatusCtrl.close();
     _convStreamCtrl.close();
     _streamBuffers.clear();
     _pendingConvs.clear();
@@ -1510,6 +1609,12 @@ class WebSocketService {
           if (!_autonomousCtrl.isClosed) {
             _autonomousCtrl.add(prog);
           }
+        case 'mcp_status':
+          // Live MCP connector status (WOR-44 Phase 4). Delivered on its own
+          // [mcpStatusStream] (NOT the paced message queue) so it can't disturb
+          // response-chunk streaming, exactly like config/heartbeat.
+          final st = McpStatusMessage.fromJson(json);
+          if (!_mcpStatusCtrl.isClosed) _mcpStatusCtrl.add(st);
         default:
           debugPrint(
               '[OSIA WS] unhandled message type="$type" keys=${json.keys.toList()}');

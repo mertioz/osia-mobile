@@ -590,6 +590,22 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 12),
+
+                    // ── MCP / Connectors (WOR-44 Phase 4) — 9th tile ──
+                    _CategoryTile(
+                      icon: Icons.hub_rounded,
+                      title: strings.catConnectors,
+                      subtitle: strings.catConnectorsSub,
+                      palette: palette,
+                      onTap: () => _open(
+                        _McpScreen(
+                          wsService: widget.wsService,
+                          config: config,
+                          apiKeys: _apiKeys,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -4725,6 +4741,1019 @@ class _EmptyHint extends StatelessWidget {
         textAlign: TextAlign.center,
         style: TextStyle(fontSize: 13, color: palette.textMuted),
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// MCP / Connectors (WOR-44 Phase 4)
+//
+// A dedicated category mirroring the PC's "MCP / Connectors" panel: a single
+// "Connector" dropdown selects which connector's panel shows below
+// (description, token / extra-env fields, a live status pill, and a
+// Connect/Disconnect button). OAuth / HTTP connectors render a disabled "soon"
+// button. Custom stdio servers the user adds appear after the catalog in the
+// dropdown.
+//
+// Contract (all additive — the server side is already done):
+//   - the catalog is hardcoded here (parity with the PC `_MCP_CATALOG`);
+//   - the saved server LIST round-trips through `set_setting mcp_servers`
+//     (env ALWAYS {} — never a token);
+//   - the token is stored separately via `set_api_key` under `mcp:<id>`;
+//   - Connect/Disconnect send `mcp_connect` / `mcp_disconnect`; live status
+//     arrives on [ws.WebSocketService.mcpStatusStream] (requested on open).
+
+/// One non-secret extra env field a connector needs (e.g. Slack's team id).
+class _McpExtraField {
+  final String varName;
+  final bool required;
+  const _McpExtraField({required this.varName, this.required = false});
+}
+
+/// A connector definition — a catalog entry or a user's custom stdio server.
+class _McpConnector {
+  final String id;
+  final String name;
+
+  /// Catalog description selector ('github'…'gmail'); empty for custom servers
+  /// (which show "transport · command" instead).
+  final String descField;
+  final String transport; // 'stdio' | 'streamable_http'
+  final String? command;
+  final List<String> args;
+  final String? url;
+  final String authType; // 'token' | 'oauth' | 'none'
+  final String? tokenEnv;
+  final List<_McpExtraField> extraEnv;
+  final bool custom;
+
+  const _McpConnector({
+    required this.id,
+    required this.name,
+    this.descField = '',
+    required this.transport,
+    this.command,
+    this.args = const [],
+    this.url,
+    required this.authType,
+    this.tokenEnv,
+    this.extraEnv = const [],
+    this.custom = false,
+  });
+
+  /// Only stdio + non-OAuth connectors can be connected today (parity with the
+  /// PC's SUPPORTED_TRANSPORTS=('stdio',) gate). Everything else shows "soon".
+  bool get connectable => transport == 'stdio' && authType != 'oauth';
+
+  /// A connectable connector that authenticates with a token in [tokenEnv].
+  bool get needsToken => connectable && authType == 'token';
+}
+
+/// The preconfigured catalog — parity with the PC `_MCP_CATALOG`. GitHub and
+/// Slack are stdio/token (connectable now); Notion is HTTP-token and
+/// Linear/Google Drive/Gmail are OAuth (all shown disabled "soon"). Filesystem
+/// and Brave Search are intentionally absent (each duplicates a native OSIA
+/// capability).
+const List<_McpConnector> _mcpCatalog = [
+  _McpConnector(
+    id: 'github',
+    name: 'GitHub',
+    descField: 'github',
+    transport: 'stdio',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-github'],
+    authType: 'token',
+    tokenEnv: 'GITHUB_PERSONAL_ACCESS_TOKEN',
+  ),
+  _McpConnector(
+    id: 'slack',
+    name: 'Slack',
+    descField: 'slack',
+    transport: 'stdio',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-slack'],
+    authType: 'token',
+    tokenEnv: 'SLACK_BOT_TOKEN',
+    extraEnv: [_McpExtraField(varName: 'SLACK_TEAM_ID', required: true)],
+  ),
+  _McpConnector(
+    id: 'notion',
+    name: 'Notion',
+    descField: 'notion',
+    transport: 'streamable_http',
+    url: 'https://mcp.notion.com/mcp',
+    authType: 'token',
+  ),
+  _McpConnector(
+    id: 'linear',
+    name: 'Linear',
+    descField: 'linear',
+    transport: 'streamable_http',
+    url: 'https://mcp.linear.app/mcp',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: 'google-drive',
+    name: 'Google Drive',
+    descField: 'gdrive',
+    transport: 'streamable_http',
+    url: '',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: 'gmail',
+    name: 'Gmail',
+    descField: 'gmail',
+    transport: 'streamable_http',
+    url: '',
+    authType: 'oauth',
+  ),
+];
+
+const Set<String> _mcpCatalogIds = {
+  'github',
+  'slack',
+  'notion',
+  'linear',
+  'google-drive',
+  'gmail',
+};
+
+class _McpScreen extends StatefulWidget {
+  final ws.WebSocketService wsService;
+  final ws.ConfigData config;
+
+  /// Real token strings keyed by provider (`mcp:<id>` → token), from the
+  /// parent's `get_api_keys` pull — used to pre-fill the token field.
+  final Map<String, String> apiKeys;
+
+  const _McpScreen({
+    required this.wsService,
+    required this.config,
+    required this.apiKeys,
+  });
+
+  @override
+  State<_McpScreen> createState() => _McpScreenState();
+}
+
+class _McpScreenState extends State<_McpScreen> {
+  /// Persisted server list (non-secret) — the `mcp_servers` setting. Seeded from
+  /// the config snapshot, re-seeded on every config push, and replace-written
+  /// wholesale via `set_setting` (the server forces env={} on each entry).
+  late List<Map<String, dynamic>> _servers;
+
+  /// Real token strings per provider (`mcp:<id>` → token), for pre-filling the
+  /// token field. Seeded from the parent, refreshed on api-keys pushes.
+  late Map<String, String> _apiKeys;
+
+  /// Which providers have a key set on the PC (`mcp:<id>` → bool).
+  late Map<String, bool> _apiKeysSet;
+
+  /// Live connector status per id, merged from `mcp_status` pushes.
+  final Map<String, ws.McpServerStatus> _statuses = {};
+
+  /// The connector currently shown in the panel.
+  String _selectedId = _mcpCatalog.first.id;
+
+  /// Token field obscured (masked) — toggled by the eye button.
+  bool _obscureToken = true;
+
+  /// Lazily-created field controllers, keyed by connector id. Disposed in
+  /// [dispose].
+  final Map<String, TextEditingController> _tokenCtrls = {};
+  final Map<String, Map<String, TextEditingController>> _extraCtrls = {};
+
+  StreamSubscription<ws.ConfigData>? _configSub;
+  StreamSubscription<ws.ApiKeysMessage>? _apiKeysSub;
+  StreamSubscription<ws.McpStatusMessage>? _statusSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _servers = _readServers(widget.config);
+    _apiKeys = Map<String, String>.from(widget.apiKeys);
+    _apiKeysSet = Map<String, bool>.from(widget.config.apiKeysSet);
+
+    // Stay live while open: the parent passed a snapshot, but config / keys /
+    // status can change (incl. from the PC), so subscribe to all three.
+    _configSub = widget.wsService.configStream.listen((cfg) {
+      if (!mounted) return;
+      setState(() {
+        _servers = _readServers(cfg);
+        _apiKeysSet = Map<String, bool>.from(cfg.apiKeysSet);
+      });
+    });
+    _apiKeysSub = widget.wsService.apiKeysStream.listen((msg) {
+      if (mounted) setState(() => _apiKeys = msg.keys);
+    });
+    _statusSub = widget.wsService.mcpStatusStream.listen((msg) {
+      if (!mounted) return;
+      // Merge: a transition push is scoped to one server; a poll reply is the
+      // full set — so a single-server broadcast can't wipe the others.
+      setState(() => _statuses.addAll(msg.servers));
+    });
+
+    // Pull live status for every server so the pills reflect reality on open.
+    widget.wsService.sendMcpStatus();
+  }
+
+  @override
+  void dispose() {
+    _configSub?.cancel();
+    _apiKeysSub?.cancel();
+    _statusSub?.cancel();
+    for (final c in _tokenCtrls.values) {
+      c.dispose();
+    }
+    for (final m in _extraCtrls.values) {
+      for (final c in m.values) {
+        c.dispose();
+      }
+    }
+    super.dispose();
+  }
+
+  // ── Reads ──
+
+  List<Map<String, dynamic>> _readServers(ws.ConfigData cfg) {
+    final raw = cfg.settings['mcp_servers'];
+    return raw is List
+        ? raw.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList()
+        : <Map<String, dynamic>>[];
+  }
+
+  Map<String, dynamic>? _savedFor(String id) {
+    for (final s in _servers) {
+      if (s['id'] == id) return s;
+    }
+    return null;
+  }
+
+  /// All connectors for the dropdown: the 6 catalog entries, then any custom
+  /// stdio servers the user added (saved entries whose id isn't in the catalog).
+  List<_McpConnector> _allConnectors() {
+    final out = List<_McpConnector>.from(_mcpCatalog);
+    for (final s in _servers) {
+      final id = (s['id'] ?? '').toString();
+      if (id.isEmpty || _mcpCatalogIds.contains(id)) continue;
+      out.add(_McpConnector(
+        id: id,
+        name: (s['name'] ?? id).toString(),
+        transport: (s['transport'] ?? 'stdio').toString(),
+        command: s['command']?.toString(),
+        args: (s['args'] is List)
+            ? (s['args'] as List).map((e) => e.toString()).toList()
+            : const [],
+        url: s['url']?.toString(),
+        authType: (s['auth_type'] ?? 'none').toString(),
+        tokenEnv: s['token_env']?.toString(),
+        custom: true,
+      ));
+    }
+    return out;
+  }
+
+  TextEditingController _tokenCtrlFor(_McpConnector c) {
+    return _tokenCtrls.putIfAbsent(
+      c.id,
+      () => TextEditingController(text: _apiKeys['mcp:${c.id}'] ?? ''),
+    );
+  }
+
+  TextEditingController _extraCtrlFor(_McpConnector c, String varName) {
+    final byVar = _extraCtrls.putIfAbsent(c.id, () => {});
+    return byVar.putIfAbsent(varName, () {
+      final extra = _savedFor(c.id)?['extra_env'];
+      final initial = (extra is Map) ? (extra[varName]?.toString() ?? '') : '';
+      return TextEditingController(text: initial);
+    });
+  }
+
+  String _statusOf(String id) => _statuses[id]?.status ?? 'disconnected';
+
+  bool _configured(String id) =>
+      (_apiKeys['mcp:$id'] ?? '').isNotEmpty || _apiKeysSet['mcp:$id'] == true;
+
+  String _descFor(OsiaStrings s, _McpConnector c) {
+    switch (c.descField) {
+      case 'github':
+        return s.mcpDescGithub;
+      case 'slack':
+        return s.mcpDescSlack;
+      case 'notion':
+        return s.mcpDescNotion;
+      case 'linear':
+        return s.mcpDescLinear;
+      case 'gdrive':
+        return s.mcpDescGdrive;
+      case 'gmail':
+        return s.mcpDescGmail;
+      default:
+        // Custom server — show its transport and command/url.
+        final detail =
+            (c.command?.isNotEmpty ?? false) ? c.command! : (c.url ?? '');
+        return detail.isEmpty ? c.transport : '${c.transport} · $detail';
+    }
+  }
+
+  String _extraLabel(OsiaStrings s, String varName) =>
+      varName == 'SLACK_TEAM_ID' ? s.mcpSlackTeam : varName;
+
+  String _extraHint(OsiaStrings s, String varName) =>
+      varName == 'SLACK_TEAM_ID' ? s.mcpSlackTeamPh : '';
+
+  bool _canConnect(_McpConnector c) {
+    if (!c.connectable) return false;
+    // A token-auth connector needs a token in the field OR one already stored.
+    if (c.needsToken &&
+        _tokenCtrlFor(c).text.trim().isEmpty &&
+        !_configured(c.id)) {
+      return false;
+    }
+    for (final f in c.extraEnv) {
+      if (f.required && _extraCtrlFor(c, f.varName).text.trim().isEmpty) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // ── Writes ──
+
+  void _upsert(Map<String, dynamic> entry) {
+    final i = _servers.indexWhere((s) => s['id'] == entry['id']);
+    if (i >= 0) {
+      _servers[i] = entry;
+    } else {
+      _servers.add(entry);
+    }
+  }
+
+  /// Build the persisted (non-secret) entry for [c]. `env` is ALWAYS {} — the
+  /// token never travels in this list (it goes via `set_api_key`).
+  Map<String, dynamic> _buildEntry(_McpConnector c, {required bool enabled}) {
+    final extra = <String, dynamic>{};
+    for (final f in c.extraEnv) {
+      final v = _extraCtrlFor(c, f.varName).text.trim();
+      if (v.isNotEmpty) extra[f.varName] = v;
+    }
+    // Carry forward extra_env saved for custom connectors (whose fields aren't
+    // rendered here) so a reconnect keeps them.
+    final saved = _savedFor(c.id);
+    if (c.extraEnv.isEmpty && saved?['extra_env'] is Map) {
+      (saved!['extra_env'] as Map).forEach((k, v) => extra[k.toString()] = v);
+    }
+    return {
+      'id': c.id,
+      'name': c.name,
+      'transport': c.transport,
+      'command': c.command,
+      'args': c.args,
+      'url': c.url,
+      'env': <String, dynamic>{}, // never a token — server forces this anyway
+      'auth_type': c.authType,
+      'enabled': enabled,
+      'token_env': c.tokenEnv,
+      'extra_env': extra,
+      'custom': c.custom,
+    };
+  }
+
+  void _connect(_McpConnector c) {
+    _upsert(_buildEntry(c, enabled: true));
+    widget.wsService.sendSetSetting('mcp_servers', _servers);
+    if (c.needsToken) {
+      final token = _tokenCtrlFor(c).text.trim();
+      // Only write when the user supplied one — an empty field with a token
+      // already stored keeps the existing secret rather than clearing it.
+      if (token.isNotEmpty) {
+        widget.wsService.sendSetApiKey('mcp:${c.id}', token);
+      }
+    }
+    widget.wsService.sendMcpConnect(c.id);
+    // Optimistic pill — flips on the pushed/polled status (non-blocking).
+    setState(() =>
+        _statuses[c.id] = const ws.McpServerStatus(status: 'connecting'));
+    widget.wsService.sendGetConfig();
+    widget.wsService.sendGetApiKeys();
+  }
+
+  void _disconnect(_McpConnector c) {
+    final saved = _savedFor(c.id);
+    if (saved != null) {
+      final entry = Map<String, dynamic>.from(saved);
+      entry['enabled'] = false;
+      entry['env'] = <String, dynamic>{};
+      _upsert(entry);
+      widget.wsService.sendSetSetting('mcp_servers', _servers);
+    }
+    widget.wsService.sendMcpDisconnect(c.id);
+    setState(() =>
+        _statuses[c.id] = const ws.McpServerStatus(status: 'disconnected'));
+    widget.wsService.sendGetConfig();
+  }
+
+  void _toggle(_McpConnector c) {
+    if (_statusOf(c.id) == 'connected') {
+      _disconnect(c);
+    } else {
+      _connect(c);
+    }
+  }
+
+  Future<void> _removeCustom(_McpConnector c) async {
+    final strings = OsiaL10n.of(context);
+    final palette = OsiaTheme.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: palette.surface,
+        title: Text(strings.mcpRemove,
+            style: TextStyle(fontSize: 16, color: palette.textPrimary)),
+        content: Text(
+          c.name,
+          style: TextStyle(color: palette.textMuted, fontSize: 13.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(strings.cancel,
+                style: TextStyle(color: palette.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(strings.delete, style: TextStyle(color: palette.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    widget.wsService.sendMcpDisconnect(c.id);
+    widget.wsService.sendDeleteApiKey('mcp:${c.id}');
+    setState(() {
+      _servers.removeWhere((s) => s['id'] == c.id);
+      _statuses.remove(c.id);
+      _selectedId = _mcpCatalog.first.id;
+    });
+    widget.wsService.sendSetSetting('mcp_servers', _servers);
+    widget.wsService.sendGetConfig();
+  }
+
+  String _slugify(String name) {
+    var s = name
+        .replaceAll(RegExp(r'[^A-Za-z0-9.-]+'), '-')
+        .replaceAll('__', '-')
+        .toLowerCase()
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    return s.isEmpty ? 'server' : s;
+  }
+
+  String _uniqueId(String base) {
+    final taken = {
+      ..._mcpCatalogIds,
+      ..._servers.map((s) => (s['id'] ?? '').toString()),
+    };
+    if (!taken.contains(base)) return base;
+    var n = 2;
+    while (taken.contains('$base-$n')) {
+      n++;
+    }
+    return '$base-$n';
+  }
+
+  Future<void> _addCustom() async {
+    final result = await showDialog<_McpCustomResult>(
+      context: context,
+      builder: (ctx) => const _McpCustomDialog(),
+    );
+    if (result == null || !mounted) return;
+    final id = _uniqueId(_slugify(result.name));
+    final parts = result.command
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
+    final hasToken = result.token.trim().isNotEmpty;
+    final entry = <String, dynamic>{
+      'id': id,
+      'name': result.name.trim(),
+      'transport': 'stdio',
+      'command': parts.isNotEmpty ? parts.first : '',
+      'args': parts.length > 1 ? parts.sublist(1) : <String>[],
+      'url': null,
+      'env': <String, dynamic>{},
+      'auth_type': hasToken ? 'token' : 'none',
+      'enabled': false, // adding does NOT connect — connect it explicitly
+      'token_env':
+          result.tokenEnv.trim().isEmpty ? null : result.tokenEnv.trim(),
+      'extra_env': <String, dynamic>{},
+      'custom': true,
+    };
+    setState(() {
+      _upsert(entry);
+      _selectedId = id; // land the dropdown on the new server's panel
+    });
+    widget.wsService.sendSetSetting('mcp_servers', _servers);
+    if (hasToken) {
+      widget.wsService.sendSetApiKey('mcp:$id', result.token.trim());
+    }
+    widget.wsService.sendGetConfig();
+    widget.wsService.sendGetApiKeys();
+  }
+
+  Future<void> _pasteInto(TextEditingController ctrl) async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim();
+    if (text == null || text.isEmpty || !mounted) return;
+    ctrl.text = text;
+    setState(() {});
+  }
+
+  // ── Build ──
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final connectors = _allConnectors();
+    // Clamp the selection so the dropdown value always matches an item.
+    if (!connectors.any((c) => c.id == _selectedId)) {
+      _selectedId = connectors.first.id;
+    }
+    final selected = connectors.firstWhere((c) => c.id == _selectedId);
+
+    return Scaffold(
+      backgroundColor: palette.background,
+      appBar: AppBar(
+        title: Text(strings.catConnectors),
+        backgroundColor: palette.background,
+        iconTheme: IconThemeData(color: palette.accent),
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                strings.connectorsDesc,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  height: 1.4,
+                  color: palette.textMuted,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _FieldLabel(strings.connectorLabel, palette),
+              const SizedBox(height: 8),
+              _selectorDropdown<String>(
+                palette: palette,
+                value: _selectedId,
+                items: [
+                  for (final c in connectors)
+                    DropdownMenuItem(
+                      value: c.id,
+                      child: Text(
+                        c.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          color: palette.textPrimary,
+                        ),
+                      ),
+                    ),
+                ],
+                onChanged: (v) {
+                  if (v != null) setState(() => _selectedId = v);
+                },
+              ),
+              const SizedBox(height: 16),
+              _buildPanel(palette, strings, selected),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: _addCustom,
+                icon: Icon(Icons.add_rounded, size: 18, color: palette.accent),
+                label: Text(strings.mcpAddCustom),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: palette.accent,
+                  side: BorderSide(color: palette.border),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPanel(OsiaPalette palette, OsiaStrings strings, _McpConnector c) {
+    final status = _statusOf(c.id);
+    final children = <Widget>[
+      // Header: connector name + live status pill.
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              c.name,
+              style: TextStyle(
+                fontSize: 15.5,
+                fontWeight: FontWeight.w600,
+                color: palette.textPrimary,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          _McpStatusPill(status: status, palette: palette, strings: strings),
+        ],
+      ),
+      const SizedBox(height: 10),
+      Text(
+        _descFor(strings, c),
+        style: TextStyle(fontSize: 13, height: 1.4, color: palette.textMuted),
+      ),
+    ];
+
+    if (c.connectable) {
+      if (c.needsToken) children.addAll(_tokenField(palette, strings, c));
+      for (final f in c.extraEnv) {
+        children.add(const SizedBox(height: 14));
+        children.add(_FieldLabel(_extraLabel(strings, f.varName), palette));
+        children.add(const SizedBox(height: 8));
+        children.add(_OsiaTextField(
+          controller: _extraCtrlFor(c, f.varName),
+          hint: _extraHint(strings, f.varName),
+          palette: palette,
+        ));
+      }
+      children.add(const SizedBox(height: 18));
+      children.add(_actionButton(palette, strings, c, status));
+      if (c.custom) {
+        children.add(const SizedBox(height: 4));
+        children.add(Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => _removeCustom(c),
+            icon: Icon(Icons.delete_outline_rounded,
+                size: 18, color: palette.error),
+            label: Text(
+              strings.mcpRemove,
+              style: TextStyle(color: palette.error, fontSize: 14),
+            ),
+          ),
+        ));
+      }
+    } else {
+      // OAuth / HTTP — disabled "soon" button, no input fields.
+      children.add(const SizedBox(height: 18));
+      children.add(_soonButton(palette, strings, c));
+    }
+
+    return _OsiaCard(
+      palette: palette,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      ),
+    );
+  }
+
+  List<Widget> _tokenField(
+      OsiaPalette palette, OsiaStrings strings, _McpConnector c) {
+    final ctrl = _tokenCtrlFor(c);
+    final configured = _configured(c.id);
+    return [
+      const SizedBox(height: 16),
+      if (configured) ...[
+        Row(
+          children: [
+            Icon(Icons.check_circle_rounded, size: 16, color: palette.accent),
+            const SizedBox(width: 8),
+            Text(
+              strings.apiKeyConfigured,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: palette.textPrimary,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+      ],
+      _FieldLabel(strings.mcpTokenLabel, palette),
+      const SizedBox(height: 8),
+      TextField(
+        controller: ctrl,
+        obscureText: _obscureToken,
+        autocorrect: false,
+        enableSuggestions: false,
+        onChanged: (_) => setState(() {}), // refresh Connect's enabled state
+        cursorColor: palette.accent,
+        style: TextStyle(color: palette.textPrimary, fontSize: 15),
+        decoration: InputDecoration(
+          filled: true,
+          fillColor: palette.surface,
+          hintText:
+              configured ? strings.apiKeyReplaceHint : strings.mcpTokenHint,
+          hintStyle: TextStyle(color: palette.textMuted, fontSize: 14),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: palette.border),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: palette.border),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: palette.accent, width: 1.4),
+          ),
+          suffixIcon: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip:
+                    _obscureToken ? strings.showApiKey : strings.hideApiKey,
+                onPressed: () =>
+                    setState(() => _obscureToken = !_obscureToken),
+                icon: Icon(
+                  _obscureToken
+                      ? Icons.visibility_rounded
+                      : Icons.visibility_off_rounded,
+                  size: 18,
+                  color: palette.textMuted,
+                ),
+              ),
+              IconButton(
+                onPressed: () => _pasteInto(ctrl),
+                icon: Icon(Icons.content_paste_rounded,
+                    size: 18, color: palette.textMuted),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+
+  Widget _actionButton(
+      OsiaPalette palette, OsiaStrings strings, _McpConnector c, String status) {
+    final connected = status == 'connected';
+    final enabled = connected || _canConnect(c);
+    return SizedBox(
+      height: 50,
+      child: ElevatedButton(
+        onPressed: enabled ? () => _toggle(c) : null,
+        style: ElevatedButton.styleFrom(
+          backgroundColor:
+              connected ? palette.surfaceElevated : palette.accent,
+          foregroundColor: connected
+              ? palette.textPrimary
+              : (palette.isDark ? palette.background : Colors.white),
+          disabledBackgroundColor: palette.accent.withValues(alpha: 0.4),
+          disabledForegroundColor:
+              (palette.isDark ? palette.background : Colors.white)
+                  .withValues(alpha: 0.7),
+          elevation: 0,
+          side: connected ? BorderSide(color: palette.border) : BorderSide.none,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        child: Text(connected ? strings.mcpDisconnect : strings.mcpConnect),
+      ),
+    );
+  }
+
+  Widget _soonButton(
+      OsiaPalette palette, OsiaStrings strings, _McpConnector c) {
+    final label =
+        c.authType == 'oauth' ? strings.mcpOauthSoon : strings.mcpHttpSoon;
+    return SizedBox(
+      height: 50,
+      child: ElevatedButton(
+        onPressed: null,
+        style: ElevatedButton.styleFrom(
+          disabledBackgroundColor:
+              palette.surfaceElevated.withValues(alpha: 0.6),
+          disabledForegroundColor: palette.textMuted,
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          textStyle: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600),
+        ),
+        child: Text(label),
+      ),
+    );
+  }
+}
+
+/// Live status pill for a connector — parity with the PC `_MCP_PILL_COLORS`.
+class _McpStatusPill extends StatelessWidget {
+  final String status;
+  final OsiaPalette palette;
+  final OsiaStrings strings;
+  const _McpStatusPill({
+    required this.status,
+    required this.palette,
+    required this.strings,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final (Color fg, Color bg, String label) = switch (status) {
+      'connected' => (
+          const Color(0xFF6FCF97),
+          const Color(0xFF10241A),
+          strings.mcpStatusConnected,
+        ),
+      'connecting' => (
+          const Color(0xFFE6C878),
+          const Color(0xFF2A2410),
+          strings.mcpStatusConnecting,
+        ),
+      'failed' => (
+          const Color(0xFFE0A3A3),
+          const Color(0xFF2A1414),
+          strings.mcpStatusFailed,
+        ),
+      _ => (
+          palette.textMuted,
+          palette.surfaceElevated,
+          strings.mcpStatusDisconnected,
+        ),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: fg.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: fg,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Result of the custom-server dialog (a local stdio server).
+class _McpCustomResult {
+  final String name;
+  final String command;
+  final String token;
+  final String tokenEnv;
+  const _McpCustomResult({
+    required this.name,
+    required this.command,
+    required this.token,
+    required this.tokenEnv,
+  });
+}
+
+/// Add-a-custom-stdio-server dialog. Mirrors the PC: a name + command (and
+/// optional token / token env var); adding does NOT connect. Remote (HTTP)
+/// servers aren't offered yet — stdio only.
+class _McpCustomDialog extends StatefulWidget {
+  const _McpCustomDialog();
+
+  @override
+  State<_McpCustomDialog> createState() => _McpCustomDialogState();
+}
+
+class _McpCustomDialogState extends State<_McpCustomDialog> {
+  final _nameCtrl = TextEditingController();
+  final _commandCtrl = TextEditingController();
+  final _tokenCtrl = TextEditingController();
+  final _tokenEnvCtrl = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _commandCtrl.dispose();
+    _tokenCtrl.dispose();
+    _tokenEnvCtrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final strings = OsiaL10n.of(context);
+    if (_nameCtrl.text.trim().isEmpty) {
+      setState(() => _error = strings.mcpErrName);
+      return;
+    }
+    if (_commandCtrl.text.trim().isEmpty) {
+      setState(() => _error = strings.mcpErrCommand);
+      return;
+    }
+    Navigator.of(context).pop(_McpCustomResult(
+      name: _nameCtrl.text,
+      command: _commandCtrl.text,
+      token: _tokenCtrl.text,
+      tokenEnv: _tokenEnvCtrl.text,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    return AlertDialog(
+      backgroundColor: palette.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: Text(
+        strings.mcpCustomTitle,
+        style: TextStyle(fontSize: 16, color: palette.textPrimary),
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              strings.mcpCustomHint,
+              style: TextStyle(
+                  fontSize: 12.5, height: 1.4, color: palette.textMuted),
+            ),
+            const SizedBox(height: 16),
+            _FieldLabel(strings.mcpFieldName, palette),
+            const SizedBox(height: 6),
+            _OsiaTextField(
+              controller: _nameCtrl,
+              hint: strings.mcpFieldNamePh,
+              palette: palette,
+            ),
+            const SizedBox(height: 14),
+            _FieldLabel(strings.mcpFieldCommand, palette),
+            const SizedBox(height: 6),
+            _OsiaTextField(
+              controller: _commandCtrl,
+              hint: strings.mcpFieldCommandPh,
+              palette: palette,
+            ),
+            const SizedBox(height: 14),
+            _FieldLabel(strings.mcpFieldTokenOptional, palette),
+            const SizedBox(height: 6),
+            _OsiaTextField(
+              controller: _tokenCtrl,
+              hint: strings.mcpFieldTokenPh,
+              palette: palette,
+            ),
+            const SizedBox(height: 14),
+            _FieldLabel(strings.mcpFieldTokenEnvOptional, palette),
+            const SizedBox(height: 6),
+            _OsiaTextField(
+              controller: _tokenEnvCtrl,
+              hint: strings.mcpFieldTokenEnvPh,
+              palette: palette,
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                style: TextStyle(fontSize: 12.5, color: palette.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child:
+              Text(strings.cancel, style: TextStyle(color: palette.textMuted)),
+        ),
+        TextButton(
+          onPressed: _submit,
+          child: Text(strings.mcpAdd, style: TextStyle(color: palette.accent)),
+        ),
+      ],
     );
   }
 }
