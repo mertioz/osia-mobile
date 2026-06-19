@@ -17,6 +17,7 @@ import '../theme.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/connection_badge.dart';
 import '../widgets/glass_input_bar.dart';
+import '../widgets/mcp_confirm_dialog.dart';
 import '../widgets/model_selector_sheet.dart';
 import '../widgets/thinking_indicator.dart';
 import 'autonomous_screen.dart';
@@ -79,6 +80,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _errSub;
   StreamSubscription? _newChatSub;
   StreamSubscription? _configSub;
+  StreamSubscription? _mcpConfirmSub;
   String? _connError;
   // Monotonic generation for the connection-banner AnimatedSwitcher keys.
   // Bumped on every connection-state change so the error banner / placeholder
@@ -367,6 +369,12 @@ class _ChatScreenState extends State<ChatScreen> {
     // WOR-10: the PC can push a "new_chat" signal on its own stream (kept off
     // the sealed-message switch). Mirror it by resetting the chat locally.
     _newChatSub = _wsService.newChatStream.listen((_) => _onNewChat());
+
+    // WOR-44 Phase 5: write-tool confirmation requests (kept off the sealed
+    // message switch). The server blocks the agent until we answer; the handler
+    // serializes requests and guarantees exactly one response per request.
+    _mcpConfirmSub =
+        _wsService.mcpConfirmStream.listen(_onMcpConfirmRequest);
 
     _errSub = _wsService.errorStream.listen((err) {
       if (mounted) {
@@ -1923,6 +1931,56 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  // ── MCP write-tool confirmation (WOR-44 Phase 5) ─────────────────────────
+  //
+  // The server sends `mcp_confirm_request` when a *write* MCP tool is about to
+  // run on a mobile-initiated turn, and BLOCKS the agent until we answer with
+  // sendMcpConfirmResponse(id, approved). On timeout(120s)/disconnect it denies.
+  // Requests are serialized through a queue (tool calls are sequential per turn,
+  // but a queue makes any overlap safe): one modal dialog at a time, and EXACTLY
+  // ONE response per request — Approve → true; Decline / back / tap-outside →
+  // false. The dialog is shown on the root navigator (showDialog's default), so
+  // it appears above whatever screen is on top (chat, settings, providers…).
+
+  /// Confirmation requests awaiting a dialog, drained one at a time.
+  final List<ws.McpConfirmRequest> _mcpConfirmQueue = [];
+
+  /// Whether a confirmation dialog is currently on screen — serializes the
+  /// queue so two requests can never race the same dialog.
+  bool _mcpConfirmActive = false;
+
+  void _onMcpConfirmRequest(ws.McpConfirmRequest req) {
+    _mcpConfirmQueue.add(req);
+    _drainMcpConfirmQueue();
+  }
+
+  Future<void> _drainMcpConfirmQueue() async {
+    if (_mcpConfirmActive || _mcpConfirmQueue.isEmpty || !mounted) return;
+    _mcpConfirmActive = true;
+    final req = _mcpConfirmQueue.removeAt(0);
+    // Capture the service NOW: a modal barrier blocks settings/reconnect from
+    // swapping it while the dialog is up, but pinning it is clearest.
+    final svc = _wsService;
+
+    // showDialog completes EXACTLY ONCE: `true` (Approve), `false` (Decline),
+    // or `null` (back button / tap-outside). Decline is the safe default, so
+    // any non-approve outcome — including a dismissal — sends approved:false.
+    // Because the await resolves once, the response is sent exactly once.
+    final approved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true, // tap-outside → decline (safe default)
+      builder: (ctx) => McpConfirmDialog(request: req),
+    );
+    // Send the verdict for THIS request's id. Safe even if we've since
+    // disconnected — sendMcpConfirmResponse no-ops on a dead socket, and the
+    // server already denied on its own timeout.
+    svc.sendMcpConfirmResponse(req.id, approved == true);
+
+    _mcpConfirmActive = false;
+    // Drain the next queued request (if any).
+    if (mounted) _drainMcpConfirmQueue();
+  }
+
   /// Settings is pushed directly (not via a named route) so it can borrow
   /// the live WebSocket service for the "restart server" action. When it
   /// pops, the connection is rebuilt from scratch in case anything changed.
@@ -1944,6 +2002,11 @@ class _ChatScreenState extends State<ChatScreen> {
     _errSub?.cancel();
     _newChatSub?.cancel();
     _configSub?.cancel();
+    _mcpConfirmSub?.cancel();
+    // The service (and its confirm stream) is rebuilt below — drop any queued
+    // requests so a stale one isn't answered against the new socket.
+    _mcpConfirmQueue.clear();
+    _mcpConfirmActive = false;
     _cancelPendingConvLoad();
     _cancelFirstTokenTimer();
     _stopRecoveryPoll();
@@ -1993,6 +2056,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _errSub?.cancel();
     _newChatSub?.cancel();
     _configSub?.cancel();
+    _mcpConfirmSub?.cancel();
     _wsService.dispose();
     _audioService.dispose();
     _textCtrl.dispose();

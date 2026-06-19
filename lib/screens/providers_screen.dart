@@ -4914,6 +4914,15 @@ class _McpScreenState extends State<_McpScreen> {
   /// Live connector status per id, merged from `mcp_status` pushes.
   final Map<String, ws.McpServerStatus> _statuses = {};
 
+  /// Whether the server confirms write MCP tools before running them
+  /// (`mcp_confirm_writes`, WOR-44 Phase 5; default ON). Optimistic local
+  /// mirror, persisted via `set_setting` and re-seeded from each config push.
+  late bool _confirmWrites;
+
+  /// Whether write tools may run unattended — no client connected to confirm
+  /// (`mcp_allow_unattended_writes`; default OFF). Same persistence as above.
+  late bool _allowUnattended;
+
   /// The connector currently shown in the panel.
   String _selectedId = _mcpCatalog.first.id;
 
@@ -4935,6 +4944,10 @@ class _McpScreenState extends State<_McpScreen> {
     _servers = _readServers(widget.config);
     _apiKeys = Map<String, String>.from(widget.apiKeys);
     _apiKeysSet = Map<String, bool>.from(widget.config.apiKeysSet);
+    _confirmWrites =
+        _readBool(widget.config.settings['mcp_confirm_writes'], true);
+    _allowUnattended =
+        _readBool(widget.config.settings['mcp_allow_unattended_writes'], false);
 
     // Stay live while open: the parent passed a snapshot, but config / keys /
     // status can change (incl. from the PC), so subscribe to all three.
@@ -4943,6 +4956,9 @@ class _McpScreenState extends State<_McpScreen> {
       setState(() {
         _servers = _readServers(cfg);
         _apiKeysSet = Map<String, bool>.from(cfg.apiKeysSet);
+        _confirmWrites = _readBool(cfg.settings['mcp_confirm_writes'], true);
+        _allowUnattended =
+            _readBool(cfg.settings['mcp_allow_unattended_writes'], false);
       });
     });
     _apiKeysSub = widget.wsService.apiKeysStream.listen((msg) {
@@ -4983,6 +4999,9 @@ class _McpScreenState extends State<_McpScreen> {
         ? raw.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList()
         : <Map<String, dynamic>>[];
   }
+
+  /// Read a bool setting, falling back to [dflt] when absent or non-bool.
+  bool _readBool(Object? raw, bool dflt) => raw is bool ? raw : dflt;
 
   Map<String, dynamic>? _savedFor(String id) {
     for (final s in _servers) {
@@ -5306,6 +5325,43 @@ class _McpScreenState extends State<_McpScreen> {
                 ),
               ),
               const SizedBox(height: 16),
+              // ── Write-tool safety (WOR-44 Phase 5) ──
+              // Global gate for write MCP tools, applies to every connector.
+              _OsiaCard(
+                palette: palette,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _confirmToggleRow(
+                      palette,
+                      title: strings.mcpConfirmWritesLabel,
+                      subtitle: strings.mcpConfirmWritesSub,
+                      value: _confirmWrites,
+                      onChanged: (v) {
+                        setState(() => _confirmWrites = v);
+                        widget.wsService
+                            .sendSetSetting('mcp_confirm_writes', v);
+                      },
+                    ),
+                    Divider(
+                      height: 18,
+                      color: palette.border.withValues(alpha: 0.5),
+                    ),
+                    _confirmToggleRow(
+                      palette,
+                      title: strings.mcpUnattendedWritesLabel,
+                      subtitle: strings.mcpUnattendedWritesSub,
+                      value: _allowUnattended,
+                      onChanged: (v) {
+                        setState(() => _allowUnattended = v);
+                        widget.wsService
+                            .sendSetSetting('mcp_allow_unattended_writes', v);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
               _FieldLabel(strings.connectorLabel, palette),
               const SizedBox(height: 8),
               _selectorDropdown<String>(
@@ -5353,6 +5409,53 @@ class _McpScreenState extends State<_McpScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// One title+subtitle row with a trailing Switch, for the write-safety card.
+  Widget _confirmToggleRow(
+    OsiaPalette palette, {
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: palette.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: palette.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Switch(
+          value: value,
+          onChanged: onChanged,
+          activeTrackColor: palette.accent,
+          activeThumbColor: palette.isDark ? palette.background : Colors.white,
+          inactiveTrackColor: palette.border.withValues(alpha: 0.5),
+          inactiveThumbColor: palette.textMuted,
+        ),
+      ],
     );
   }
 

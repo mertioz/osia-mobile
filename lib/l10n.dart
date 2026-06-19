@@ -329,6 +329,17 @@ class OsiaStrings {
   final String mcpErrCommand;
   final String mcpAdd;
 
+  // ── MCP write-tool confirmation (WOR-44 Phase 5) ──
+  final String mcpConfirmTitleTemplate; // {server} {tool}
+  final String mcpConfirmWriteWarning;
+  final String mcpConfirmArgsLabel;
+  final String mcpConfirmApprove;
+  final String mcpConfirmDecline;
+  final String mcpConfirmWritesLabel;
+  final String mcpConfirmWritesSub;
+  final String mcpUnattendedWritesLabel;
+  final String mcpUnattendedWritesSub;
+
   // ── Theme names (keyed lookup via themeName) ──
   final String themeViolet;
   final String themeRose;
@@ -593,6 +604,15 @@ class OsiaStrings {
     required this.mcpErrName,
     required this.mcpErrCommand,
     required this.mcpAdd,
+    required this.mcpConfirmTitleTemplate,
+    required this.mcpConfirmWriteWarning,
+    required this.mcpConfirmArgsLabel,
+    required this.mcpConfirmApprove,
+    required this.mcpConfirmDecline,
+    required this.mcpConfirmWritesLabel,
+    required this.mcpConfirmWritesSub,
+    required this.mcpUnattendedWritesLabel,
+    required this.mcpUnattendedWritesSub,
     required this.themeViolet,
     required this.themeRose,
     required this.themeNoir,
@@ -637,6 +657,12 @@ class OsiaStrings {
   String autonomousTasks(int done, int total) => autonomousTasksTemplate
       .replaceAll('{done}', '$done')
       .replaceAll('{total}', '$total');
+
+  /// Title for the write-tool confirmation dialog (WOR-44 Phase 5):
+  /// "{server} wants to run {tool}".
+  String mcpConfirmTitle(String server, String tool) => mcpConfirmTitleTemplate
+      .replaceAll('{server}', server)
+      .replaceAll('{tool}', tool);
 
   /// Localized display name for a theme palette key.
   String themeName(String paletteKey) {
@@ -931,6 +957,18 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   mcpErrName: 'Please enter a name.',
   mcpErrCommand: 'Please enter a command.',
   mcpAdd: 'Add',
+  mcpConfirmTitleTemplate: '{server} wants to run {tool}',
+  mcpConfirmWriteWarning:
+      'This tool can create, change or delete data. Only approve actions you started and trust.',
+  mcpConfirmArgsLabel: 'Arguments',
+  mcpConfirmApprove: 'Approve',
+  mcpConfirmDecline: 'Decline',
+  mcpConfirmWritesLabel: 'Confirm write actions',
+  mcpConfirmWritesSub:
+      'Ask before a connector creates, changes or deletes anything.',
+  mcpUnattendedWritesLabel: 'Allow unattended writes',
+  mcpUnattendedWritesSub:
+      'Let write actions run with no device connected to confirm (e.g. scheduled tasks).',
   themeViolet: 'Violet',
   themeRose: 'Rose',
   themeNoir: 'Black',
@@ -1217,6 +1255,18 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   mcpErrName: 'Veuillez saisir un nom.',
   mcpErrCommand: 'Veuillez saisir une commande.',
   mcpAdd: 'Ajouter',
+  mcpConfirmTitleTemplate: '{server} veut exécuter {tool}',
+  mcpConfirmWriteWarning:
+      "Cet outil peut créer, modifier ou supprimer des données. N'approuvez que les actions que vous avez lancées et en qui vous avez confiance.",
+  mcpConfirmArgsLabel: 'Arguments',
+  mcpConfirmApprove: 'Approuver',
+  mcpConfirmDecline: 'Refuser',
+  mcpConfirmWritesLabel: "Confirmer les actions d'écriture",
+  mcpConfirmWritesSub:
+      'Demander avant qu’un connecteur crée, modifie ou supprime quelque chose.',
+  mcpUnattendedWritesLabel: 'Autoriser les écritures sans surveillance',
+  mcpUnattendedWritesSub:
+      "Laisser les actions d'écriture s'exécuter sans appareil connecté pour confirmer (ex. tâches planifiées).",
   themeViolet: 'Violet',
   themeRose: 'Rose',
   themeNoir: 'Noir',
@@ -1493,6 +1543,15 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   mcpErrName: '请输入名称。',
   mcpErrCommand: '请输入命令。',
   mcpAdd: '添加',
+  mcpConfirmTitleTemplate: '{server} 想要运行 {tool}',
+  mcpConfirmWriteWarning: '此工具可以创建、修改或删除数据。请仅批准你自己发起且信任的操作。',
+  mcpConfirmArgsLabel: '参数',
+  mcpConfirmApprove: '批准',
+  mcpConfirmDecline: '拒绝',
+  mcpConfirmWritesLabel: '确认写入操作',
+  mcpConfirmWritesSub: '在连接器创建、修改或删除任何内容前先询问。',
+  mcpUnattendedWritesLabel: '允许无人值守写入',
+  mcpUnattendedWritesSub: '在没有设备连接确认时，也允许写入操作运行（例如计划任务）。',
   themeViolet: '紫色',
   themeRose: '玫瑰',
   themeNoir: '黑色',
@@ -1770,6 +1829,15 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   mcpErrName: '名前を入力してください。',
   mcpErrCommand: 'コマンドを入力してください。',
   mcpAdd: '追加',
+  mcpConfirmTitleTemplate: '{server} が {tool} を実行しようとしています',
+  mcpConfirmWriteWarning: 'このツールはデータの作成・変更・削除を行えます。自分が開始した信頼できる操作のみ承認してください。',
+  mcpConfirmArgsLabel: '引数',
+  mcpConfirmApprove: '承認',
+  mcpConfirmDecline: '拒否',
+  mcpConfirmWritesLabel: '書き込み操作を確認する',
+  mcpConfirmWritesSub: 'コネクターが作成・変更・削除を行う前に確認します。',
+  mcpUnattendedWritesLabel: '無人での書き込みを許可',
+  mcpUnattendedWritesSub: '確認する端末が接続されていなくても書き込みを実行します（例：予約タスク）。',
   themeViolet: 'バイオレット',
   themeRose: 'ローズ',
   themeNoir: 'ブラック',
@@ -2060,6 +2128,18 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   mcpErrName: 'Bitte einen Namen eingeben.',
   mcpErrCommand: 'Bitte einen Befehl eingeben.',
   mcpAdd: 'Hinzufügen',
+  mcpConfirmTitleTemplate: '{server} möchte {tool} ausführen',
+  mcpConfirmWriteWarning:
+      'Dieses Tool kann Daten erstellen, ändern oder löschen. Bestätige nur Aktionen, die du selbst gestartet hast und denen du vertraust.',
+  mcpConfirmArgsLabel: 'Argumente',
+  mcpConfirmApprove: 'Zulassen',
+  mcpConfirmDecline: 'Ablehnen',
+  mcpConfirmWritesLabel: 'Schreibaktionen bestätigen',
+  mcpConfirmWritesSub:
+      'Nachfragen, bevor ein Connector etwas erstellt, ändert oder löscht.',
+  mcpUnattendedWritesLabel: 'Unbeaufsichtigte Schreibvorgänge erlauben',
+  mcpUnattendedWritesSub:
+      'Schreibaktionen ausführen, auch wenn kein Gerät zum Bestätigen verbunden ist (z. B. geplante Aufgaben).',
   themeViolet: 'Violett',
   themeRose: 'Rosé',
   themeNoir: 'Schwarz',
@@ -2346,6 +2426,18 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   mcpErrName: 'Introduce un nombre.',
   mcpErrCommand: 'Introduce un comando.',
   mcpAdd: 'Añadir',
+  mcpConfirmTitleTemplate: '{server} quiere ejecutar {tool}',
+  mcpConfirmWriteWarning:
+      'Esta herramienta puede crear, modificar o eliminar datos. Aprueba solo las acciones que iniciaste y en las que confías.',
+  mcpConfirmArgsLabel: 'Argumentos',
+  mcpConfirmApprove: 'Aprobar',
+  mcpConfirmDecline: 'Rechazar',
+  mcpConfirmWritesLabel: 'Confirmar acciones de escritura',
+  mcpConfirmWritesSub:
+      'Preguntar antes de que un conector cree, modifique o elimine algo.',
+  mcpUnattendedWritesLabel: 'Permitir escrituras desatendidas',
+  mcpUnattendedWritesSub:
+      'Permitir que las acciones de escritura se ejecuten sin un dispositivo conectado para confirmar (p. ej. tareas programadas).',
   themeViolet: 'Violeta',
   themeRose: 'Rosa',
   themeNoir: 'Negro',

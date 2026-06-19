@@ -628,6 +628,68 @@ class McpStatusMessage {
   }
 }
 
+/// A write-tool confirmation request (`mcp_confirm_request`, WOR-44 Phase 5).
+/// The server sends this to the originating client when a *write* MCP tool is
+/// about to run on a mobile-initiated turn, and BLOCKS the agent until the
+/// client replies with [WebSocketService.sendMcpConfirmResponse] carrying the
+/// SAME [id]. On timeout (120s) / disconnect / no-response the server denies.
+///
+/// Like [ConfigData], [McpStatusMessage] and the other standalone stream
+/// messages, this is deliberately NOT part of the sealed [OsiaMessage]
+/// hierarchy: chat_screen.dart switches over OsiaMessage exhaustively with no
+/// `default`, so adding a sealed subtype would break its compile (and CLAUDE.md
+/// forbids touching that path). It rides its own
+/// [WebSocketService.mcpConfirmStream], exactly like config/heartbeat/mcp_status.
+class McpConfirmRequest {
+  /// Correlation id — echoed back verbatim in the response so the server can
+  /// match the reply to the blocked tool call.
+  final String id;
+
+  /// MCP server (connector) the tool belongs to, for display.
+  final String server;
+
+  /// The write tool about to run, for display.
+  final String tool;
+
+  /// A human-readable, secret-free summary of the call — argument NAMES only,
+  /// never values. Coerced to a single line: the server may send a string, a
+  /// list of arg names, or a `{arg: …}` map.
+  final String summary;
+
+  const McpConfirmRequest({
+    required this.id,
+    required this.server,
+    required this.tool,
+    required this.summary,
+  });
+
+  factory McpConfirmRequest.fromJson(Map<String, dynamic> json) {
+    String coerceSummary(dynamic raw) {
+      if (raw is String) return raw;
+      if (raw is List) {
+        return raw
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty)
+            .join(', ');
+      }
+      if (raw is Map) {
+        return raw.keys
+            .map((k) => k.toString())
+            .where((s) => s.isNotEmpty)
+            .join(', ');
+      }
+      return raw?.toString() ?? '';
+    }
+
+    return McpConfirmRequest(
+      id: (json['id'] ?? '').toString(),
+      server: (json['server'] ?? '').toString(),
+      tool: (json['tool'] ?? '').toString(),
+      summary: coerceSummary(json['summary']),
+    );
+  }
+}
+
 // ── WebSocket service ─────────────────────────────────────────────────────
 
 /// Manages the WebSocket connection to the OSIA PC server.
@@ -693,6 +755,9 @@ class WebSocketService {
 
   final StreamController<McpStatusMessage> _mcpStatusCtrl =
       StreamController<McpStatusMessage>.broadcast();
+
+  final StreamController<McpConfirmRequest> _mcpConfirmCtrl =
+      StreamController<McpConfirmRequest>.broadcast();
 
   // ── Per-conversation stream buffers (WOR-53) ──────────────────────────
   //
@@ -773,6 +838,13 @@ class WebSocketService {
   /// changing server; a `mcp_status` request reply carries the full set), so
   /// listeners merge events into their local view.
   Stream<McpStatusMessage> get mcpStatusStream => _mcpStatusCtrl.stream;
+
+  /// Stream of write-tool confirmation requests (`mcp_confirm_request`, WOR-44
+  /// Phase 5). Kept off [messageStream] for the same reason as [configStream].
+  /// Each event MUST be answered with [sendMcpConfirmResponse] (matching its
+  /// id); the server blocks the agent until then, and denies on timeout (120s)
+  /// / disconnect.
+  Stream<McpConfirmRequest> get mcpConfirmStream => _mcpConfirmCtrl.stream;
 
   /// Stream of per-conversation streamed-reply events (`response_chunk` /
   /// `response` / terminal `status`, WOR-53). Kept off [messageStream] for the
@@ -1118,6 +1190,14 @@ class WebSocketService {
     });
   }
 
+  /// Answer a write-tool confirmation request (`mcp_confirm_request`, WOR-44
+  /// Phase 5): reply `{"type":"mcp_confirm_response","id":id,"approved":...}`
+  /// with the SAME [id] the request carried. The server unblocks the agent and
+  /// either runs the tool ([approved] true) or denies it ([approved] false).
+  void sendMcpConfirmResponse(String id, bool approved) {
+    _send({'type': 'mcp_confirm_response', 'id': id, 'approved': approved});
+  }
+
   /// Persist the personality document (`~/.osia/personality.md`) on the PC.
   void sendSetPersonality(String text) {
     _send({'type': 'set_personality', 'text': text});
@@ -1176,6 +1256,7 @@ class WebSocketService {
     _conversationsListCtrl.close();
     _autonomousCtrl.close();
     _mcpStatusCtrl.close();
+    _mcpConfirmCtrl.close();
     _convStreamCtrl.close();
     _streamBuffers.clear();
     _pendingConvs.clear();
@@ -1615,6 +1696,16 @@ class WebSocketService {
           // response-chunk streaming, exactly like config/heartbeat.
           final st = McpStatusMessage.fromJson(json);
           if (!_mcpStatusCtrl.isClosed) _mcpStatusCtrl.add(st);
+        case 'mcp_confirm_request':
+          // A write-tool confirmation gate (WOR-44 Phase 5). Delivered on its
+          // own [mcpConfirmStream] (NOT the paced message queue) so it can't
+          // disturb response-chunk streaming, exactly like mcp_status. The UI
+          // MUST answer via [sendMcpConfirmResponse] with the same id — the
+          // server blocks the agent until then and denies on timeout/disconnect.
+          final req = McpConfirmRequest.fromJson(json);
+          if (req.id.isNotEmpty && !_mcpConfirmCtrl.isClosed) {
+            _mcpConfirmCtrl.add(req);
+          }
         default:
           debugPrint(
               '[OSIA WS] unhandled message type="$type" keys=${json.keys.toList()}');
