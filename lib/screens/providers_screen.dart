@@ -5596,7 +5596,7 @@ class _McpStatusPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(4),
         border: Border.all(color: fg.withValues(alpha: 0.35)),
       ),
       child: Row(
