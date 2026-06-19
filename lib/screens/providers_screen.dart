@@ -4801,19 +4801,20 @@ class _McpConnector {
     this.custom = false,
   });
 
-  /// Only stdio + non-OAuth connectors can be connected today (parity with the
-  /// PC's SUPPORTED_TRANSPORTS=('stdio',) gate). Everything else shows "soon".
-  bool get connectable => transport == 'stdio' && authType != 'oauth';
+  /// Token-auth connectors (stdio OR streamable-HTTP) can be connected today —
+  /// the server now supports the streamable-HTTP transport (e.g. Notion). Only
+  /// OAuth connectors remain gated and show "soon".
+  bool get connectable => authType != 'oauth';
 
   /// A connectable connector that authenticates with a token in [tokenEnv].
   bool get needsToken => connectable && authType == 'token';
 }
 
 /// The preconfigured catalog — parity with the PC `_MCP_CATALOG`. GitHub and
-/// Slack are stdio/token (connectable now); Notion is HTTP-token and
-/// Linear/Google Drive/Gmail are OAuth (all shown disabled "soon"). Filesystem
-/// and Brave Search are intentionally absent (each duplicates a native OSIA
-/// capability).
+/// Slack are stdio/token and Notion is streamable-HTTP/token (all connectable
+/// now); Linear/Google Drive/Gmail are OAuth (shown disabled "soon").
+/// Filesystem and Brave Search are intentionally absent (each duplicates a
+/// native OSIA capability).
 const List<_McpConnector> _mcpCatalog = [
   _McpConnector(
     id: 'github',
