@@ -321,6 +321,22 @@ Map<String, List<String>> _readFallbacks(Object? raw) {
   return out;
 }
 
+/// Coerce the server's `mcp_tokens` blob (`{id: rawtoken}`, shipped in the
+/// config snapshot for token-auth connectors only — OAuth excluded) into a
+/// typed map. Tolerates nulls and unexpected shapes; drops empty tokens.
+Map<String, String> _readMcpTokens(Object? raw) {
+  final out = <String, String>{};
+  if (raw is Map) {
+    raw.forEach((key, value) {
+      if (value != null) {
+        final s = value.toString();
+        if (s.isNotEmpty) out[key.toString()] = s;
+      }
+    });
+  }
+  return out;
+}
+
 // ── Landing screen: the four categories ─────────────────────────────────
 
 class ProvidersScreen extends StatefulWidget {
@@ -4908,6 +4924,14 @@ class _McpScreenState extends State<_McpScreen> {
   /// token field. Seeded from the parent, refreshed on api-keys pushes.
   late Map<String, String> _apiKeys;
 
+  /// Real token strings per connector (`<id>` → token), shipped in the config
+  /// snapshot under `mcp_tokens` (token-auth connectors only — OAuth excluded).
+  /// The primary pre-fill source for the token field. The map is refreshed on
+  /// every config push, and freshly-arrived tokens are applied to any empty
+  /// token field. `get_api_keys` does not return `mcp:` entries, so this is how
+  /// the real token reaches the screen.
+  late Map<String, String> _mcpTokens;
+
   /// Which providers have a key set on the PC (`mcp:<id>` → bool).
   late Map<String, bool> _apiKeysSet;
 
@@ -4943,6 +4967,7 @@ class _McpScreenState extends State<_McpScreen> {
     super.initState();
     _servers = _readServers(widget.config);
     _apiKeys = Map<String, String>.from(widget.apiKeys);
+    _mcpTokens = _readMcpTokens(widget.config.settings['mcp_tokens']);
     _apiKeysSet = Map<String, bool>.from(widget.config.apiKeysSet);
     _confirmWrites =
         _readBool(widget.config.settings['mcp_confirm_writes'], true);
@@ -4955,6 +4980,18 @@ class _McpScreenState extends State<_McpScreen> {
       if (!mounted) return;
       setState(() {
         _servers = _readServers(cfg);
+        _mcpTokens = _readMcpTokens(cfg.settings['mcp_tokens']);
+        // Token controllers are created lazily (putIfAbsent), so a token that
+        // lands AFTER a panel was first built (e.g. set on the PC while this
+        // screen is open) would otherwise never reach its field. Push the fresh
+        // value into any already-built controller that is still empty — never
+        // overwrite text the user has typed.
+        _mcpTokens.forEach((id, token) {
+          final ctrl = _tokenCtrls[id];
+          if (ctrl != null && ctrl.text.isEmpty && token.isNotEmpty) {
+            ctrl.text = token;
+          }
+        });
         _apiKeysSet = Map<String, bool>.from(cfg.apiKeysSet);
         _confirmWrites = _readBool(cfg.settings['mcp_confirm_writes'], true);
         _allowUnattended =
@@ -5037,7 +5074,8 @@ class _McpScreenState extends State<_McpScreen> {
   TextEditingController _tokenCtrlFor(_McpConnector c) {
     return _tokenCtrls.putIfAbsent(
       c.id,
-      () => TextEditingController(text: _apiKeys['mcp:${c.id}'] ?? ''),
+      () => TextEditingController(
+          text: _mcpTokens[c.id] ?? _apiKeys['mcp:${c.id}'] ?? ''),
     );
   }
 
@@ -5053,7 +5091,9 @@ class _McpScreenState extends State<_McpScreen> {
   String _statusOf(String id) => _statuses[id]?.status ?? 'disconnected';
 
   bool _configured(String id) =>
-      (_apiKeys['mcp:$id'] ?? '').isNotEmpty || _apiKeysSet['mcp:$id'] == true;
+      (_mcpTokens[id] ?? '').isNotEmpty ||
+      (_apiKeys['mcp:$id'] ?? '').isNotEmpty ||
+      _apiKeysSet['mcp:$id'] == true;
 
   String _descFor(OsiaStrings s, _McpConnector c) {
     switch (c.descField) {
@@ -5290,6 +5330,16 @@ class _McpScreenState extends State<_McpScreen> {
     setState(() {});
   }
 
+  /// Copy the real token to the clipboard (the underlying value, never the
+  /// masked display) and confirm with a brief SnackBar.
+  Future<void> _copyToken(String token) async {
+    await Clipboard.setData(ClipboardData(text: token));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(OsiaL10n.of(context).mcpTokenCopied)),
+    );
+  }
+
   // ── Build ──
 
   @override
@@ -5516,9 +5566,15 @@ class _McpScreenState extends State<_McpScreen> {
         ));
       }
     } else {
-      // OAuth / HTTP — disabled "soon" button, no input fields.
+      // OAuth is the only non-connectable case today: the mobile can't initiate
+      // the OAuth flow, so point the user to the desktop. The status pill above
+      // already mirrors the PC-side connection (Phase 1), so it updates here
+      // once the user connects on the PC. (`_soonButton` is kept for any future
+      // non-OAuth gated transport.)
       children.add(const SizedBox(height: 18));
-      children.add(_soonButton(palette, strings, c));
+      children.add(c.authType == 'oauth'
+          ? _connectOnPcTile(palette, strings, c)
+          : _soonButton(palette, strings, c));
     }
 
     return _OsiaCard(
@@ -5586,6 +5642,13 @@ class _McpScreenState extends State<_McpScreen> {
           suffixIcon: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (ctrl.text.trim().isNotEmpty)
+                IconButton(
+                  tooltip: strings.mcpCopyToken,
+                  onPressed: () => _copyToken(ctrl.text.trim()),
+                  icon: Icon(Icons.copy_rounded,
+                      size: 18, color: palette.textMuted),
+                ),
               IconButton(
                 tooltip:
                     _obscureToken ? strings.showApiKey : strings.hideApiKey,
@@ -5635,6 +5698,52 @@ class _McpScreenState extends State<_McpScreen> {
           textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         ),
         child: Text(connected ? strings.mcpDisconnect : strings.mcpConnect),
+      ),
+    );
+  }
+
+  /// Informational tile shown for OAuth connectors: the OAuth sign-in must be
+  /// done on the desktop app; the status pill mirrors the result here. Purely
+  /// informational — no action, no WS message.
+  Widget _connectOnPcTile(
+      OsiaPalette palette, OsiaStrings strings, _McpConnector c) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      decoration: BoxDecoration(
+        color: palette.surfaceElevated,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: palette.border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.desktop_windows_rounded, size: 20, color: palette.accent),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  strings.mcpOauthConnectOnPc,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: palette.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  strings.mcpOauthConnectOnPcHint,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: palette.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

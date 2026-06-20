@@ -303,6 +303,10 @@ class OsiaStrings {
   final String mcpStatusFailed;
   final String mcpOauthSoon;
   final String mcpHttpSoon;
+  final String mcpOauthConnectOnPc;
+  final String mcpOauthConnectOnPcHint;
+  final String mcpCopyToken;
+  final String mcpTokenCopied;
   final String mcpTokenLabel;
   final String mcpTokenHint;
   final String mcpSlackTeam;
@@ -579,6 +583,10 @@ class OsiaStrings {
     required this.mcpStatusFailed,
     required this.mcpOauthSoon,
     required this.mcpHttpSoon,
+    required this.mcpOauthConnectOnPc,
+    required this.mcpOauthConnectOnPcHint,
+    required this.mcpCopyToken,
+    required this.mcpTokenCopied,
     required this.mcpTokenLabel,
     required this.mcpTokenHint,
     required this.mcpSlackTeam,
@@ -931,6 +939,11 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   mcpStatusFailed: 'Failed',
   mcpOauthSoon: 'OAuth — soon',
   mcpHttpSoon: 'HTTP — soon',
+  mcpOauthConnectOnPc: 'Connect on PC',
+  mcpOauthConnectOnPcHint:
+      'OAuth sign-in happens in the desktop app; the status updates here once connected.',
+  mcpCopyToken: 'Copy token',
+  mcpTokenCopied: 'Token copied',
   mcpTokenLabel: 'API token / key',
   mcpTokenHint: 'Paste token (stored locally, never synced)…',
   mcpSlackTeam: 'Slack team ID',
@@ -1229,6 +1242,11 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   mcpStatusFailed: 'Échec',
   mcpOauthSoon: 'OAuth — bientôt',
   mcpHttpSoon: 'HTTP — bientôt',
+  mcpOauthConnectOnPc: 'Connecter sur PC',
+  mcpOauthConnectOnPcHint:
+      "La connexion OAuth se fait dans l'application de bureau ; le statut se met à jour ici une fois connecté.",
+  mcpCopyToken: 'Copier le jeton',
+  mcpTokenCopied: 'Jeton copié',
   mcpTokenLabel: "Jeton / clé d'API",
   mcpTokenHint: 'Collez le jeton (stocké en local, jamais synchronisé)…',
   mcpSlackTeam: "ID d'équipe Slack",
@@ -1518,6 +1536,10 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   mcpStatusFailed: '失败',
   mcpOauthSoon: 'OAuth — 即将推出',
   mcpHttpSoon: 'HTTP — 即将推出',
+  mcpOauthConnectOnPc: '在电脑上连接',
+  mcpOauthConnectOnPcHint: 'OAuth 登录在桌面应用中完成；连接后此处的状态会自动更新。',
+  mcpCopyToken: '复制令牌',
+  mcpTokenCopied: '已复制令牌',
   mcpTokenLabel: 'API 令牌 / 密钥',
   mcpTokenHint: '粘贴令牌（本地存储，不会同步）…',
   mcpSlackTeam: 'Slack 团队 ID',
@@ -1803,6 +1825,10 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   mcpStatusFailed: '失敗',
   mcpOauthSoon: 'OAuth — 近日対応',
   mcpHttpSoon: 'HTTP — 近日対応',
+  mcpOauthConnectOnPc: 'PCで接続',
+  mcpOauthConnectOnPcHint: 'OAuth サインインはデスクトップアプリで行います。接続が完了すると、ここのステータスが更新されます。',
+  mcpCopyToken: 'トークンをコピー',
+  mcpTokenCopied: 'トークンをコピーしました',
   mcpTokenLabel: 'API トークン / キー',
   mcpTokenHint: 'トークンを貼り付け（ローカル保存、同期されません）…',
   mcpSlackTeam: 'Slack チーム ID',
@@ -2102,6 +2128,11 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   mcpStatusFailed: 'Fehlgeschlagen',
   mcpOauthSoon: 'OAuth — bald',
   mcpHttpSoon: 'HTTP — bald',
+  mcpOauthConnectOnPc: 'Am PC verbinden',
+  mcpOauthConnectOnPcHint:
+      'Die OAuth-Anmeldung erfolgt in der Desktop-App; der Status wird hier nach dem Verbinden aktualisiert.',
+  mcpCopyToken: 'Token kopieren',
+  mcpTokenCopied: 'Token kopiert',
   mcpTokenLabel: 'API-Token / -Schlüssel',
   mcpTokenHint: 'Token einfügen (lokal gespeichert, nie synchronisiert)…',
   mcpSlackTeam: 'Slack-Team-ID',
@@ -2400,6 +2431,11 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   mcpStatusFailed: 'Error',
   mcpOauthSoon: 'OAuth — pronto',
   mcpHttpSoon: 'HTTP — pronto',
+  mcpOauthConnectOnPc: 'Conectar en el PC',
+  mcpOauthConnectOnPcHint:
+      'El inicio de sesión con OAuth se realiza en la aplicación de escritorio; el estado se actualiza aquí una vez conectado.',
+  mcpCopyToken: 'Copiar token',
+  mcpTokenCopied: 'Token copiado',
   mcpTokenLabel: 'Token / clave de API',
   mcpTokenHint: 'Pega el token (se guarda localmente, nunca se sincroniza)…',
   mcpSlackTeam: 'ID de equipo de Slack',
