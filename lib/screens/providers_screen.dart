@@ -5253,6 +5253,21 @@ class _McpScreenState extends State<_McpScreen> {
     }
   }
 
+  /// Cancel an in-flight OAuth connect (WOR-97): send `mcp_oauth_cancel{id}`.
+  /// Server-side this is a no-op unless the connector is `connecting`; it
+  /// carries no secret and leaves the saved `enabled` flag untouched. We flip
+  /// the pill optimistically to `disconnected` and clear [_pendingOauthId] so a
+  /// late `mcp_oauth_url` won't auto-open the browser after cancel. The
+  /// authoritative `disconnected` arrives via the `mcp_status` broadcast
+  /// (mirrors [_disconnect]).
+  void _cancelOauth(_McpConnector c) {
+    widget.wsService.sendMcpOauthCancel(c.id);
+    if (_pendingOauthId == c.id) _pendingOauthId = null;
+    setState(() =>
+        _statuses[c.id] = const ws.McpServerStatus(status: 'disconnected'));
+    widget.wsService.sendGetConfig();
+  }
+
   /// Open the OAuth authorization [url] in an external browser / Custom Tab.
   /// The phone does NOT capture the callback — the PC does, via the tunnel —
   /// so an external launch (not an in-app web-auth session) is all we need.
@@ -5785,6 +5800,7 @@ class _McpScreenState extends State<_McpScreen> {
   Widget _oauthActions(OsiaPalette palette, OsiaStrings strings, _McpConnector c,
       String status) {
     final connected = status == 'connected';
+    final connecting = status == 'connecting';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -5837,6 +5853,20 @@ class _McpScreenState extends State<_McpScreen> {
                 ),
               ),
             ],
+          ),
+        ],
+        // WOR-97: while the OAuth handshake is in flight, offer an explicit
+        // "stop waiting" affordance. Tapping it sends `mcp_oauth_cancel` and
+        // clears the pending-url guard; the Connect button above still doubles
+        // as re-tap (server cancels the zombie and re-issues a fresh URL).
+        if (connecting) ...[
+          const SizedBox(height: 4),
+          TextButton(
+            onPressed: () => _cancelOauth(c),
+            child: Text(
+              strings.mcpCancel,
+              style: TextStyle(color: palette.textMuted, fontSize: 13.5),
+            ),
           ),
         ],
       ],

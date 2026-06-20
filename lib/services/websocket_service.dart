@@ -1203,6 +1203,17 @@ class WebSocketService {
     _send({'type': 'mcp_disconnect', 'id': id});
   }
 
+  /// Cancel an in-flight OAuth connect for the MCP connector [id] (WOR-97):
+  /// `{"type":"mcp_oauth_cancel","id":id}`. The server acks `status: done`,
+  /// then broadcasts a `disconnected` `mcp_status` on [mcpStatusStream]. It is
+  /// a no-op unless the connector is currently `connecting`, carries no secret,
+  /// and does NOT change the saved `enabled` flag. (Distinct from
+  /// [sendMcpDisconnect] / [sendMcpSignOut], which tear down a live connection
+  /// and/or revoke the stored token.)
+  void sendMcpOauthCancel(String id) {
+    _send({'type': 'mcp_oauth_cancel', 'id': id});
+  }
+
   /// Sign out of an OAuth MCP connector [id] (WOR-96 PART 2b): disconnect AND
   /// revoke the stored token (`{"type":"mcp_disconnect","id":id,"revoke":true}`).
   /// With [forgetClient] true the server also forgets the OAuth client

@@ -299,6 +299,7 @@ class OsiaStrings {
   final String mcpDisconnect;
   final String mcpSignOut;
   final String mcpSwitchAccount;
+  final String mcpCancel;
   final String mcpOpeningBrowser;
   final String mcpStatusConnected;
   final String mcpStatusConnecting;
@@ -582,6 +583,7 @@ class OsiaStrings {
     required this.mcpDisconnect,
     required this.mcpSignOut,
     required this.mcpSwitchAccount,
+    required this.mcpCancel,
     required this.mcpOpeningBrowser,
     required this.mcpStatusConnected,
     required this.mcpStatusConnecting,
@@ -941,6 +943,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   mcpDisconnect: 'Disconnect',
   mcpSignOut: 'Sign out',
   mcpSwitchAccount: 'Switch account',
+  mcpCancel: 'Cancel',
   mcpOpeningBrowser: 'Opening browser…',
   mcpStatusConnected: 'Connected',
   mcpStatusConnecting: 'Connecting…',
@@ -1247,6 +1250,7 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   mcpDisconnect: 'Déconnecter',
   mcpSignOut: 'Se déconnecter',
   mcpSwitchAccount: 'Changer de compte',
+  mcpCancel: 'Annuler',
   mcpOpeningBrowser: 'Ouverture du navigateur…',
   mcpStatusConnected: 'Connecté',
   mcpStatusConnecting: 'Connexion…',
@@ -1544,6 +1548,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   mcpDisconnect: '断开',
   mcpSignOut: '退出登录',
   mcpSwitchAccount: '切换账户',
+  mcpCancel: '取消',
   mcpOpeningBrowser: '正在打开浏览器…',
   mcpStatusConnected: '已连接',
   mcpStatusConnecting: '连接中…',
@@ -1836,6 +1841,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   mcpDisconnect: '切断',
   mcpSignOut: 'サインアウト',
   mcpSwitchAccount: 'アカウントを切り替え',
+  mcpCancel: 'キャンセル',
   mcpOpeningBrowser: 'ブラウザを開いています…',
   mcpStatusConnected: '接続済み',
   mcpStatusConnecting: '接続中…',
@@ -2142,6 +2148,7 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   mcpDisconnect: 'Trennen',
   mcpSignOut: 'Abmelden',
   mcpSwitchAccount: 'Konto wechseln',
+  mcpCancel: 'Abbrechen',
   mcpOpeningBrowser: 'Browser wird geöffnet…',
   mcpStatusConnected: 'Verbunden',
   mcpStatusConnecting: 'Verbinde…',
@@ -2448,6 +2455,7 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   mcpDisconnect: 'Desconectar',
   mcpSignOut: 'Cerrar sesión',
   mcpSwitchAccount: 'Cambiar de cuenta',
+  mcpCancel: 'Cancelar',
   mcpOpeningBrowser: 'Abriendo el navegador…',
   mcpStatusConnected: 'Conectado',
   mcpStatusConnecting: 'Conectando…',
