@@ -628,6 +628,19 @@ class McpStatusMessage {
   }
 }
 
+/// An OAuth authorization URL for an MCP connector (`mcp_oauth_url`, WOR-96
+/// PART 2b). The server sends this to the requesting connection ONLY (never
+/// broadcast) after an `mcp_connect` on an OAuth connector, carrying the
+/// connector [id] and the provider authorization [url]. The URL is public (no
+/// secret) — safe to open in an external browser. Delivered on its own
+/// [WebSocketService.mcpOauthUrlStream], NOT through the sealed [OsiaMessage]
+/// hierarchy, exactly like `mcp_status` / `config`.
+class McpOauthUrl {
+  final String id;
+  final String url;
+  const McpOauthUrl({required this.id, required this.url});
+}
+
 /// A write-tool confirmation request (`mcp_confirm_request`, WOR-44 Phase 5).
 /// The server sends this to the originating client when a *write* MCP tool is
 /// about to run on a mobile-initiated turn, and BLOCKS the agent until the
@@ -759,6 +772,9 @@ class WebSocketService {
   final StreamController<McpConfirmRequest> _mcpConfirmCtrl =
       StreamController<McpConfirmRequest>.broadcast();
 
+  final StreamController<McpOauthUrl> _mcpOauthUrlCtrl =
+      StreamController<McpOauthUrl>.broadcast();
+
   // ── Per-conversation stream buffers (WOR-53) ──────────────────────────
   //
   // A parallel sink to the paced [messageStream]: every streamed
@@ -845,6 +861,13 @@ class WebSocketService {
   /// id); the server blocks the agent until then, and denies on timeout (120s)
   /// / disconnect.
   Stream<McpConfirmRequest> get mcpConfirmStream => _mcpConfirmCtrl.stream;
+
+  /// Stream of OAuth authorization URLs (`mcp_oauth_url`, WOR-96 PART 2b).
+  /// Kept off [messageStream] for the same reason as [configStream] — and so
+  /// it never reaches the sealed [OsiaMessage] switch. Each event carries the
+  /// connector id and the (public) provider auth URL; the UI opens it in an
+  /// external browser. Completion is observed via [mcpStatusStream], not here.
+  Stream<McpOauthUrl> get mcpOauthUrlStream => _mcpOauthUrlCtrl.stream;
 
   /// Stream of per-conversation streamed-reply events (`response_chunk` /
   /// `response` / terminal `status`, WOR-53). Kept off [messageStream] for the
@@ -1180,6 +1203,22 @@ class WebSocketService {
     _send({'type': 'mcp_disconnect', 'id': id});
   }
 
+  /// Sign out of an OAuth MCP connector [id] (WOR-96 PART 2b): disconnect AND
+  /// revoke the stored token (`{"type":"mcp_disconnect","id":id,"revoke":true}`).
+  /// With [forgetClient] true the server also forgets the OAuth client
+  /// registration (`"forget_client":true`) so a re-connect can pick a different
+  /// account ("switch account"). The resolved status arrives on
+  /// [mcpStatusStream]. (Plain disconnect — keep the token — uses
+  /// [sendMcpDisconnect] instead.)
+  void sendMcpSignOut(String id, {bool forgetClient = false}) {
+    _send({
+      'type': 'mcp_disconnect',
+      'id': id,
+      'revoke': true,
+      if (forgetClient) 'forget_client': true,
+    });
+  }
+
   /// Ask the PC for current MCP connector status. With [id] null the reply
   /// reports every known server; otherwise just that one. The reply arrives on
   /// [mcpStatusStream] as an [McpStatusMessage].
@@ -1257,6 +1296,7 @@ class WebSocketService {
     _autonomousCtrl.close();
     _mcpStatusCtrl.close();
     _mcpConfirmCtrl.close();
+    _mcpOauthUrlCtrl.close();
     _convStreamCtrl.close();
     _streamBuffers.clear();
     _pendingConvs.clear();
@@ -1705,6 +1745,21 @@ class WebSocketService {
           final req = McpConfirmRequest.fromJson(json);
           if (req.id.isNotEmpty && !_mcpConfirmCtrl.isClosed) {
             _mcpConfirmCtrl.add(req);
+          }
+        case 'mcp_oauth_url':
+          // OAuth authorization URL for an MCP connector (WOR-96 PART 2b).
+          // Sent to the requesting connection ONLY (not broadcast). Delivered
+          // on its own [mcpOauthUrlStream] — exactly like mcp_status/config,
+          // never via _emit, so it never touches the sealed OsiaMessage switch.
+          // The URL is public (no secret); safe to open in a browser.
+          final oid = json['id']?.toString();
+          final ourl = json['url']?.toString();
+          if (oid != null &&
+              oid.isNotEmpty &&
+              ourl != null &&
+              ourl.isNotEmpty &&
+              !_mcpOauthUrlCtrl.isClosed) {
+            _mcpOauthUrlCtrl.add(McpOauthUrl(id: oid, url: ourl));
           }
         default:
           debugPrint(

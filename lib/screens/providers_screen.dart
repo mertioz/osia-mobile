@@ -4961,6 +4961,12 @@ class _McpScreenState extends State<_McpScreen> {
   StreamSubscription<ws.ConfigData>? _configSub;
   StreamSubscription<ws.ApiKeysMessage>? _apiKeysSub;
   StreamSubscription<ws.McpStatusMessage>? _statusSub;
+  StreamSubscription<ws.McpOauthUrl>? _oauthSub;
+
+  /// The OAuth connector the user just tapped Connect on (WOR-96 PART 2b) — so
+  /// the arriving `mcp_oauth_url` (which carries the same id) opens the browser
+  /// for THIS tap, and a stale / non-matching id is ignored.
+  String? _pendingOauthId;
 
   @override
   void initState() {
@@ -5007,6 +5013,14 @@ class _McpScreenState extends State<_McpScreen> {
       // full set — so a single-server broadcast can't wipe the others.
       setState(() => _statuses.addAll(msg.servers));
     });
+    _oauthSub = widget.wsService.mcpOauthUrlStream.listen((evt) {
+      if (!mounted) return;
+      // Correlate by id: only open the browser for the connector the user just
+      // tapped Connect on; ignore a stale / non-matching id.
+      if (evt.id != _pendingOauthId) return;
+      _pendingOauthId = null;
+      _openOauthUrl(evt.url);
+    });
 
     // Pull live status for every server so the pills reflect reality on open.
     widget.wsService.sendMcpStatus();
@@ -5017,6 +5031,7 @@ class _McpScreenState extends State<_McpScreen> {
     _configSub?.cancel();
     _apiKeysSub?.cancel();
     _statusSub?.cancel();
+    _oauthSub?.cancel();
     for (final c in _tokenCtrls.values) {
       c.dispose();
     }
@@ -5220,6 +5235,66 @@ class _McpScreenState extends State<_McpScreen> {
     } else {
       _connect(c);
     }
+  }
+
+  /// OAuth connectors (WOR-96 PART 2b). Connect reuses the existing send path:
+  /// `_connect` sends `mcp_connect{id}`, the server drives the tunnel OAuth
+  /// flow and replies with a standalone `mcp_oauth_url` on [mcpOauthUrlStream]
+  /// — which [_openOauthUrl] opens in an external browser. The PC captures the
+  /// callback via the tunnel; completion flips the pill via the `mcp_status`
+  /// broadcast. Disconnect is the plain, silent path (`mcp_disconnect{id}`,
+  /// token kept) — sign-out / switch-account revoke instead.
+  void _toggleOauth(_McpConnector c) {
+    if (_statusOf(c.id) == 'connected') {
+      _disconnect(c);
+    } else {
+      _pendingOauthId = c.id;
+      _connect(c);
+    }
+  }
+
+  /// Open the OAuth authorization [url] in an external browser / Custom Tab.
+  /// The phone does NOT capture the callback — the PC does, via the tunnel —
+  /// so an external launch (not an in-app web-auth session) is all we need.
+  Future<void> _openOauthUrl(String url) async {
+    var opened = false;
+    try {
+      opened = await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      opened = false;
+    }
+    if (!mounted) return;
+    final strings = OsiaL10n.of(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content:
+            Text(opened ? strings.mcpOpeningBrowser : strings.linkOpenFailed),
+      ),
+    );
+  }
+
+  /// Sign out of an OAuth connector: revoke the stored token
+  /// (`mcp_disconnect{id,revoke:true}`). Optimistic pill, then reconciled by
+  /// the config / `mcp_status` pushes — mirrors [_disconnect].
+  void _signOutOauth(_McpConnector c) {
+    widget.wsService.sendMcpSignOut(c.id);
+    setState(() =>
+        _statuses[c.id] = const ws.McpServerStatus(status: 'disconnected'));
+    widget.wsService.sendGetConfig();
+  }
+
+  /// Switch account on an OAuth connector: revoke AND forget the client
+  /// (`mcp_disconnect{id,revoke:true,forget_client:true}`) so a re-connect can
+  /// pick a different account. (A sticky browser SSO cookie can still re-pick
+  /// the same account unless the provider shows an account chooser.)
+  void _switchOauthAccount(_McpConnector c) {
+    widget.wsService.sendMcpSignOut(c.id, forgetClient: true);
+    setState(() =>
+        _statuses[c.id] = const ws.McpServerStatus(status: 'disconnected'));
+    widget.wsService.sendGetConfig();
   }
 
   Future<void> _removeCustom(_McpConnector c) async {
@@ -5566,14 +5641,14 @@ class _McpScreenState extends State<_McpScreen> {
         ));
       }
     } else {
-      // OAuth is the only non-connectable case today: the mobile can't initiate
-      // the OAuth flow, so point the user to the desktop. The status pill above
-      // already mirrors the PC-side connection (Phase 1), so it updates here
-      // once the user connects on the PC. (`_soonButton` is kept for any future
-      // non-OAuth gated transport.)
+      // OAuth connectors (WOR-96 PART 2b): tapping Connect sends `mcp_connect`
+      // and the server drives the tunnel OAuth flow, replying with the auth URL
+      // we open in a browser; the PC captures the callback and the status pill
+      // flips via the `mcp_status` broadcast. (`_soonButton` is kept for any
+      // future non-OAuth gated transport.)
       children.add(const SizedBox(height: 18));
       children.add(c.authType == 'oauth'
-          ? _connectOnPcTile(palette, strings, c)
+          ? _oauthActions(palette, strings, c, status)
           : _soonButton(palette, strings, c));
     }
 
@@ -5702,49 +5777,69 @@ class _McpScreenState extends State<_McpScreen> {
     );
   }
 
-  /// Informational tile shown for OAuth connectors: the OAuth sign-in must be
-  /// done on the desktop app; the status pill mirrors the result here. Purely
-  /// informational — no action, no WS message.
-  Widget _connectOnPcTile(
-      OsiaPalette palette, OsiaStrings strings, _McpConnector c) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      decoration: BoxDecoration(
-        color: palette.surfaceElevated,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: palette.border),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.desktop_windows_rounded, size: 20, color: palette.accent),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  strings.mcpOauthConnectOnPc,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: palette.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  strings.mcpOauthConnectOnPcHint,
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.4,
-                    color: palette.textMuted,
-                  ),
-                ),
-              ],
+  /// OAuth connector actions (WOR-96 PART 2b): a Connect/Disconnect toggle plus
+  /// — when connected — a Sign-out / Switch-account row. Unlike [_actionButton]
+  /// there is NO token precondition (OAuth has no token field), so Connect is
+  /// always enabled; the provider's own sign-in page gates access. The toggle
+  /// mirrors the non-OAuth one ([_actionButton]) for visual parity.
+  Widget _oauthActions(OsiaPalette palette, OsiaStrings strings, _McpConnector c,
+      String status) {
+    final connected = status == 'connected';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: 50,
+          child: ElevatedButton(
+            onPressed: () => _toggleOauth(c),
+            style: ElevatedButton.styleFrom(
+              backgroundColor:
+                  connected ? palette.surfaceElevated : palette.accent,
+              foregroundColor: connected
+                  ? palette.textPrimary
+                  : (palette.isDark ? palette.background : Colors.white),
+              elevation: 0,
+              side: connected
+                  ? BorderSide(color: palette.border)
+                  : BorderSide.none,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+              textStyle:
+                  const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
             ),
+            child:
+                Text(connected ? strings.mcpDisconnect : strings.mcpConnect),
+          ),
+        ),
+        if (connected) ...[
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: TextButton(
+                  onPressed: () => _signOutOauth(c),
+                  child: Text(
+                    strings.mcpSignOut,
+                    style:
+                        TextStyle(color: palette.textMuted, fontSize: 13.5),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: TextButton(
+                  onPressed: () => _switchOauthAccount(c),
+                  child: Text(
+                    strings.mcpSwitchAccount,
+                    textAlign: TextAlign.center,
+                    style:
+                        TextStyle(color: palette.textMuted, fontSize: 13.5),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
-      ),
+      ],
     );
   }
 

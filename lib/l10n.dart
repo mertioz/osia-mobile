@@ -297,6 +297,9 @@ class OsiaStrings {
   final String connectorLabel;
   final String mcpConnect;
   final String mcpDisconnect;
+  final String mcpSignOut;
+  final String mcpSwitchAccount;
+  final String mcpOpeningBrowser;
   final String mcpStatusConnected;
   final String mcpStatusConnecting;
   final String mcpStatusDisconnected;
@@ -577,6 +580,9 @@ class OsiaStrings {
     required this.connectorLabel,
     required this.mcpConnect,
     required this.mcpDisconnect,
+    required this.mcpSignOut,
+    required this.mcpSwitchAccount,
+    required this.mcpOpeningBrowser,
     required this.mcpStatusConnected,
     required this.mcpStatusConnecting,
     required this.mcpStatusDisconnected,
@@ -933,6 +939,9 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   connectorLabel: 'Connector',
   mcpConnect: 'Connect',
   mcpDisconnect: 'Disconnect',
+  mcpSignOut: 'Sign out',
+  mcpSwitchAccount: 'Switch account',
+  mcpOpeningBrowser: 'Opening browser…',
   mcpStatusConnected: 'Connected',
   mcpStatusConnecting: 'Connecting…',
   mcpStatusDisconnected: 'Disconnected',
@@ -1236,6 +1245,9 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   connectorLabel: 'Connecteur',
   mcpConnect: 'Connecter',
   mcpDisconnect: 'Déconnecter',
+  mcpSignOut: 'Se déconnecter',
+  mcpSwitchAccount: 'Changer de compte',
+  mcpOpeningBrowser: 'Ouverture du navigateur…',
   mcpStatusConnected: 'Connecté',
   mcpStatusConnecting: 'Connexion…',
   mcpStatusDisconnected: 'Déconnecté',
@@ -1530,6 +1542,9 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   connectorLabel: '连接器',
   mcpConnect: '连接',
   mcpDisconnect: '断开',
+  mcpSignOut: '退出登录',
+  mcpSwitchAccount: '切换账户',
+  mcpOpeningBrowser: '正在打开浏览器…',
   mcpStatusConnected: '已连接',
   mcpStatusConnecting: '连接中…',
   mcpStatusDisconnected: '未连接',
@@ -1819,6 +1834,9 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   connectorLabel: 'コネクタ',
   mcpConnect: '接続',
   mcpDisconnect: '切断',
+  mcpSignOut: 'サインアウト',
+  mcpSwitchAccount: 'アカウントを切り替え',
+  mcpOpeningBrowser: 'ブラウザを開いています…',
   mcpStatusConnected: '接続済み',
   mcpStatusConnecting: '接続中…',
   mcpStatusDisconnected: '未接続',
@@ -2122,6 +2140,9 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   connectorLabel: 'Konnektor',
   mcpConnect: 'Verbinden',
   mcpDisconnect: 'Trennen',
+  mcpSignOut: 'Abmelden',
+  mcpSwitchAccount: 'Konto wechseln',
+  mcpOpeningBrowser: 'Browser wird geöffnet…',
   mcpStatusConnected: 'Verbunden',
   mcpStatusConnecting: 'Verbinde…',
   mcpStatusDisconnected: 'Getrennt',
@@ -2425,6 +2446,9 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   connectorLabel: 'Conector',
   mcpConnect: 'Conectar',
   mcpDisconnect: 'Desconectar',
+  mcpSignOut: 'Cerrar sesión',
+  mcpSwitchAccount: 'Cambiar de cuenta',
+  mcpOpeningBrowser: 'Abriendo el navegador…',
   mcpStatusConnected: 'Conectado',
   mcpStatusConnecting: 'Conectando…',
   mcpStatusDisconnected: 'Desconectado',
