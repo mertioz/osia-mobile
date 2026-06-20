@@ -5291,16 +5291,6 @@ class _McpScreenState extends State<_McpScreen> {
     );
   }
 
-  /// Sign out of an OAuth connector: revoke the stored token
-  /// (`mcp_disconnect{id,revoke:true}`). Optimistic pill, then reconciled by
-  /// the config / `mcp_status` pushes — mirrors [_disconnect].
-  void _signOutOauth(_McpConnector c) {
-    widget.wsService.sendMcpSignOut(c.id);
-    setState(() =>
-        _statuses[c.id] = const ws.McpServerStatus(status: 'disconnected'));
-    widget.wsService.sendGetConfig();
-  }
-
   /// Switch account on an OAuth connector: revoke AND forget the client
   /// (`mcp_disconnect{id,revoke:true,forget_client:true}`) so a re-connect can
   /// pick a different account. (A sticky browser SSO cookie can still re-pick
@@ -5829,30 +5819,13 @@ class _McpScreenState extends State<_McpScreen> {
         ),
         if (connected) ...[
           const SizedBox(height: 4),
-          Row(
-            children: [
-              Expanded(
-                child: TextButton(
-                  onPressed: () => _signOutOauth(c),
-                  child: Text(
-                    strings.mcpSignOut,
-                    style:
-                        TextStyle(color: palette.textMuted, fontSize: 13.5),
-                  ),
-                ),
-              ),
-              Expanded(
-                child: TextButton(
-                  onPressed: () => _switchOauthAccount(c),
-                  child: Text(
-                    strings.mcpSwitchAccount,
-                    textAlign: TextAlign.center,
-                    style:
-                        TextStyle(color: palette.textMuted, fontSize: 13.5),
-                  ),
-                ),
-              ),
-            ],
+          TextButton(
+            onPressed: () => _switchOauthAccount(c),
+            child: Text(
+              strings.mcpSwitchAccount,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: palette.textMuted, fontSize: 13.5),
+            ),
           ),
         ],
         // WOR-97: while the OAuth handshake is in flight, offer an explicit
