@@ -4772,7 +4772,8 @@ class _EmptyHint extends StatelessWidget {
 // dropdown.
 //
 // Contract (all additive — the server side is already done):
-//   - the catalog is hardcoded here (parity with the PC `_MCP_CATALOG`);
+//   - server-provided catalog/saved entries drive the list; local catalog values
+//     are fallback metadata for older servers;
 //   - the saved server LIST round-trips through `set_setting mcp_servers`
 //     (env ALWAYS {} — never a token);
 //   - the token is stored separately via `set_api_key` under `mcp:<id>`;
@@ -4802,6 +4803,7 @@ class _McpConnector {
   final String? tokenEnv;
   final List<_McpExtraField> extraEnv;
   final bool custom;
+  final String? nativeIntegration;
 
   const _McpConnector({
     required this.id,
@@ -4815,16 +4817,28 @@ class _McpConnector {
     this.tokenEnv,
     this.extraEnv = const [],
     this.custom = false,
+    this.nativeIntegration,
   });
+
+  bool get isGmailRest =>
+      id == _nativeGmailRestId &&
+      nativeIntegration == _nativeGmailRestIntegration;
 
   /// Token-auth connectors (stdio OR streamable-HTTP) can be connected today —
   /// the server now supports the streamable-HTTP transport (e.g. Notion). Only
   /// OAuth connectors remain gated and show "soon".
-  bool get connectable => authType != 'oauth';
+  bool get connectable => !isGmailRest && authType != 'oauth';
 
   /// A connectable connector that authenticates with a token in [tokenEnv].
   bool get needsToken => connectable && authType == 'token';
+
+  bool get hasOauthEndpoint => (url?.trim().isNotEmpty ?? false);
 }
+
+const String _nativeGmailRestId = 'gmail';
+const String _nativeGmailRestIntegration = 'gmail-rest';
+const String _legacyGmailMcpId = 'gmail-mcp-legacy';
+const String _legacyGmailMcpHost = 'gmailmcp.googleapis.com';
 
 /// The preconfigured catalog — parity with the PC `_MCP_CATALOG`. GitHub and
 /// Slack are stdio/token and Notion is streamable-HTTP/token (all connectable
@@ -4875,7 +4889,89 @@ const List<_McpConnector> _mcpCatalog = [
     name: 'Google Drive',
     descField: 'gdrive',
     transport: 'streamable_http',
-    url: '',
+    url: 'https://drivemcp.googleapis.com/mcp/v1',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: _nativeGmailRestId,
+    name: 'Gmail',
+    descField: 'gmail',
+    transport: 'native',
+    authType: 'native_oauth',
+    nativeIntegration: _nativeGmailRestIntegration,
+  ),
+  _McpConnector(
+    id: 'sentry',
+    name: 'Sentry',
+    transport: 'streamable_http',
+    url: 'https://mcp.sentry.dev/mcp',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: 'stripe',
+    name: 'Stripe',
+    transport: 'streamable_http',
+    url: 'https://mcp.stripe.com',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: 'vercel',
+    name: 'Vercel',
+    transport: 'streamable_http',
+    url: 'https://mcp.vercel.com',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: 'supabase',
+    name: 'Supabase',
+    transport: 'streamable_http',
+    url: 'https://mcp.supabase.com/mcp',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: 'neon',
+    name: 'Neon',
+    transport: 'streamable_http',
+    url: 'https://mcp.neon.tech/mcp',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: 'atlassian',
+    name: 'Atlassian',
+    transport: 'streamable_http',
+    url: 'https://mcp.atlassian.com/v1/mcp',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: 'canva',
+    name: 'Canva',
+    transport: 'streamable_http',
+    url: 'https://mcp.canva.com/mcp',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: 'paypal',
+    name: 'PayPal',
+    transport: 'streamable_http',
+    url: 'https://mcp.paypal.com/mcp',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: 'asana',
+    name: 'Asana',
+    transport: 'streamable_http',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: 'hubspot',
+    name: 'HubSpot',
+    transport: 'streamable_http',
+    authType: 'oauth',
+  ),
+  _McpConnector(
+    id: 'figma',
+    name: 'Figma',
+    transport: 'streamable_http',
     authType: 'oauth',
   ),
 ];
@@ -4886,10 +4982,22 @@ const Set<String> _mcpCatalogIds = {
   'notion',
   'linear',
   'google-drive',
+  'gmail',
+  'sentry',
+  'stripe',
+  'vercel',
+  'supabase',
+  'neon',
+  'atlassian',
+  'canva',
+  'paypal',
+  'asana',
+  'hubspot',
+  'figma',
 };
 
-const Set<String> _legacyGmailMcpIds = {
-  'gmail',
+const Set<String> _reservedGmailMcpIds = {
+  _nativeGmailRestId,
   'gmail-mcp-legacy',
 };
 
@@ -4916,6 +5024,7 @@ class _McpScreenState extends State<_McpScreen> {
   /// the config snapshot, re-seeded on every config push, and replace-written
   /// wholesale via `set_setting` (the server forces env={} on each entry).
   late List<Map<String, dynamic>> _servers;
+  late List<Map<String, dynamic>> _serverCatalog;
 
   /// Real token strings per provider (`mcp:<id>` → token), for pre-filling the
   /// token field. Seeded from the parent, refreshed on api-keys pushes.
@@ -4944,7 +5053,8 @@ class _McpScreenState extends State<_McpScreen> {
   /// (`mcp_allow_unattended_writes`; default OFF). Same persistence as above.
   late bool _allowUnattended;
 
-  /// Native Gmail REST state from the config snapshot. Display-only on mobile.
+  /// Native Gmail REST state from the config snapshot. Gmail auth and REST
+  /// calls stay server-side; mobile can request the safe disconnect action.
   ws.GmailRestConfig? _gmailRest;
 
   /// The connector currently shown in the panel.
@@ -4972,13 +5082,18 @@ class _McpScreenState extends State<_McpScreen> {
   void initState() {
     super.initState();
     _servers = _readServers(widget.config);
+    _serverCatalog = _readServerCatalog(widget.config);
     _apiKeys = Map<String, String>.from(widget.apiKeys);
     _mcpTokens = _readMcpTokens(widget.config.settings['mcp_tokens']);
     _apiKeysSet = Map<String, bool>.from(widget.config.apiKeysSet);
-    _confirmWrites =
-        _readBool(widget.config.settings['mcp_confirm_writes'], true);
-    _allowUnattended =
-        _readBool(widget.config.settings['mcp_allow_unattended_writes'], false);
+    _confirmWrites = _readBool(
+      widget.config.settings['mcp_confirm_writes'],
+      true,
+    );
+    _allowUnattended = _readBool(
+      widget.config.settings['mcp_allow_unattended_writes'],
+      false,
+    );
     _gmailRest = widget.config.gmailRest;
 
     // Stay live while open: the parent passed a snapshot, but config / keys /
@@ -4987,6 +5102,7 @@ class _McpScreenState extends State<_McpScreen> {
       if (!mounted) return;
       setState(() {
         _servers = _readServers(cfg);
+        _serverCatalog = _readServerCatalog(cfg);
         _mcpTokens = _readMcpTokens(cfg.settings['mcp_tokens']);
         // Token controllers are created lazily (putIfAbsent), so a token that
         // lands AFTER a panel was first built (e.g. set on the PC while this
@@ -5001,8 +5117,10 @@ class _McpScreenState extends State<_McpScreen> {
         });
         _apiKeysSet = Map<String, bool>.from(cfg.apiKeysSet);
         _confirmWrites = _readBool(cfg.settings['mcp_confirm_writes'], true);
-        _allowUnattended =
-            _readBool(cfg.settings['mcp_allow_unattended_writes'], false);
+        _allowUnattended = _readBool(
+          cfg.settings['mcp_allow_unattended_writes'],
+          false,
+        );
         _gmailRest = cfg.gmailRest;
       });
     });
@@ -5054,8 +5172,88 @@ class _McpScreenState extends State<_McpScreen> {
         : <Map<String, dynamic>>[];
   }
 
+  List<Map<String, dynamic>> _readServerCatalog(ws.ConfigData cfg) {
+    final raw =
+        cfg.settings['mcp_catalog'] ??
+        cfg.settings['mcp_connector_catalog'] ??
+        cfg.settings['connectors_catalog'];
+    return raw is List
+        ? raw.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList()
+        : <Map<String, dynamic>>[];
+  }
+
   /// Read a bool setting, falling back to [dflt] when absent or non-bool.
   bool _readBool(Object? raw, bool dflt) => raw is bool ? raw : dflt;
+
+  String? _readString(Object? raw) {
+    if (raw == null) return null;
+    final value = raw.toString().trim();
+    return value.isEmpty ? null : value;
+  }
+
+  List<String> _readStringList(Object? raw) {
+    return raw is List
+        ? raw.map((e) => e.toString()).where((s) => s.isNotEmpty).toList()
+        : const [];
+  }
+
+  bool _isLegacyGmailMcpEntry(Map<String, dynamic> entry) {
+    final id = _readString(entry['id'])?.toLowerCase() ?? '';
+    final url = _readString(entry['url'])?.toLowerCase() ?? '';
+    return id == _legacyGmailMcpId || url.contains(_legacyGmailMcpHost);
+  }
+
+  bool _isVisibleConnectorEntry(Map<String, dynamic> entry) {
+    final id = _readString(entry['id']);
+    if (id == null) return false;
+    return !_readBool(entry['hidden'], false) &&
+        !_readBool(entry['disabled'], false) &&
+        !_isLegacyGmailMcpEntry(entry);
+  }
+
+  _McpConnector? _catalogFor(String id) {
+    for (final c in _mcpCatalog) {
+      if (c.id == id) return c;
+    }
+    return null;
+  }
+
+  _McpConnector _connectorFromEntry(
+    Map<String, dynamic> entry, {
+    _McpConnector? base,
+    bool custom = false,
+  }) {
+    final id = _readString(entry['id']) ?? base?.id ?? '';
+    final nativeIntegration = entry.containsKey('native_integration')
+        ? _readString(entry['native_integration'])
+        : base?.nativeIntegration;
+    final isGmailRest =
+        id == _nativeGmailRestId &&
+        nativeIntegration == _nativeGmailRestIntegration;
+    return _McpConnector(
+      id: id,
+      name: _readString(entry['name']) ?? base?.name ?? id,
+      descField: base?.descField ?? (isGmailRest ? 'gmail' : ''),
+      transport: _readString(entry['transport']) ?? base?.transport ?? 'stdio',
+      command: entry.containsKey('command')
+          ? _readString(entry['command'])
+          : base?.command,
+      args: entry.containsKey('args')
+          ? _readStringList(entry['args'])
+          : (base?.args ?? const []),
+      url: entry.containsKey('url') ? _readString(entry['url']) : base?.url,
+      authType:
+          _readString(entry['auth_type']) ??
+          base?.authType ??
+          (isGmailRest ? 'native_oauth' : 'none'),
+      tokenEnv: entry.containsKey('token_env')
+          ? _readString(entry['token_env'])
+          : base?.tokenEnv,
+      extraEnv: base?.extraEnv ?? const [],
+      custom: custom || entry['custom'] == true || (base?.custom ?? false),
+      nativeIntegration: nativeIntegration,
+    );
+  }
 
   Map<String, dynamic>? _savedFor(String id) {
     for (final s in _servers) {
@@ -5064,41 +5262,63 @@ class _McpScreenState extends State<_McpScreen> {
     return null;
   }
 
-  /// All connectors for the dropdown: catalog entries, then any custom stdio
-  /// servers the user added (saved entries whose id isn't in the catalog).
+  /// All connectors for the dropdown: PC catalog/fallback metadata, overwritten
+  /// by visible saved server entries. Unknown saved MCPs render generically.
   List<_McpConnector> _allConnectors() {
-    final out = List<_McpConnector>.from(_mcpCatalog);
+    final byId = <String, _McpConnector>{};
+    final order = <String>[];
+
+    void put(_McpConnector c) {
+      if (c.id.isEmpty) return;
+      if (!order.contains(c.id)) order.add(c.id);
+      byId[c.id] = c;
+    }
+
+    final catalogSource = _serverCatalog.isNotEmpty
+        ? _serverCatalog
+              .where(_isVisibleConnectorEntry)
+              .map(
+                (entry) => _connectorFromEntry(
+                  entry,
+                  base: _catalogFor(_readString(entry['id']) ?? ''),
+                ),
+              )
+        : _mcpCatalog;
+    for (final c in catalogSource) {
+      if (c.id == _legacyGmailMcpId) continue;
+      put(c);
+    }
+    if (!byId.containsKey(_nativeGmailRestId)) {
+      final gmail = _catalogFor(_nativeGmailRestId);
+      if (gmail != null) put(gmail);
+    }
+
     for (final s in _servers) {
-      final id = (s['id'] ?? '').toString();
-      if (id.isEmpty ||
-          _mcpCatalogIds.contains(id) ||
-          _legacyGmailMcpIds.contains(id) ||
-          _readBool(s['hidden'], false) ||
-          _readBool(s['disabled'], false)) {
+      final id = _readString(s['id']) ?? '';
+      if (!_isVisibleConnectorEntry(s)) {
         continue;
       }
-      out.add(_McpConnector(
-        id: id,
-        name: (s['name'] ?? id).toString(),
-        transport: (s['transport'] ?? 'stdio').toString(),
-        command: s['command']?.toString(),
-        args: (s['args'] is List)
-            ? (s['args'] as List).map((e) => e.toString()).toList()
-            : const [],
-        url: s['url']?.toString(),
-        authType: (s['auth_type'] ?? 'none').toString(),
-        tokenEnv: s['token_env']?.toString(),
-        custom: true,
-      ));
+      if (id == _nativeGmailRestId &&
+          _readString(s['native_integration']) != _nativeGmailRestIntegration) {
+        continue;
+      }
+      put(
+        _connectorFromEntry(
+          s,
+          base: _catalogFor(id),
+          custom: !_mcpCatalogIds.contains(id),
+        ),
+      );
     }
-    return out;
+    return order.map((id) => byId[id]!).toList();
   }
 
   TextEditingController _tokenCtrlFor(_McpConnector c) {
     return _tokenCtrls.putIfAbsent(
       c.id,
       () => TextEditingController(
-          text: _mcpTokens[c.id] ?? _apiKeys['mcp:${c.id}'] ?? ''),
+        text: _mcpTokens[c.id] ?? _apiKeys['mcp:${c.id}'] ?? '',
+      ),
     );
   }
 
@@ -5111,7 +5331,18 @@ class _McpScreenState extends State<_McpScreen> {
     });
   }
 
-  String _statusOf(String id) => _statuses[id]?.status ?? 'disconnected';
+  String _statusOf(String id) {
+    if (id == _nativeGmailRestId) return _gmailRestStatus();
+    return _statuses[id]?.status ?? 'disconnected';
+  }
+
+  String _gmailRestStatus() {
+    final gmail = _gmailRest;
+    if (gmail?.connected == true) return 'connected';
+    final status = gmail?.status?.trim().toLowerCase() ?? '';
+    if (status == 'connecting' || status == 'failed') return status;
+    return 'disconnected';
+  }
 
   bool _configured(String id) =>
       (_mcpTokens[id] ?? '').isNotEmpty ||
@@ -5134,8 +5365,9 @@ class _McpScreenState extends State<_McpScreen> {
         return s.mcpDescGmail;
       default:
         // Custom server — show its transport and command/url.
-        final detail =
-            (c.command?.isNotEmpty ?? false) ? c.command! : (c.url ?? '');
+        final detail = (c.command?.isNotEmpty ?? false)
+            ? c.command!
+            : (c.url ?? '');
         return detail.isEmpty ? c.transport : '${c.transport} · $detail';
     }
   }
@@ -5216,8 +5448,9 @@ class _McpScreenState extends State<_McpScreen> {
     }
     widget.wsService.sendMcpConnect(c.id);
     // Optimistic pill — flips on the pushed/polled status (non-blocking).
-    setState(() =>
-        _statuses[c.id] = const ws.McpServerStatus(status: 'connecting'));
+    setState(
+      () => _statuses[c.id] = const ws.McpServerStatus(status: 'connecting'),
+    );
     widget.wsService.sendGetConfig();
     widget.wsService.sendGetApiKeys();
   }
@@ -5232,8 +5465,14 @@ class _McpScreenState extends State<_McpScreen> {
       widget.wsService.sendSetSetting('mcp_servers', _servers);
     }
     widget.wsService.sendMcpDisconnect(c.id);
-    setState(() =>
-        _statuses[c.id] = const ws.McpServerStatus(status: 'disconnected'));
+    setState(
+      () => _statuses[c.id] = const ws.McpServerStatus(status: 'disconnected'),
+    );
+    widget.wsService.sendGetConfig();
+  }
+
+  void _disconnectGmailRest() {
+    widget.wsService.sendMcpDisconnect(_nativeGmailRestIntegration);
     widget.wsService.sendGetConfig();
   }
 
@@ -5271,8 +5510,9 @@ class _McpScreenState extends State<_McpScreen> {
   void _cancelOauth(_McpConnector c) {
     widget.wsService.sendMcpOauthCancel(c.id);
     if (_pendingOauthId == c.id) _pendingOauthId = null;
-    setState(() =>
-        _statuses[c.id] = const ws.McpServerStatus(status: 'disconnected'));
+    setState(
+      () => _statuses[c.id] = const ws.McpServerStatus(status: 'disconnected'),
+    );
     widget.wsService.sendGetConfig();
   }
 
@@ -5293,8 +5533,9 @@ class _McpScreenState extends State<_McpScreen> {
     final strings = OsiaL10n.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content:
-            Text(opened ? strings.mcpOpeningBrowser : strings.linkOpenFailed),
+        content: Text(
+          opened ? strings.mcpOpeningBrowser : strings.linkOpenFailed,
+        ),
       ),
     );
   }
@@ -5305,8 +5546,9 @@ class _McpScreenState extends State<_McpScreen> {
   /// the same account unless the provider shows an account chooser.)
   void _switchOauthAccount(_McpConnector c) {
     widget.wsService.sendMcpSignOut(c.id, forgetClient: true);
-    setState(() =>
-        _statuses[c.id] = const ws.McpServerStatus(status: 'disconnected'));
+    setState(
+      () => _statuses[c.id] = const ws.McpServerStatus(status: 'disconnected'),
+    );
     widget.wsService.sendGetConfig();
   }
 
@@ -5317,8 +5559,10 @@ class _McpScreenState extends State<_McpScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: palette.surface,
-        title: Text(strings.mcpRemove,
-            style: TextStyle(fontSize: 16, color: palette.textPrimary)),
+        title: Text(
+          strings.mcpRemove,
+          style: TextStyle(fontSize: 16, color: palette.textPrimary),
+        ),
         content: Text(
           c.name,
           style: TextStyle(color: palette.textMuted, fontSize: 13.5),
@@ -5326,8 +5570,10 @@ class _McpScreenState extends State<_McpScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(strings.cancel,
-                style: TextStyle(color: palette.textMuted)),
+            child: Text(
+              strings.cancel,
+              style: TextStyle(color: palette.textMuted),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -5360,7 +5606,7 @@ class _McpScreenState extends State<_McpScreen> {
   String _uniqueId(String base) {
     final taken = {
       ..._mcpCatalogIds,
-      ..._legacyGmailMcpIds,
+      ..._reservedGmailMcpIds,
       ..._servers.map((s) => (s['id'] ?? '').toString()),
     };
     if (!taken.contains(base)) return base;
@@ -5394,8 +5640,9 @@ class _McpScreenState extends State<_McpScreen> {
       'env': <String, dynamic>{},
       'auth_type': hasToken ? 'token' : 'none',
       'enabled': false, // adding does NOT connect — connect it explicitly
-      'token_env':
-          result.tokenEnv.trim().isEmpty ? null : result.tokenEnv.trim(),
+      'token_env': result.tokenEnv.trim().isEmpty
+          ? null
+          : result.tokenEnv.trim(),
       'extra_env': <String, dynamic>{},
       'custom': true,
     };
@@ -5464,8 +5711,6 @@ class _McpScreenState extends State<_McpScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              _buildGmailRestCard(palette, strings),
-              const SizedBox(height: 16),
               // ── Write-tool safety (WOR-44 Phase 5) ──
               // Global gate for write MCP tools, applies to every connector.
               _OsiaCard(
@@ -5480,8 +5725,10 @@ class _McpScreenState extends State<_McpScreen> {
                       value: _confirmWrites,
                       onChanged: (v) {
                         setState(() => _confirmWrites = v);
-                        widget.wsService
-                            .sendSetSetting('mcp_confirm_writes', v);
+                        widget.wsService.sendSetSetting(
+                          'mcp_confirm_writes',
+                          v,
+                        );
                       },
                     ),
                     Divider(
@@ -5495,8 +5742,10 @@ class _McpScreenState extends State<_McpScreen> {
                       value: _allowUnattended,
                       onChanged: (v) {
                         setState(() => _allowUnattended = v);
-                        widget.wsService
-                            .sendSetSetting('mcp_allow_unattended_writes', v);
+                        widget.wsService.sendSetSetting(
+                          'mcp_allow_unattended_writes',
+                          v,
+                        );
                       },
                     ),
                   ],
@@ -5553,12 +5802,20 @@ class _McpScreenState extends State<_McpScreen> {
     );
   }
 
-  Widget _buildGmailRestCard(OsiaPalette palette, OsiaStrings strings) {
+  Widget _buildGmailRestPanel(
+    OsiaPalette palette,
+    OsiaStrings strings,
+    _McpConnector c,
+  ) {
     final gmail = _gmailRest;
     final connected = gmail?.connected == true;
     final caps = gmail?.capabilities ?? const ws.GmailRestCapabilities();
     final email = gmail?.emailAddress?.trim() ?? '';
-    final needsElevation = connected && (!caps.compose || !caps.modify);
+    final canDisconnect = connected && gmail?.canDisconnect == true;
+    final showConfigureOnPc = gmail?.configureOnPc == true || gmail == null;
+    final showElevateOnPc = gmail?.elevateOnPc == true;
+    final showGuide = gmail?.guideAvailable == true;
+    final showDisconnectOnPc = connected && !canDisconnect && !showElevateOnPc;
 
     return _OsiaCard(
       palette: palette,
@@ -5587,32 +5844,32 @@ class _McpScreenState extends State<_McpScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      strings.gmailRestName,
+                      c.name,
                       style: TextStyle(
                         fontSize: 15.5,
                         fontWeight: FontWeight.w600,
                         color: palette.textPrimary,
                       ),
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      strings.gmailRestTitle,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.25,
-                        color: palette.textMuted,
-                      ),
-                    ),
                   ],
                 ),
               ),
               const SizedBox(width: 10),
-              _GmailRestStatusPill(
-                connected: connected,
+              _McpStatusPill(
+                status: _gmailRestStatus(),
                 palette: palette,
                 strings: strings,
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            strings.gmailRestTitle,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: palette.textMuted,
+            ),
           ),
           if (email.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -5628,10 +5885,7 @@ class _McpScreenState extends State<_McpScreen> {
                   child: Text(
                     email,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: palette.textPrimary,
-                    ),
+                    style: TextStyle(fontSize: 13, color: palette.textPrimary),
                   ),
                 ),
               ],
@@ -5646,38 +5900,47 @@ class _McpScreenState extends State<_McpScreen> {
               color: palette.textMuted,
             ),
           ),
-          if (connected) ...[
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _gmailCapabilityChip(
+                palette,
+                strings.gmailRestReadOnly,
+                caps.readonly,
+              ),
+              _gmailCapabilityChip(
+                palette,
+                strings.gmailRestDraftsSend,
+                caps.compose,
+              ),
+              _gmailCapabilityChip(
+                palette,
+                strings.gmailRestMailboxActions,
+                caps.modify,
+              ),
+            ],
+          ),
+          if (canDisconnect) ...[
             const SizedBox(height: 14),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _gmailCapabilityChip(
-                  palette,
-                  strings.gmailRestReadOnly,
-                  caps.readonly,
-                ),
-                _gmailCapabilityChip(
-                  palette,
-                  strings.gmailRestDraftsSend,
-                  caps.compose,
-                ),
-                _gmailCapabilityChip(
-                  palette,
-                  strings.gmailRestMailboxActions,
-                  caps.modify,
-                ),
-              ],
-            ),
+            _gmailRestDisconnectButton(palette, strings, c),
           ],
-          if (!connected || needsElevation) ...[
+          if (showConfigureOnPc) ...[
             const SizedBox(height: 14),
-            _gmailPcNotice(
-              palette,
-              !connected
-                  ? strings.gmailRestConfigureOnPc
-                  : strings.gmailRestElevateOnPc,
-            ),
+            _gmailPcNotice(palette, strings.gmailRestConfigureOnPc),
+          ],
+          if (showElevateOnPc) ...[
+            const SizedBox(height: 14),
+            _gmailPcNotice(palette, strings.gmailRestElevateOnPc),
+          ],
+          if (showGuide) ...[
+            const SizedBox(height: 14),
+            _gmailPcNotice(palette, strings.gmailRestSetupGuideOnPc),
+          ],
+          if (showDisconnectOnPc) ...[
+            const SizedBox(height: 14),
+            _gmailPcNotice(palette, strings.gmailRestDisconnectOnPc),
           ],
         ],
       ),
@@ -5696,11 +5959,7 @@ class _McpScreenState extends State<_McpScreen> {
     return strings.mcpDescGmail;
   }
 
-  Widget _gmailCapabilityChip(
-    OsiaPalette palette,
-    String label,
-    bool enabled,
-  ) {
+  Widget _gmailCapabilityChip(OsiaPalette palette, String label, bool enabled) {
     final color = enabled ? palette.accent : palette.textMuted;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
@@ -5729,6 +5988,30 @@ class _McpScreenState extends State<_McpScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _gmailRestDisconnectButton(
+    OsiaPalette palette,
+    OsiaStrings strings,
+    _McpConnector c,
+  ) {
+    return SizedBox(
+      height: 50,
+      child: ElevatedButton(
+        onPressed: _disconnectGmailRest,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: palette.surfaceElevated,
+          foregroundColor: palette.textPrimary,
+          elevation: 0,
+          side: BorderSide(color: palette.border),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        child: Text('${strings.mcpDisconnect} ${c.name}'),
       ),
     );
   }
@@ -5807,7 +6090,14 @@ class _McpScreenState extends State<_McpScreen> {
     );
   }
 
-  Widget _buildPanel(OsiaPalette palette, OsiaStrings strings, _McpConnector c) {
+  Widget _buildPanel(
+    OsiaPalette palette,
+    OsiaStrings strings,
+    _McpConnector c,
+  ) {
+    if (c.isGmailRest) {
+      return _buildGmailRestPanel(palette, strings, c);
+    }
     final status = _statusOf(c.id);
     final children = <Widget>[
       // Header: connector name + live status pill.
@@ -5840,28 +6130,35 @@ class _McpScreenState extends State<_McpScreen> {
         children.add(const SizedBox(height: 14));
         children.add(_FieldLabel(_extraLabel(strings, f.varName), palette));
         children.add(const SizedBox(height: 8));
-        children.add(_OsiaTextField(
-          controller: _extraCtrlFor(c, f.varName),
-          hint: _extraHint(strings, f.varName),
-          palette: palette,
-        ));
+        children.add(
+          _OsiaTextField(
+            controller: _extraCtrlFor(c, f.varName),
+            hint: _extraHint(strings, f.varName),
+            palette: palette,
+          ),
+        );
       }
       children.add(const SizedBox(height: 18));
       children.add(_actionButton(palette, strings, c, status));
       if (c.custom) {
         children.add(const SizedBox(height: 4));
-        children.add(Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: () => _removeCustom(c),
-            icon: Icon(Icons.delete_outline_rounded,
-                size: 18, color: palette.error),
-            label: Text(
-              strings.mcpRemove,
-              style: TextStyle(color: palette.error, fontSize: 14),
+        children.add(
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => _removeCustom(c),
+              icon: Icon(
+                Icons.delete_outline_rounded,
+                size: 18,
+                color: palette.error,
+              ),
+              label: Text(
+                strings.mcpRemove,
+                style: TextStyle(color: palette.error, fontSize: 14),
+              ),
             ),
           ),
-        ));
+        );
       }
     } else {
       // OAuth connectors (WOR-96 PART 2b): tapping Connect sends `mcp_connect`
@@ -5870,9 +6167,11 @@ class _McpScreenState extends State<_McpScreen> {
       // flips via the `mcp_status` broadcast. (`_soonButton` is kept for any
       // future non-OAuth gated transport.)
       children.add(const SizedBox(height: 18));
-      children.add(c.authType == 'oauth'
-          ? _oauthActions(palette, strings, c, status)
-          : _soonButton(palette, strings, c));
+      children.add(
+        c.authType == 'oauth' && c.hasOauthEndpoint
+            ? _oauthActions(palette, strings, c, status)
+            : _soonButton(palette, strings, c),
+      );
     }
 
     return _OsiaCard(
@@ -5885,7 +6184,10 @@ class _McpScreenState extends State<_McpScreen> {
   }
 
   List<Widget> _tokenField(
-      OsiaPalette palette, OsiaStrings strings, _McpConnector c) {
+    OsiaPalette palette,
+    OsiaStrings strings,
+    _McpConnector c,
+  ) {
     final ctrl = _tokenCtrlFor(c);
     final configured = _configured(c.id);
     return [
@@ -5920,11 +6222,14 @@ class _McpScreenState extends State<_McpScreen> {
         decoration: InputDecoration(
           filled: true,
           fillColor: palette.surface,
-          hintText:
-              configured ? strings.apiKeyReplaceHint : strings.mcpTokenHint,
+          hintText: configured
+              ? strings.apiKeyReplaceHint
+              : strings.mcpTokenHint,
           hintStyle: TextStyle(color: palette.textMuted, fontSize: 14),
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 14,
+          ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
             borderSide: BorderSide(color: palette.border),
@@ -5944,14 +6249,17 @@ class _McpScreenState extends State<_McpScreen> {
                 IconButton(
                   tooltip: strings.mcpCopyToken,
                   onPressed: () => _copyToken(ctrl.text.trim()),
-                  icon: Icon(Icons.copy_rounded,
-                      size: 18, color: palette.textMuted),
+                  icon: Icon(
+                    Icons.copy_rounded,
+                    size: 18,
+                    color: palette.textMuted,
+                  ),
                 ),
               IconButton(
-                tooltip:
-                    _obscureToken ? strings.showApiKey : strings.hideApiKey,
-                onPressed: () =>
-                    setState(() => _obscureToken = !_obscureToken),
+                tooltip: _obscureToken
+                    ? strings.showApiKey
+                    : strings.hideApiKey,
+                onPressed: () => setState(() => _obscureToken = !_obscureToken),
                 icon: Icon(
                   _obscureToken
                       ? Icons.visibility_rounded
@@ -5962,8 +6270,11 @@ class _McpScreenState extends State<_McpScreen> {
               ),
               IconButton(
                 onPressed: () => _pasteInto(ctrl),
-                icon: Icon(Icons.content_paste_rounded,
-                    size: 18, color: palette.textMuted),
+                icon: Icon(
+                  Icons.content_paste_rounded,
+                  size: 18,
+                  color: palette.textMuted,
+                ),
               ),
             ],
           ),
@@ -5973,7 +6284,11 @@ class _McpScreenState extends State<_McpScreen> {
   }
 
   Widget _actionButton(
-      OsiaPalette palette, OsiaStrings strings, _McpConnector c, String status) {
+    OsiaPalette palette,
+    OsiaStrings strings,
+    _McpConnector c,
+    String status,
+  ) {
     final connected = status == 'connected';
     final enabled = connected || _canConnect(c);
     return SizedBox(
@@ -5981,18 +6296,20 @@ class _McpScreenState extends State<_McpScreen> {
       child: ElevatedButton(
         onPressed: enabled ? () => _toggle(c) : null,
         style: ElevatedButton.styleFrom(
-          backgroundColor:
-              connected ? palette.surfaceElevated : palette.accent,
+          backgroundColor: connected ? palette.surfaceElevated : palette.accent,
           foregroundColor: connected
               ? palette.textPrimary
               : (palette.isDark ? palette.background : Colors.white),
           disabledBackgroundColor: palette.accent.withValues(alpha: 0.4),
           disabledForegroundColor:
-              (palette.isDark ? palette.background : Colors.white)
-                  .withValues(alpha: 0.7),
+              (palette.isDark ? palette.background : Colors.white).withValues(
+                alpha: 0.7,
+              ),
           elevation: 0,
           side: connected ? BorderSide(color: palette.border) : BorderSide.none,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         ),
         child: Text(connected ? strings.mcpDisconnect : strings.mcpConnect),
@@ -6005,8 +6322,12 @@ class _McpScreenState extends State<_McpScreen> {
   /// there is NO token precondition (OAuth has no token field), so Connect is
   /// always enabled; the provider's own sign-in page gates access. The toggle
   /// mirrors the non-OAuth one ([_actionButton]) for visual parity.
-  Widget _oauthActions(OsiaPalette palette, OsiaStrings strings, _McpConnector c,
-      String status) {
+  Widget _oauthActions(
+    OsiaPalette palette,
+    OsiaStrings strings,
+    _McpConnector c,
+    String status,
+  ) {
     final connected = status == 'connected';
     final connecting = status == 'connecting';
     return Column(
@@ -6017,8 +6338,9 @@ class _McpScreenState extends State<_McpScreen> {
           child: ElevatedButton(
             onPressed: () => _toggleOauth(c),
             style: ElevatedButton.styleFrom(
-              backgroundColor:
-                  connected ? palette.surfaceElevated : palette.accent,
+              backgroundColor: connected
+                  ? palette.surfaceElevated
+                  : palette.accent,
               foregroundColor: connected
                   ? palette.textPrimary
                   : (palette.isDark ? palette.background : Colors.white),
@@ -6027,12 +6349,14 @@ class _McpScreenState extends State<_McpScreen> {
                   ? BorderSide(color: palette.border)
                   : BorderSide.none,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-              textStyle:
-                  const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              textStyle: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-            child:
-                Text(connected ? strings.mcpDisconnect : strings.mcpConnect),
+            child: Text(connected ? strings.mcpDisconnect : strings.mcpConnect),
           ),
         ),
         if (connected) ...[
@@ -6065,20 +6389,30 @@ class _McpScreenState extends State<_McpScreen> {
   }
 
   Widget _soonButton(
-      OsiaPalette palette, OsiaStrings strings, _McpConnector c) {
-    final label =
-        c.authType == 'oauth' ? strings.mcpOauthSoon : strings.mcpHttpSoon;
+    OsiaPalette palette,
+    OsiaStrings strings,
+    _McpConnector c,
+  ) {
+    final label = c.authType == 'oauth'
+        ? strings.mcpOauthSoon
+        : strings.mcpHttpSoon;
     return SizedBox(
       height: 50,
       child: ElevatedButton(
         onPressed: null,
         style: ElevatedButton.styleFrom(
-          disabledBackgroundColor:
-              palette.surfaceElevated.withValues(alpha: 0.6),
+          disabledBackgroundColor: palette.surfaceElevated.withValues(
+            alpha: 0.6,
+          ),
           disabledForegroundColor: palette.textMuted,
           elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          textStyle: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          textStyle: const TextStyle(
+            fontSize: 14.5,
+            fontWeight: FontWeight.w600,
+          ),
         ),
         child: Text(label),
       ),
@@ -6101,75 +6435,26 @@ class _McpStatusPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final (Color fg, Color bg, String label) = switch (status) {
       'connected' => (
-          const Color(0xFF6FCF97),
-          const Color(0xFF10241A),
-          strings.mcpStatusConnected,
-        ),
+        const Color(0xFF6FCF97),
+        const Color(0xFF10241A),
+        strings.mcpStatusConnected,
+      ),
       'connecting' => (
-          const Color(0xFFE6C878),
-          const Color(0xFF2A2410),
-          strings.mcpStatusConnecting,
-        ),
+        const Color(0xFFE6C878),
+        const Color(0xFF2A2410),
+        strings.mcpStatusConnecting,
+      ),
       'failed' => (
-          const Color(0xFFE0A3A3),
-          const Color(0xFF2A1414),
-          strings.mcpStatusFailed,
-        ),
+        const Color(0xFFE0A3A3),
+        const Color(0xFF2A1414),
+        strings.mcpStatusFailed,
+      ),
       _ => (
-          palette.textMuted,
-          palette.surfaceElevated,
-          strings.mcpStatusDisconnected,
-        ),
+        palette.textMuted,
+        palette.surfaceElevated,
+        strings.mcpStatusDisconnected,
+      ),
     };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: fg.withValues(alpha: 0.35)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w600,
-              color: fg,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Status pill for the native Gmail REST mirror.
-class _GmailRestStatusPill extends StatelessWidget {
-  final bool connected;
-  final OsiaPalette palette;
-  final OsiaStrings strings;
-
-  const _GmailRestStatusPill({
-    required this.connected,
-    required this.palette,
-    required this.strings,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final fg = connected ? const Color(0xFF6FCF97) : palette.textMuted;
-    final bg = connected ? const Color(0xFF10241A) : palette.surfaceElevated;
-    final label =
-        connected ? strings.gmailRestConnected : strings.gmailRestNotConnected;
-
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(

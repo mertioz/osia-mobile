@@ -250,6 +250,10 @@ class GmailRestCapabilities {
 /// Mirror of `config.gmail_rest`; Gmail REST itself stays server-side.
 class GmailRestConfig {
   final bool connected;
+  final bool canDisconnect;
+  final bool configureOnPc;
+  final bool elevateOnPc;
+  final bool guideAvailable;
   final String? status;
   final String? emailAddress;
   final String? reason;
@@ -257,6 +261,10 @@ class GmailRestConfig {
 
   const GmailRestConfig({
     required this.connected,
+    this.canDisconnect = false,
+    this.configureOnPc = false,
+    this.elevateOnPc = false,
+    this.guideAvailable = false,
     this.status,
     this.emailAddress,
     this.reason,
@@ -293,6 +301,10 @@ class GmailRestConfig {
 
     return GmailRestConfig(
       connected: readBool(json['connected']),
+      canDisconnect: readBool(json['canDisconnect']),
+      configureOnPc: readBool(json['configureOnPc']),
+      elevateOnPc: readBool(json['elevateOnPc']),
+      guideAvailable: readBool(json['guideAvailable']),
       status: readString(json['status']),
       emailAddress: readString(json['emailAddress']),
       reason: readString(json['reason']),
