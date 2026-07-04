@@ -323,6 +323,15 @@ class OsiaStrings {
   final String mcpDescLinear;
   final String mcpDescGdrive;
   final String mcpDescGmail;
+  final String gmailRestName;
+  final String gmailRestTitle;
+  final String gmailRestConfigureOnPc;
+  final String gmailRestElevateOnPc;
+  final String gmailRestReadOnly;
+  final String gmailRestDraftsSend;
+  final String gmailRestMailboxActions;
+  final String gmailRestConnected;
+  final String gmailRestNotConnected;
   final String mcpCustomTitle;
   final String mcpCustomHint;
   final String mcpFieldName;
@@ -607,6 +616,15 @@ class OsiaStrings {
     required this.mcpDescLinear,
     required this.mcpDescGdrive,
     required this.mcpDescGmail,
+    required this.gmailRestName,
+    required this.gmailRestTitle,
+    required this.gmailRestConfigureOnPc,
+    required this.gmailRestElevateOnPc,
+    required this.gmailRestReadOnly,
+    required this.gmailRestDraftsSend,
+    required this.gmailRestMailboxActions,
+    required this.gmailRestConnected,
+    required this.gmailRestNotConnected,
     required this.mcpCustomTitle,
     required this.mcpCustomHint,
     required this.mcpFieldName,
@@ -968,6 +986,15 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   mcpDescLinear: 'Issues, projects & cycles in Linear.',
   mcpDescGdrive: 'Browse & read files in Google Drive.',
   mcpDescGmail: 'Search & manage email in Gmail.',
+  gmailRestName: 'Gmail',
+  gmailRestTitle: 'Native Gmail REST',
+  gmailRestConfigureOnPc: 'Configure on PC',
+  gmailRestElevateOnPc: 'Elevate OSIA permissions on PC',
+  gmailRestReadOnly: 'Read-only',
+  gmailRestDraftsSend: 'Drafts/send',
+  gmailRestMailboxActions: 'Mailbox actions',
+  gmailRestConnected: 'Connected',
+  gmailRestNotConnected: 'Not connected',
   mcpCustomTitle: 'Add a custom MCP server',
   mcpCustomHint:
       'Add a local stdio command (e.g. npx …). Remote (HTTP) servers are coming in a later update. Adding does not connect — connect it explicitly afterwards.',
@@ -1275,6 +1302,15 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   mcpDescLinear: 'Issues, projets et cycles dans Linear.',
   mcpDescGdrive: 'Parcourir et lire des fichiers dans Google Drive.',
   mcpDescGmail: 'Rechercher et gérer les e-mails dans Gmail.',
+  gmailRestName: 'Gmail',
+  gmailRestTitle: 'Gmail REST natif',
+  gmailRestConfigureOnPc: 'Configurer sur PC',
+  gmailRestElevateOnPc: 'Élever les autorisations OSIA sur PC',
+  gmailRestReadOnly: 'Lecture seule',
+  gmailRestDraftsSend: 'Brouillons/envoi',
+  gmailRestMailboxActions: 'Actions de boîte mail',
+  gmailRestConnected: 'Connecté',
+  gmailRestNotConnected: 'Non connecté',
   mcpCustomTitle: 'Ajouter un serveur MCP personnalisé',
   mcpCustomHint:
       "Ajoutez une commande stdio locale (ex. npx …). Les serveurs distants (HTTP) arriveront plus tard. L'ajout ne connecte pas — connectez-le ensuite explicitement.",
@@ -1572,6 +1608,15 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   mcpDescLinear: 'Linear 中的议题、项目与周期。',
   mcpDescGdrive: '浏览并读取 Google Drive 中的文件。',
   mcpDescGmail: '在 Gmail 中搜索与管理电子邮件。',
+  gmailRestName: 'Gmail',
+  gmailRestTitle: '原生 Gmail REST',
+  gmailRestConfigureOnPc: '在电脑上配置',
+  gmailRestElevateOnPc: '在电脑上提升 OSIA 权限',
+  gmailRestReadOnly: '只读',
+  gmailRestDraftsSend: '草稿/发送',
+  gmailRestMailboxActions: '邮箱操作',
+  gmailRestConnected: '已连接',
+  gmailRestNotConnected: '未连接',
   mcpCustomTitle: '添加自定义 MCP 服务器',
   mcpCustomHint: '添加本地 stdio 命令（例如 npx …）。远程 (HTTP) 服务器将在后续更新中推出。添加不会自动连接 — 之后请手动连接。',
   mcpFieldName: '名称',
@@ -1865,6 +1910,15 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   mcpDescLinear: 'Linear の Issue・プロジェクト・サイクル。',
   mcpDescGdrive: 'Google Drive のファイルを閲覧・読み取りします。',
   mcpDescGmail: 'Gmail のメールを検索・管理します。',
+  gmailRestName: 'Gmail',
+  gmailRestTitle: 'ネイティブ Gmail REST',
+  gmailRestConfigureOnPc: 'PCで設定',
+  gmailRestElevateOnPc: 'PCで OSIA の権限を引き上げ',
+  gmailRestReadOnly: '読み取り専用',
+  gmailRestDraftsSend: '下書き/送信',
+  gmailRestMailboxActions: 'メールボックス操作',
+  gmailRestConnected: '接続済み',
+  gmailRestNotConnected: '未接続',
   mcpCustomTitle: 'カスタム MCP サーバーを追加',
   mcpCustomHint:
       'ローカルの stdio コマンド（例：npx …）を追加します。リモート (HTTP) サーバーは今後のアップデートで対応予定です。追加しても接続はされません — 後で明示的に接続してください。',
@@ -2173,6 +2227,15 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   mcpDescLinear: 'Issues, Projekte und Zyklen in Linear.',
   mcpDescGdrive: 'Dateien in Google Drive durchsuchen und lesen.',
   mcpDescGmail: 'E-Mails in Gmail durchsuchen und verwalten.',
+  gmailRestName: 'Gmail',
+  gmailRestTitle: 'Native Gmail REST',
+  gmailRestConfigureOnPc: 'Am PC konfigurieren',
+  gmailRestElevateOnPc: 'OSIA-Berechtigungen am PC erweitern',
+  gmailRestReadOnly: 'Schreibgeschützt',
+  gmailRestDraftsSend: 'Entwürfe/Senden',
+  gmailRestMailboxActions: 'Postfachaktionen',
+  gmailRestConnected: 'Verbunden',
+  gmailRestNotConnected: 'Nicht verbunden',
   mcpCustomTitle: 'Eigenen MCP-Server hinzufügen',
   mcpCustomHint:
       'Fügen Sie einen lokalen stdio-Befehl hinzu (z. B. npx …). Remote-Server (HTTP) folgen in einem späteren Update. Das Hinzufügen verbindet nicht — verbinden Sie ihn danach ausdrücklich.',
@@ -2480,6 +2543,15 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   mcpDescLinear: 'Incidencias, proyectos y ciclos en Linear.',
   mcpDescGdrive: 'Explorar y leer archivos en Google Drive.',
   mcpDescGmail: 'Buscar y gestionar el correo en Gmail.',
+  gmailRestName: 'Gmail',
+  gmailRestTitle: 'Gmail REST nativo',
+  gmailRestConfigureOnPc: 'Configurar en el PC',
+  gmailRestElevateOnPc: 'Elevar permisos de OSIA en el PC',
+  gmailRestReadOnly: 'Solo lectura',
+  gmailRestDraftsSend: 'Borradores/envío',
+  gmailRestMailboxActions: 'Acciones del buzón',
+  gmailRestConnected: 'Conectado',
+  gmailRestNotConnected: 'No conectado',
   mcpCustomTitle: 'Añadir un servidor MCP personalizado',
   mcpCustomHint:
       'Añade un comando stdio local (p. ej. npx …). Los servidores remotos (HTTP) llegarán en una actualización posterior. Añadir no conecta — conéctalo explícitamente después.',

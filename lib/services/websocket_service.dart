@@ -220,6 +220,87 @@ class ConfigSkill {
       );
 }
 
+/// Capability flags for the server-side native Gmail REST integration.
+class GmailRestCapabilities {
+  final bool readonly;
+  final bool compose;
+  final bool modify;
+
+  const GmailRestCapabilities({
+    this.readonly = false,
+    this.compose = false,
+    this.modify = false,
+  });
+
+  factory GmailRestCapabilities.fromJson(Map<String, dynamic> json) {
+    bool readBool(Object? raw) {
+      if (raw is bool) return raw;
+      if (raw is String) return raw.toLowerCase() == 'true';
+      return false;
+    }
+
+    return GmailRestCapabilities(
+      readonly: readBool(json['readonly']),
+      compose: readBool(json['compose']),
+      modify: readBool(json['modify']),
+    );
+  }
+}
+
+/// Mirror of `config.gmail_rest`; Gmail REST itself stays server-side.
+class GmailRestConfig {
+  final bool connected;
+  final String? status;
+  final String? emailAddress;
+  final String? reason;
+  final GmailRestCapabilities capabilities;
+
+  const GmailRestConfig({
+    required this.connected,
+    this.status,
+    this.emailAddress,
+    this.reason,
+    this.capabilities = const GmailRestCapabilities(),
+  });
+
+  static GmailRestConfig? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final json = <String, dynamic>{};
+    raw.forEach((key, value) => json[key.toString()] = value);
+
+    bool readBool(Object? value) {
+      if (value is bool) return value;
+      if (value is String) return value.toLowerCase() == 'true';
+      return false;
+    }
+
+    String? readString(Object? value) {
+      if (value is! String) return null;
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+
+    final rawCapabilities = json['capabilities'];
+    final capabilityJson = <String, dynamic>{};
+    if (rawCapabilities is Map) {
+      rawCapabilities.forEach((key, value) {
+        capabilityJson[key.toString()] = value;
+      });
+    }
+    final capabilities = capabilityJson.isEmpty
+        ? const GmailRestCapabilities()
+        : GmailRestCapabilities.fromJson(capabilityJson);
+
+    return GmailRestConfig(
+      connected: readBool(json['connected']),
+      status: readString(json['status']),
+      emailAddress: readString(json['emailAddress']),
+      reason: readString(json['reason']),
+      capabilities: capabilities,
+    );
+  }
+}
+
 /// The full configuration snapshot sent by the server in response to
 /// `{"type":"get_config"}` as `{"type":"config","config":{...}}`.
 ///
@@ -251,6 +332,10 @@ class ConfigData {
   /// All skill files, in server order.
   final List<ConfigSkill> skills;
 
+  /// Native Gmail REST state mirrored from the PC. This is display-only on
+  /// mobile; Gmail auth and REST calls remain server-side.
+  final GmailRestConfig? gmailRest;
+
   /// Raw mirror of the PC's `settings.json` values, for pre-filling toggles
   /// that have no dedicated typed field above (e.g. `time_format`,
   /// `heartbeat_enabled`, `heartbeat_interval_seconds`). The server may nest
@@ -266,6 +351,7 @@ class ConfigData {
     required this.aiHierarchyEnabled,
     required this.personality,
     required this.skills,
+    this.gmailRest,
     required this.settings,
   });
 
@@ -312,6 +398,7 @@ class ConfigData {
       aiHierarchyEnabled: config['ai_hierarchy_enabled'] == true,
       personality: (config['personality'] ?? '').toString(),
       skills: readSkills(config['skills']),
+      gmailRest: GmailRestConfig.tryParse(config['gmail_rest']),
       settings: readSettings(config),
     );
   }

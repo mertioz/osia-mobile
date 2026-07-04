@@ -4828,7 +4828,8 @@ class _McpConnector {
 
 /// The preconfigured catalog — parity with the PC `_MCP_CATALOG`. GitHub and
 /// Slack are stdio/token and Notion is streamable-HTTP/token (all connectable
-/// now); Linear/Google Drive/Gmail are OAuth (shown disabled "soon").
+/// now); Linear/Google Drive are OAuth. Gmail is shown separately from the
+/// native REST mirror, not as an MCP OAuth connector.
 /// Filesystem and Brave Search are intentionally absent (each duplicates a
 /// native OSIA capability).
 const List<_McpConnector> _mcpCatalog = [
@@ -4877,14 +4878,6 @@ const List<_McpConnector> _mcpCatalog = [
     url: '',
     authType: 'oauth',
   ),
-  _McpConnector(
-    id: 'gmail',
-    name: 'Gmail',
-    descField: 'gmail',
-    transport: 'streamable_http',
-    url: '',
-    authType: 'oauth',
-  ),
 ];
 
 const Set<String> _mcpCatalogIds = {
@@ -4893,7 +4886,11 @@ const Set<String> _mcpCatalogIds = {
   'notion',
   'linear',
   'google-drive',
+};
+
+const Set<String> _legacyGmailMcpIds = {
   'gmail',
+  'gmail-mcp-legacy',
 };
 
 class _McpScreen extends StatefulWidget {
@@ -4947,6 +4944,9 @@ class _McpScreenState extends State<_McpScreen> {
   /// (`mcp_allow_unattended_writes`; default OFF). Same persistence as above.
   late bool _allowUnattended;
 
+  /// Native Gmail REST state from the config snapshot. Display-only on mobile.
+  ws.GmailRestConfig? _gmailRest;
+
   /// The connector currently shown in the panel.
   String _selectedId = _mcpCatalog.first.id;
 
@@ -4979,6 +4979,7 @@ class _McpScreenState extends State<_McpScreen> {
         _readBool(widget.config.settings['mcp_confirm_writes'], true);
     _allowUnattended =
         _readBool(widget.config.settings['mcp_allow_unattended_writes'], false);
+    _gmailRest = widget.config.gmailRest;
 
     // Stay live while open: the parent passed a snapshot, but config / keys /
     // status can change (incl. from the PC), so subscribe to all three.
@@ -5002,6 +5003,7 @@ class _McpScreenState extends State<_McpScreen> {
         _confirmWrites = _readBool(cfg.settings['mcp_confirm_writes'], true);
         _allowUnattended =
             _readBool(cfg.settings['mcp_allow_unattended_writes'], false);
+        _gmailRest = cfg.gmailRest;
       });
     });
     _apiKeysSub = widget.wsService.apiKeysStream.listen((msg) {
@@ -5062,13 +5064,19 @@ class _McpScreenState extends State<_McpScreen> {
     return null;
   }
 
-  /// All connectors for the dropdown: the 6 catalog entries, then any custom
-  /// stdio servers the user added (saved entries whose id isn't in the catalog).
+  /// All connectors for the dropdown: catalog entries, then any custom stdio
+  /// servers the user added (saved entries whose id isn't in the catalog).
   List<_McpConnector> _allConnectors() {
     final out = List<_McpConnector>.from(_mcpCatalog);
     for (final s in _servers) {
       final id = (s['id'] ?? '').toString();
-      if (id.isEmpty || _mcpCatalogIds.contains(id)) continue;
+      if (id.isEmpty ||
+          _mcpCatalogIds.contains(id) ||
+          _legacyGmailMcpIds.contains(id) ||
+          _readBool(s['hidden'], false) ||
+          _readBool(s['disabled'], false)) {
+        continue;
+      }
       out.add(_McpConnector(
         id: id,
         name: (s['name'] ?? id).toString(),
@@ -5352,6 +5360,7 @@ class _McpScreenState extends State<_McpScreen> {
   String _uniqueId(String base) {
     final taken = {
       ..._mcpCatalogIds,
+      ..._legacyGmailMcpIds,
       ..._servers.map((s) => (s['id'] ?? '').toString()),
     };
     if (!taken.contains(base)) return base;
@@ -5455,6 +5464,8 @@ class _McpScreenState extends State<_McpScreen> {
                 ),
               ),
               const SizedBox(height: 16),
+              _buildGmailRestCard(palette, strings),
+              const SizedBox(height: 16),
               // ── Write-tool safety (WOR-44 Phase 5) ──
               // Global gate for write MCP tools, applies to every connector.
               _OsiaCard(
@@ -5538,6 +5549,213 @@ class _McpScreenState extends State<_McpScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildGmailRestCard(OsiaPalette palette, OsiaStrings strings) {
+    final gmail = _gmailRest;
+    final connected = gmail?.connected == true;
+    final caps = gmail?.capabilities ?? const ws.GmailRestCapabilities();
+    final email = gmail?.emailAddress?.trim() ?? '';
+    final needsElevation = connected && (!caps.compose || !caps.modify);
+
+    return _OsiaCard(
+      palette: palette,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: palette.surfaceElevated,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: palette.border),
+                ),
+                child: Icon(
+                  Icons.mail_outline_rounded,
+                  size: 20,
+                  color: palette.accent,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      strings.gmailRestName,
+                      style: TextStyle(
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w600,
+                        color: palette.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      strings.gmailRestTitle,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.25,
+                        color: palette.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              _GmailRestStatusPill(
+                connected: connected,
+                palette: palette,
+                strings: strings,
+              ),
+            ],
+          ),
+          if (email.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(
+                  Icons.alternate_email_rounded,
+                  size: 16,
+                  color: palette.textMuted,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    email,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: palette.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 10),
+          Text(
+            _gmailRestDetail(strings, gmail),
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: palette.textMuted,
+            ),
+          ),
+          if (connected) ...[
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _gmailCapabilityChip(
+                  palette,
+                  strings.gmailRestReadOnly,
+                  caps.readonly,
+                ),
+                _gmailCapabilityChip(
+                  palette,
+                  strings.gmailRestDraftsSend,
+                  caps.compose,
+                ),
+                _gmailCapabilityChip(
+                  palette,
+                  strings.gmailRestMailboxActions,
+                  caps.modify,
+                ),
+              ],
+            ),
+          ],
+          if (!connected || needsElevation) ...[
+            const SizedBox(height: 14),
+            _gmailPcNotice(
+              palette,
+              !connected
+                  ? strings.gmailRestConfigureOnPc
+                  : strings.gmailRestElevateOnPc,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _gmailRestDetail(OsiaStrings strings, ws.GmailRestConfig? gmail) {
+    final reason = gmail?.reason?.trim() ?? '';
+    if (reason.isNotEmpty) return reason;
+    final status = gmail?.status?.trim() ?? '';
+    if (status.isNotEmpty &&
+        status != 'connected' &&
+        status != 'disconnected') {
+      return status;
+    }
+    return strings.mcpDescGmail;
+  }
+
+  Widget _gmailCapabilityChip(
+    OsiaPalette palette,
+    String label,
+    bool enabled,
+  ) {
+    final color = enabled ? palette.accent : palette.textMuted;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: enabled
+            ? palette.accent.withValues(alpha: 0.12)
+            : palette.surfaceElevated,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            enabled ? Icons.check_rounded : Icons.remove_rounded,
+            size: 14,
+            color: color,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _gmailPcNotice(OsiaPalette palette, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: palette.surfaceElevated,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: palette.border),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.computer_rounded, size: 18, color: palette.accent),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+                color: palette.textPrimary,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -5903,6 +6121,55 @@ class _McpStatusPill extends StatelessWidget {
           strings.mcpStatusDisconnected,
         ),
     };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: fg.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: fg,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Status pill for the native Gmail REST mirror.
+class _GmailRestStatusPill extends StatelessWidget {
+  final bool connected;
+  final OsiaPalette palette;
+  final OsiaStrings strings;
+
+  const _GmailRestStatusPill({
+    required this.connected,
+    required this.palette,
+    required this.strings,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = connected ? const Color(0xFF6FCF97) : palette.textMuted;
+    final bg = connected ? const Color(0xFF10241A) : palette.surfaceElevated;
+    final label =
+        connected ? strings.gmailRestConnected : strings.gmailRestNotConnected;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
