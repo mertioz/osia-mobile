@@ -52,9 +52,44 @@ void main() {
       ]);
     });
 
+    test('exposes OpenAI reasoning options for supported GPT models', () {
+      expect(ids('openai', 'gpt-5.5'), [
+        'auto',
+        'off',
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+      ]);
+      expect(ids('openai', 'gpt-4.1'), isEmpty);
+    });
+
+    test('exposes Claude reasoning options by model support', () {
+      expect(ids('anthropic', 'claude-opus-4-8'), [
+        'auto',
+        'off',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+      ]);
+
+      expect(ids('anthropic', 'claude-sonnet-4-6'), [
+        'auto',
+        'off',
+        'low',
+        'medium',
+        'high',
+        'max',
+      ]);
+      expect(ids('anthropic', 'claude-sonnet-4-6'), contains('max'));
+      expect(ids('anthropic', 'claude-sonnet-4-6'), isNot(contains('xhigh')));
+      expect(ids('anthropic', 'claude-haiku-4-5-20251001'), isEmpty);
+    });
+
     test('does not expose controls for unsupported models', () {
-      expect(ids('openai', 'gpt-5.5'), isEmpty);
-      expect(ids('anthropic', 'claude-sonnet-4-6'), isEmpty);
       expect(ids('xai', 'grok-3'), isEmpty);
       expect(ids('groq', 'llama-3.3-70b-versatile'), isEmpty);
       expect(ids('mistral', 'mistral-large-2512'), isEmpty);

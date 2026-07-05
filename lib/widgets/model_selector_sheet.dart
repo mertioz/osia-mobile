@@ -81,6 +81,24 @@ const Set<String> _deepSeekReasoningModels = {
   'deepseek-v4-flash',
 };
 
+const Set<String> _openAiReasoningModels = {
+  'gpt-5.5',
+  'gpt-5.4',
+  'gpt-5.4-mini',
+};
+
+const Set<String> _claudeReasoningModels = {
+  'claude-opus-4-8',
+  'claude-opus-4-7',
+  'claude-opus-4-6',
+  'claude-sonnet-4-6',
+};
+
+const Set<String> _claudeXhighReasoningModels = {
+  'claude-opus-4-8',
+  'claude-opus-4-7',
+};
+
 @visibleForTesting
 List<ModelReasoningOption> reasoningOptionsForModel(ws.OsiaModel model) {
   final provider = _reasoningProviderFor(model);
@@ -93,6 +111,32 @@ List<ModelReasoningOption> reasoningOptionsForModel(ws.OsiaModel model) {
       ModelReasoningOption('off'),
       ModelReasoningOption('normal'),
       ModelReasoningOption('max'),
+    ];
+  }
+
+  if (provider == 'openai' && _openAiReasoningModels.contains(modelId)) {
+    return const [
+      _defaultReasoningOption,
+      ModelReasoningOption('off'),
+      ModelReasoningOption('minimal'),
+      ModelReasoningOption('low'),
+      ModelReasoningOption('medium'),
+      ModelReasoningOption('high'),
+      ModelReasoningOption('xhigh'),
+    ];
+  }
+
+  if ((provider == 'anthropic' || provider == 'claude') &&
+      _claudeReasoningModels.contains(modelId)) {
+    return [
+      _defaultReasoningOption,
+      const ModelReasoningOption('off'),
+      const ModelReasoningOption('low'),
+      const ModelReasoningOption('medium'),
+      const ModelReasoningOption('high'),
+      if (_claudeXhighReasoningModels.contains(modelId))
+        const ModelReasoningOption('xhigh'),
+      const ModelReasoningOption('max'),
     ];
   }
 
@@ -141,6 +185,8 @@ String _reasoningProviderFor(ws.OsiaModel model) {
   if (id.startsWith('openai/gpt-oss-') || id.contains('gpt-oss')) {
     return 'groq';
   }
+  if (id.startsWith('gpt-')) return 'openai';
+  if (id.startsWith('claude-')) return 'anthropic';
   if (id.startsWith('mistral-') || id == 'codestral-2508') return 'mistral';
   return '';
 }
