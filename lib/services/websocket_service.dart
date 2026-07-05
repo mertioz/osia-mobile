@@ -508,6 +508,141 @@ class ConfigData {
 // subtype would break its compile (and CLAUDE.md forbids touching it). Each
 // rides its own dedicated stream instead, exactly like config.
 
+/// One local OSIA memory entry, carried inside a [MemorySnapshot].
+///
+/// Delivered on [WebSocketService.memoryStream], outside the sealed
+/// [OsiaMessage] hierarchy so the chat stream remains untouched.
+class MemoryEntryData {
+  final String id;
+  final String type;
+  final String category;
+  final String key;
+  final String title;
+  final Map<String, dynamic> value;
+  final double confidence;
+  final String source;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final DateTime? lastUsedAt;
+  final List<String> tags;
+  final Map<String, dynamic> device;
+  final DateTime? expiresAt;
+
+  const MemoryEntryData({
+    required this.id,
+    required this.type,
+    required this.category,
+    required this.key,
+    required this.title,
+    required this.value,
+    required this.confidence,
+    required this.source,
+    this.createdAt,
+    this.updatedAt,
+    this.lastUsedAt,
+    this.tags = const [],
+    this.device = const {},
+    this.expiresAt,
+  });
+
+  factory MemoryEntryData.fromJson(Map<String, dynamic> json) {
+    DateTime? readDate(Object? raw) =>
+        raw is String ? DateTime.tryParse(raw) : null;
+
+    return MemoryEntryData(
+      id: (json['id'] ?? '').toString(),
+      type: (json['type'] ?? '').toString(),
+      category: (json['category'] ?? '').toString(),
+      key: (json['key'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      value: json['value'] is Map
+          ? (json['value'] as Map).cast<String, dynamic>()
+          : <String, dynamic>{},
+      confidence: json['confidence'] is num
+          ? (json['confidence'] as num).toDouble()
+          : 1.0,
+      source: (json['source'] ?? '').toString(),
+      createdAt: readDate(json['created_at']),
+      updatedAt: readDate(json['updated_at']),
+      lastUsedAt: readDate(json['last_used_at']),
+      tags: json['tags'] is List
+          ? (json['tags'] as List).map((e) => e.toString()).toList()
+          : const <String>[],
+      device: json['device'] is Map
+          ? (json['device'] as Map).cast<String, dynamic>()
+          : <String, dynamic>{},
+      expiresAt: readDate(json['expires_at']),
+    );
+  }
+
+  String get valueKind => (value['kind'] ?? '').toString();
+
+  Object? get valueData => value['data'];
+
+  Map<String, dynamic> toJson({String? sourceOverride}) => {
+    if (id.isNotEmpty) 'id': id,
+    'type': type,
+    'category': category,
+    'key': key,
+    'title': title,
+    'value': Map<String, dynamic>.from(value),
+    'confidence': confidence,
+    'source': sourceOverride ?? source,
+    if (createdAt != null) 'created_at': createdAt!.toUtc().toIso8601String(),
+    if (updatedAt != null) 'updated_at': updatedAt!.toUtc().toIso8601String(),
+    if (lastUsedAt != null)
+      'last_used_at': lastUsedAt!.toUtc().toIso8601String(),
+    'tags': List<String>.from(tags),
+    'device': Map<String, dynamic>.from(device),
+    if (expiresAt != null) 'expires_at': expiresAt!.toUtc().toIso8601String(),
+  };
+}
+
+/// Full local-memory snapshot from the PC server.
+class MemorySnapshot {
+  final int schemaVersion;
+  final DateTime? updatedAt;
+  final List<MemoryEntryData> entries;
+
+  const MemorySnapshot({
+    required this.schemaVersion,
+    this.updatedAt,
+    required this.entries,
+  });
+
+  factory MemorySnapshot.fromJson(Map<String, dynamic> json) {
+    final rawEntries = json['entries'];
+    return MemorySnapshot(
+      schemaVersion: json['schema_version'] is num
+          ? (json['schema_version'] as num).toInt()
+          : 1,
+      updatedAt: json['updated_at'] is String
+          ? DateTime.tryParse(json['updated_at'] as String)
+          : null,
+      entries: rawEntries is List
+          ? rawEntries
+                .whereType<Map>()
+                .map((e) => MemoryEntryData.fromJson(e.cast<String, dynamic>()))
+                .toList()
+          : const <MemoryEntryData>[],
+    );
+  }
+}
+
+/// Validation/storage error from the PC memory store.
+class MemoryErrorMessage {
+  final String code;
+  final String message;
+
+  const MemoryErrorMessage({required this.code, required this.message});
+
+  factory MemoryErrorMessage.fromJson(Map<String, dynamic> json) =>
+      MemoryErrorMessage(
+        code: (json['code'] ?? 'unknown').toString(),
+        message: (json['message'] ?? '').toString(),
+      );
+}
+
 /// Raw API keys per provider, sent by the PC in reply to
 /// `{"type":"get_api_keys"}` as `{"type":"api_keys","keys":{provider:key}}`.
 ///
@@ -943,6 +1078,12 @@ class WebSocketService {
   final StreamController<ApiKeysMessage> _apiKeysCtrl =
       StreamController<ApiKeysMessage>.broadcast();
 
+  final StreamController<MemorySnapshot> _memoryCtrl =
+      StreamController<MemorySnapshot>.broadcast();
+
+  final StreamController<MemoryErrorMessage> _memoryErrorCtrl =
+      StreamController<MemoryErrorMessage>.broadcast();
+
   final StreamController<HeartbeatDataMessage> _heartbeatCtrl =
       StreamController<HeartbeatDataMessage>.broadcast();
 
@@ -1018,6 +1159,13 @@ class WebSocketService {
   /// Stream of raw API-key snapshots (one per `get_api_keys` reply). Kept off
   /// [messageStream] for the same reason as [configStream].
   Stream<ApiKeysMessage> get apiKeysStream => _apiKeysCtrl.stream;
+
+  /// Stream of local OSIA memory snapshots (`memory` / `memory_updated`).
+  /// Kept off [messageStream] for the same reason as [configStream].
+  Stream<MemorySnapshot> get memoryStream => _memoryCtrl.stream;
+
+  /// Stream of memory validation/storage errors (`memory_error`).
+  Stream<MemoryErrorMessage> get memoryErrorStream => _memoryErrorCtrl.stream;
 
   /// Stream of live system-metrics pushes (`heartbeat_data`). Kept off
   /// [messageStream] for the same reason as [configStream].
@@ -1142,6 +1290,9 @@ class WebSocketService {
   /// Current connection state.
   ConnectionState _state = ConnectionState.disconnected;
   ConnectionState get state => _state;
+
+  MemorySnapshot? _memorySnapshot;
+  MemorySnapshot? get memorySnapshot => _memorySnapshot;
 
   // ── Chunk pacing ─────────────────────────────────────────────────────
   //
@@ -1330,6 +1481,27 @@ class WebSocketService {
     _send({'type': 'get_api_keys'});
   }
 
+  /// Ask the PC for the authoritative local-memory snapshot. The reply arrives
+  /// on [memoryStream] as a [MemorySnapshot].
+  void requestMemory() {
+    _send({'type': 'get_memory'});
+  }
+
+  /// Create or update one memory entry through the PC's MemoryStore.
+  void upsertMemory(Map<String, dynamic> entry) {
+    _send({'type': 'upsert_memory', 'entry': entry});
+  }
+
+  /// Delete one memory entry by id.
+  void deleteMemory(String id) {
+    _send({'type': 'delete_memory', 'id': id});
+  }
+
+  /// Clear every local memory entry on the PC after UI confirmation.
+  void clearMemory() {
+    _send({'type': 'clear_memory'});
+  }
+
   /// Ask the PC for a compact id+title list of stored conversations, to fill
   /// the cron editor's "linked conversation" picker (WOR-24). The reply arrives
   /// on [conversationsListStream] as a [ConversationsListMessage].
@@ -1492,6 +1664,8 @@ class WebSocketService {
     _errorCtrl.close();
     _configCtrl.close();
     _apiKeysCtrl.close();
+    _memoryCtrl.close();
+    _memoryErrorCtrl.close();
     _heartbeatCtrl.close();
     _newChatCtrl.close();
     _conversationsListCtrl.close();
@@ -1918,6 +2092,26 @@ class WebSocketService {
             '[OSIA WS] api_keys received: ${keysMsg.keys.length} key(s)',
           );
           if (!_apiKeysCtrl.isClosed) _apiKeysCtrl.add(keysMsg);
+        case 'memory':
+        case 'memory_updated':
+          // Local memory snapshots. Own stream, same rationale as config.
+          final rawMemory = json['memory'];
+          if (rawMemory is Map) {
+            final snapshot = MemorySnapshot.fromJson(
+              rawMemory.cast<String, dynamic>(),
+            );
+            _memorySnapshot = snapshot;
+            debugPrint(
+              '[OSIA WS] $type received: ${snapshot.entries.length} entries',
+            );
+            if (!_memoryCtrl.isClosed) _memoryCtrl.add(snapshot);
+          } else {
+            debugPrint('[OSIA WS] $type message had no memory payload');
+          }
+        case 'memory_error':
+          final err = MemoryErrorMessage.fromJson(json);
+          debugPrint('[OSIA WS] memory_error ${err.code}: ${err.message}');
+          if (!_memoryErrorCtrl.isClosed) _memoryErrorCtrl.add(err);
         case 'heartbeat_data':
           // Live system metrics. Own [heartbeatStream], same rationale.
           final hb = HeartbeatDataMessage.fromJson(json);

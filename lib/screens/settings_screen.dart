@@ -10,6 +10,7 @@ import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 import 'legal_screen.dart';
+import 'memory_screen.dart';
 import 'providers_screen.dart';
 
 /// Placeholder donation URL — to be replaced with the real one later.
@@ -115,6 +116,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _openProviders() {
     Navigator.of(context).push(
       slideFadeRoute(ProvidersScreen(wsService: widget.wsService)),
+    );
+  }
+
+  void _openMemory() {
+    Navigator.of(context).push(
+      slideFadeRoute(MemoryScreen(wsService: widget.wsService)),
     );
   }
 
@@ -340,6 +347,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       palette: palette,
                     ),
                   ],
+                ),
+              ),
+
+              // ── Memory ───────────────────────────────────────────────
+              _SectionHeader(
+                label: strings.memoryTitle,
+                subtitle: strings.localMemories,
+                palette: palette,
+              ),
+              _SectionCard(
+                palette: palette,
+                padding: EdgeInsets.zero,
+                child: _NavTile(
+                  icon: Icons.psychology_alt_rounded,
+                  title: strings.memoryTitle,
+                  onTap: _openMemory,
+                  palette: palette,
                 ),
               ),
 
