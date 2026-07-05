@@ -116,6 +116,8 @@ class _ChatScreenState extends State<ChatScreen> {
   // sheet notes that the chosen model is overridden by the configured chain.
   // Tracked via [configStream]; requested on connect.
   bool _aiHierarchyEnabled = false;
+  ws.OsiaReasoningConfig _reasoning = const ws.OsiaReasoningConfig();
+  bool _reasoningConfigLoaded = false;
   // Active notifier for the open model-selector sheet, if any. Lets the
   // chat screen push state updates (models arriving, load timing out) into
   // a sheet that's already on screen.
@@ -259,7 +261,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _autoTts = await widget.storage.getAutoTts();
     } catch (e) {
       debugPrint(
-          '[OSIA Chat] storage read failed during init: $e — using defaults');
+        '[OSIA Chat] storage read failed during init: $e — using defaults',
+      );
       // WOR-78 Fix B: when the preference is unreadable, default auto-TTS OFF
       // (don't auto-read aloud on an unknown state).
       _autoTts = false;
@@ -284,7 +287,8 @@ class _ChatScreenState extends State<ChatScreen> {
     // left the chat stuck "Connecting"). Falls back to a fresh service for
     // app relaunch / Settings round-trips — which resolves the host from the
     // token just like the connection screen ([ip] kept only as a fallback).
-    _wsService = handoff?.service ??
+    _wsService =
+        handoff?.service ??
         ws.WebSocketService(
           ip: ip ?? StorageService.defaultHost,
           token: authToken,
@@ -335,14 +339,18 @@ class _ChatScreenState extends State<ChatScreen> {
                 _wsService.isPending(displayed)) {
               _startRecoveryPoll();
               if (ws.kOsiaDebugPlaceholder) {
-                debugPrint('[OSIA WOR-75] reconnect: displayed="$displayed" '
-                    'isPending=true → recovery poll started');
+                debugPrint(
+                  '[OSIA WOR-75] reconnect: displayed="$displayed" '
+                  'isPending=true → recovery poll started',
+                );
               }
             } else if (ws.kOsiaDebugPlaceholder) {
-              debugPrint('[OSIA WOR-75] reconnect: displayed='
-                  '"${displayed ?? ""}" isPending='
-                  '${displayed != null && _wsService.isPending(displayed)} '
-                  '→ recovery poll NOT started');
+              debugPrint(
+                '[OSIA WOR-75] reconnect: displayed='
+                '"${displayed ?? ""}" isPending='
+                '${displayed != null && _wsService.isPending(displayed)} '
+                '→ recovery poll NOT started',
+              );
             }
           }
         });
@@ -362,7 +370,12 @@ class _ChatScreenState extends State<ChatScreen> {
     // the chosen model is overridden by the configured chain.
     _configSub = _wsService.configStream.listen((cfg) {
       if (mounted) {
-        setState(() => _aiHierarchyEnabled = cfg.aiHierarchyEnabled);
+        setState(() {
+          _aiHierarchyEnabled = cfg.aiHierarchyEnabled;
+          _reasoning = cfg.reasoning;
+          _reasoningConfigLoaded = true;
+        });
+        _pushModelSelectorReasoning(cfg.reasoning);
       }
     });
 
@@ -373,8 +386,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // WOR-44 Phase 5: write-tool confirmation requests (kept off the sealed
     // message switch). The server blocks the agent until we answer; the handler
     // serializes requests and guarantees exactly one response per request.
-    _mcpConfirmSub =
-        _wsService.mcpConfirmStream.listen(_onMcpConfirmRequest);
+    _mcpConfirmSub = _wsService.mcpConfirmStream.listen(_onMcpConfirmRequest);
 
     _errSub = _wsService.errorStream.listen((err) {
       if (mounted) {
@@ -395,8 +407,10 @@ class _ChatScreenState extends State<ChatScreen> {
       // Replay the buffered frames the connection screen captured, then run
       // the post-connect side-effects the live listener would have run.
       final buffered = List<ws.OsiaMessage>.of(handoff.bufferedMessages);
-      debugPrint('[OSIA Chat] Reusing live connection — replaying '
-          '${buffered.length} buffered frame(s).');
+      debugPrint(
+        '[OSIA Chat] Reusing live connection — replaying '
+        '${buffered.length} buffered frame(s).',
+      );
       for (final msg in buffered) {
         _onMessage(msg);
       }
@@ -423,8 +437,9 @@ class _ChatScreenState extends State<ChatScreen> {
         // received the request and is working. Stand the watchdog down.
         _cancelFirstTokenTimer();
         if (content.isNotEmpty) {
-          _addEntry(_ChatEntry(
-              content: content, isUser: true, isTranscript: true));
+          _addEntry(
+            _ChatEntry(content: content, isUser: true, isTranscript: true),
+          );
           // Feature 1: retain the voice transcript (the user's "message" for a
           // voice turn) so a switch-back / reconnect re-fetch re-injects it
           // above the reply instead of dropping it.
@@ -449,7 +464,8 @@ class _ChatScreenState extends State<ChatScreen> {
             source == 'speak' || (source == null && _speakRequested);
         if (isSpeakAudio) {
           debugPrint(
-              '[OSIA Chat] audio: source=$source → playing (read-aloud)');
+            '[OSIA Chat] audio: source=$source → playing (read-aloud)',
+          );
           _speakRequested = false;
           _audioService.playMp3(data);
           break;
@@ -460,8 +476,10 @@ class _ChatScreenState extends State<ChatScreen> {
         // first text token is still pending (and whether or not auto-TTS plays
         // it below).
         _cancelFirstTokenTimer();
-        debugPrint('[OSIA Chat] audio: autoTts=$_autoTts → '
-            '${_autoTts ? "playing audio" : "dropped (auto-TTS off)"}');
+        debugPrint(
+          '[OSIA Chat] audio: autoTts=$_autoTts → '
+          '${_autoTts ? "playing audio" : "dropped (auto-TTS off)"}',
+        );
         if (!_autoTts) break;
         _audioService.playMp3(data);
       case ws.StatusMessage(:final content):
@@ -585,9 +603,11 @@ class _ChatScreenState extends State<ChatScreen> {
             effectiveConvId.isNotEmpty &&
             _wsService.bufferedText(effectiveConvId).isNotEmpty) {
           if (ws.kOsiaDebugPlaceholder) {
-            debugPrint('[OSIA WOR-75] conversation_history for id="${id ?? ""}" '
-                '(${messages.length} msgs) STALE reply-less while buffer holds '
-                'the reply → IGNORE (keep on-screen reply, no blank)');
+            debugPrint(
+              '[OSIA WOR-75] conversation_history for id="${id ?? ""}" '
+              '(${messages.length} msgs) STALE reply-less while buffer holds '
+              'the reply → IGNORE (keep on-screen reply, no blank)',
+            );
           }
           return;
         }
@@ -602,24 +622,28 @@ class _ChatScreenState extends State<ChatScreen> {
         // in-flight typewriter reveal so it can't keep writing into a stale slot.
         _stopTypewriter();
         if (ws.kOsiaDebugPlaceholder) {
-          debugPrint('[OSIA WOR-75] conversation_history applied for '
-              'id="${id ?? ""}" (${messages.length} msgs) → '
-              'renders persisted history');
+          debugPrint(
+            '[OSIA WOR-75] conversation_history applied for '
+            'id="${id ?? ""}" (${messages.length} msgs) → '
+            'renders persisted history',
+          );
         }
         // Polish: capture whether this conversation's turn is still in flight
         // BEFORE the apply path below clears its pending flag, so a hydrated
         // pending conversation with no reply yet can re-show the thinking
         // indicator (applied at the end of this setState).
-        final bool wasPending = effectiveConvId != null &&
+        final bool wasPending =
+            effectiveConvId != null &&
             effectiveConvId.isNotEmpty &&
             _wsService.isPending(effectiveConvId);
         setState(() {
           _entries
             ..clear()
-            ..addAll(messages.map((m) => _ChatEntry(
-                  content: m.content,
-                  isUser: m.role == 'user',
-                )));
+            ..addAll(
+              messages.map(
+                (m) => _ChatEntry(content: m.content, isUser: m.role == 'user'),
+              ),
+            );
           _thinking = false;
           _noResponse = false;
           // Feature 2: persisted history is shown in full — reset the reveal
@@ -646,11 +670,14 @@ class _ChatScreenState extends State<ChatScreen> {
               // whose optimistic copy carries a client-only "📎 filename"
               // prefix the server-persisted text never has — re-injecting then
               // would duplicate the bubble. historyHasReply is the done case.
-              final lastUserIdx =
-                  messages.lastIndexWhere((m) => m.role == 'user');
-              final lastAssistantIdx =
-                  messages.lastIndexWhere((m) => m.role == 'assistant');
-              final userPersisted = historyHasReply ||
+              final lastUserIdx = messages.lastIndexWhere(
+                (m) => m.role == 'user',
+              );
+              final lastAssistantIdx = messages.lastIndexWhere(
+                (m) => m.role == 'assistant',
+              );
+              final userPersisted =
+                  historyHasReply ||
                   (lastUserIdx >= 0 && lastUserIdx > lastAssistantIdx);
               if (userPersisted) {
                 _optimisticUser.remove(effectiveConvId);
@@ -670,8 +697,9 @@ class _ChatScreenState extends State<ChatScreen> {
           // true. Guard against duplicating it: if the last persisted entry is
           // already this reply, reuse that entry as the streaming bubble
           // instead of appending a second one.
-          final convId =
-              (id != null && id.isNotEmpty) ? id : _activeConversationId;
+          final convId = (id != null && id.isNotEmpty)
+              ? id
+              : _activeConversationId;
           // WOR-75/WOR-53/WOR-62 (simplified): the persisted history is now the
           // single source of truth for this conversation's finished reply, so
           // drop its streamed-reply buffer (and clear any stuck pending /
@@ -687,20 +715,19 @@ class _ChatScreenState extends State<ChatScreen> {
             // disconnect ate the terminal `done`, or it was untagged).
             _wsService.clearPending(convId);
           }
-          final liveText =
-              convId != null ? _wsService.bufferedText(convId) : '';
-          final streaming =
-              convId != null && _wsService.isStreaming(convId);
-          final lastIsThisReply = _entries.isNotEmpty &&
+          final liveText = convId != null
+              ? _wsService.bufferedText(convId)
+              : '';
+          final streaming = convId != null && _wsService.isStreaming(convId);
+          final lastIsThisReply =
+              _entries.isNotEmpty &&
               !_entries.last.isUser &&
               _entries.last.content == liveText;
           if (streaming && liveText.isNotEmpty && !lastIsThisReply) {
             // In-flight reply not yet in persisted history — show it.
-            _entries.add(_ChatEntry(
-              content: liveText,
-              isUser: false,
-              isStreaming: true,
-            ));
+            _entries.add(
+              _ChatEntry(content: liveText, isUser: false, isStreaming: true),
+            );
             _streamingIndex = _entries.length - 1;
             // Feature 2: already on screen in full — reveal continues from here.
             _typeTarget = liveText;
@@ -710,8 +737,9 @@ class _ChatScreenState extends State<ChatScreen> {
             // ended — mark that entry streaming so the terminal `done`
             // finalizes it (and any late `response` update lands on it),
             // without a duplicate bubble.
-            _entries[_entries.length - 1] =
-                _entries.last.copyWith(isStreaming: true);
+            _entries[_entries.length - 1] = _entries.last.copyWith(
+              isStreaming: true,
+            );
             _streamingIndex = _entries.length - 1;
             _typeTarget = liveText;
             _typeRevealed = liveText.length;
@@ -756,6 +784,8 @@ class _ChatScreenState extends State<ChatScreen> {
           notifier.value = ModelSelectorState(
             models: models,
             isLoading: false,
+            reasoning: _reasoning,
+            reasoningReady: _reasoningConfigLoaded,
           );
         }
     }
@@ -772,11 +802,13 @@ class _ChatScreenState extends State<ChatScreen> {
   void _onConvStream(ws.ConvStreamEvent event) {
     if (!mounted) return;
     if (ws.kOsiaDebugPlaceholder && (event.done || event.error)) {
-      debugPrint('[OSIA WOR-75] _onConvStream TERMINAL: convId='
-          '"${event.conversationId}" done=${event.done} error=${event.error} '
-          'untagged=${event.untagged} '
-          'active="${_activeConversationId ?? ""}" '
-          'forActive=${event.conversationId == _activeConversationId}');
+      debugPrint(
+        '[OSIA WOR-75] _onConvStream TERMINAL: convId='
+        '"${event.conversationId}" done=${event.done} error=${event.error} '
+        'untagged=${event.untagged} '
+        'active="${_activeConversationId ?? ""}" '
+        'forActive=${event.conversationId == _activeConversationId}',
+      );
     }
     // WOR-75: an UNTAGGED terminal (done/error with no conversation_id) applies
     // to the conversation on screen — the only turn we could be watching. Clear
@@ -812,10 +844,13 @@ class _ChatScreenState extends State<ChatScreen> {
         _thinking = false;
         final idx = _streamingIndex;
         if (idx != null) {
-          final full =
-              _typeTarget.isNotEmpty ? _typeTarget : _entries[idx].content;
-          _entries[idx] =
-              _entries[idx].copyWith(content: full, isStreaming: false);
+          final full = _typeTarget.isNotEmpty
+              ? _typeTarget
+              : _entries[idx].content;
+          _entries[idx] = _entries[idx].copyWith(
+            content: full,
+            isStreaming: false,
+          );
           _streamingIndex = null;
         }
       });
@@ -866,19 +901,22 @@ class _ChatScreenState extends State<ChatScreen> {
         // A history reload landed after the server persisted this reply, so
         // _entries already ends with it — reuse that entry rather than append
         // a duplicate streaming bubble (WOR-53). It is already shown in full.
-        _entries[_entries.length - 1] =
-            _entries.last.copyWith(isStreaming: true);
+        _entries[_entries.length - 1] = _entries.last.copyWith(
+          isStreaming: true,
+        );
         _streamingIndex = _entries.length - 1;
         _typeTarget = text;
         _typeRevealed = text.length;
       } else {
         // New streaming bubble. Reduced motion shows the full text immediately;
         // otherwise it starts empty and the typewriter reveals toward the target.
-        _entries.add(_ChatEntry(
-          content: reduced ? text : '',
-          isUser: false,
-          isStreaming: true,
-        ));
+        _entries.add(
+          _ChatEntry(
+            content: reduced ? text : '',
+            isUser: false,
+            isStreaming: true,
+          ),
+        );
         _streamingIndex = _entries.length - 1;
         _typeTarget = text;
         _typeRevealed = reduced ? text.length : 0;
@@ -903,8 +941,10 @@ class _ChatScreenState extends State<ChatScreen> {
   void _ensureTypewriter() {
     if (_typewriterTimer != null) return;
     if (_typeRevealed >= _typeTarget.length) return;
-    _typewriterTimer =
-        Timer.periodic(_typewriterTick, (_) => _onTypewriterTick());
+    _typewriterTimer = Timer.periodic(
+      _typewriterTick,
+      (_) => _onTypewriterTick(),
+    );
   }
 
   /// One reveal step: advance the shown prefix of [_typeTarget] toward the full
@@ -1000,8 +1040,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final leaving = _activeConversationId;
     // WOR-75: read the leaving conv's streaming state ONCE, before the clear
     // below can drop its buffer.
-    final leavingStreaming =
-        leaving != null && _wsService.isStreaming(leaving);
+    final leavingStreaming = leaving != null && _wsService.isStreaming(leaving);
     if (leaving != null && leaving != conv.id && !leavingStreaming) {
       // WOR-75 FIX: drop ONLY the disposable stream buffer. clearConvBuffer no
       // longer touches the pending flag, so switching away KEEPS the leaving
@@ -1014,10 +1053,12 @@ class _ChatScreenState extends State<ChatScreen> {
     if (ws.kOsiaDebugPlaceholder) {
       final cleared =
           leaving != null && leaving != conv.id && !leavingStreaming;
-      debugPrint('[OSIA WOR-75] _loadConversation: leaving="${leaving ?? ""}" '
-          'leavingStreaming=$leavingStreaming isPending(leaving)='
-          '${leaving != null && _wsService.isPending(leaving)} → '
-          '${cleared ? "clearConvBuffer(leaving) — buffer dropped, PENDING KEPT" : "buffer/pending kept"}');
+      debugPrint(
+        '[OSIA WOR-75] _loadConversation: leaving="${leaving ?? ""}" '
+        'leavingStreaming=$leavingStreaming isPending(leaving)='
+        '${leaving != null && _wsService.isPending(leaving)} → '
+        '${cleared ? "clearConvBuffer(leaving) — buffer dropped, PENDING KEPT" : "buffer/pending kept"}',
+      );
     }
     _requestConversationContent(conv.id);
     // The pending turn (and its watchdog) belonged to the conversation we're
@@ -1039,8 +1080,10 @@ class _ChatScreenState extends State<ChatScreen> {
     // accumulating) we hydrate from it immediately in the setState below.
     final pending = _wsService.isPending(conv.id);
     if (ws.kOsiaDebugPlaceholder) {
-      debugPrint('[OSIA WOR-75] _loadConversation: target="${conv.id}" '
-          'isPending(target)=$pending → recovery poll=$pending');
+      debugPrint(
+        '[OSIA WOR-75] _loadConversation: target="${conv.id}" '
+        'isPending(target)=$pending → recovery poll=$pending',
+      );
     }
     setState(() {
       _entries.clear();
@@ -1074,11 +1117,9 @@ class _ChatScreenState extends State<ChatScreen> {
       final buffered = _wsService.bufferedText(conv.id);
       if (buffered.isNotEmpty) {
         final streaming = _wsService.isStreaming(conv.id);
-        _entries.add(_ChatEntry(
-          content: buffered,
-          isUser: false,
-          isStreaming: streaming,
-        ));
+        _entries.add(
+          _ChatEntry(content: buffered, isUser: false, isStreaming: streaming),
+        );
         _streamingIndex = streaming ? _entries.length - 1 : null;
         // Feature 2: the buffered text is already complete on screen — mark it
         // fully revealed so the typewriter only animates NEW chunks from here.
@@ -1134,7 +1175,8 @@ class _ChatScreenState extends State<ChatScreen> {
       if (_pendingConvLoadId != id) return;
       if (_wsService.state != ws.ConnectionState.connected) return;
       debugPrint(
-          '[OSIA Chat] no conversation_history for $id after 1.5s — re-requesting');
+        '[OSIA Chat] no conversation_history for $id after 1.5s — re-requesting',
+      );
       _wsService.sendLoadConversation(id);
     });
   }
@@ -1238,13 +1280,14 @@ class _ChatScreenState extends State<ChatScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(strings.cancel,
-                style: TextStyle(color: palette.textMuted)),
+            child: Text(
+              strings.cancel,
+              style: TextStyle(color: palette.textMuted),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child:
-                Text(strings.delete, style: TextStyle(color: palette.error)),
+            child: Text(strings.delete, style: TextStyle(color: palette.error)),
           ),
         ],
       ),
@@ -1265,8 +1308,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _pendingTurn = null;
     }
     setState(() {
-      _conversations =
-          _conversations.where((c) => c.id != conv.id).toList();
+      _conversations = _conversations.where((c) => c.id != conv.id).toList();
       if (deletingActive) {
         _entries.clear();
         _thinking = false;
@@ -1295,15 +1337,18 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             ListTile(
               leading: Icon(Icons.edit_outlined, color: palette.accent),
-              title: Text(strings.rename,
-                  style: TextStyle(color: palette.textPrimary)),
+              title: Text(
+                strings.rename,
+                style: TextStyle(color: palette.textPrimary),
+              ),
               onTap: () => Navigator.of(ctx).pop('rename'),
             ),
             ListTile(
-              leading:
-                  Icon(Icons.delete_outline_rounded, color: palette.error),
-              title:
-                  Text(strings.delete, style: TextStyle(color: palette.error)),
+              leading: Icon(Icons.delete_outline_rounded, color: palette.error),
+              title: Text(
+                strings.delete,
+                style: TextStyle(color: palette.error),
+              ),
               onTap: () => Navigator.of(ctx).pop('delete'),
             ),
           ],
@@ -1357,8 +1402,10 @@ class _ChatScreenState extends State<ChatScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
-              child: Text(strings.cancel,
-                  style: TextStyle(color: palette.textMuted)),
+              child: Text(
+                strings.cancel,
+                style: TextStyle(color: palette.textMuted),
+              ),
             ),
             // Confirm enables only when the trimmed title is non-empty.
             ValueListenableBuilder<TextEditingValue>(
@@ -1505,8 +1552,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final prompt = text.isNotEmpty
         ? text
         : (isImage
-            ? strings.analyzeImagePrompt
-            : strings.hereIsFile(filename ?? ''));
+              ? strings.analyzeImagePrompt
+              : strings.hereIsFile(filename ?? ''));
     _wsService.sendText(prompt);
     // WOR-75/WOR-53/WOR-62: mark this conversation's turn in flight at send
     // time (when its id is known) so switching away and straight back arms the
@@ -1515,9 +1562,11 @@ class _ChatScreenState extends State<ChatScreen> {
     // its first streamed chunk carries the id and marks it then.
     final sendingConv = _activeConversationId;
     if (ws.kOsiaDebugPlaceholder) {
-      debugPrint('[OSIA WOR-75] _sendText: activeConversationId='
-          '${sendingConv == null ? "null" : "id=$sendingConv"} → '
-          '${(sendingConv != null && sendingConv.isNotEmpty) ? "markPending called" : "NO markPending (empty id)"}');
+      debugPrint(
+        '[OSIA WOR-75] _sendText: activeConversationId='
+        '${sendingConv == null ? "null" : "id=$sendingConv"} → '
+        '${(sendingConv != null && sendingConv.isNotEmpty) ? "markPending called" : "NO markPending (empty id)"}',
+      );
     }
     if (sendingConv != null && sendingConv.isNotEmpty) {
       _wsService.markPending(sendingConv);
@@ -1599,7 +1648,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _recoveryPoll?.cancel();
     _recoveryPoll = Timer.periodic(const Duration(seconds: 3), (_) {
       final active = _activeConversationId;
-      final shouldPoll = mounted &&
+      final shouldPoll =
+          mounted &&
           active != null &&
           active.isNotEmpty &&
           _wsService.isPending(active) &&
@@ -1612,8 +1662,10 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
       if (ws.kOsiaDebugPlaceholder) {
-        debugPrint('[OSIA WOR-75] recovery poll: pending + empty buffer for '
-            '"$active" → re-fetch conversation content');
+        debugPrint(
+          '[OSIA WOR-75] recovery poll: pending + empty buffer for '
+          '"$active" → re-fetch conversation content',
+        );
       }
       // Reuse the existing load round-trip; the conversation_history handler
       // reconciles non-destructively (no-blank guard keeps a buffer-backed view,
@@ -1704,8 +1756,10 @@ class _ChatScreenState extends State<ChatScreen> {
   void _speakMessage(String content) {
     if (content.isEmpty) return;
     final connState = _wsService.state;
-    debugPrint('[OSIA Chat] read-aloud tapped: connState=$connState, '
-        '${content.length} chars');
+    debugPrint(
+      '[OSIA Chat] read-aloud tapped: connState=$connState, '
+      '${content.length} chars',
+    );
     if (connState != ws.ConnectionState.connected) {
       // Surface why nothing will happen instead of failing silently.
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1762,8 +1816,7 @@ class _ChatScreenState extends State<ChatScreen> {
               action: _audioService.isPermissionPermanentlyDenied
                   ? SnackBarAction(
                       label: strings.openSettingsAction,
-                      onPressed: () =>
-                          _audioService.openMicrophoneSettings(),
+                      onPressed: () => _audioService.openMicrophoneSettings(),
                     )
                   : null,
             ),
@@ -1859,8 +1912,7 @@ class _ChatScreenState extends State<ChatScreen> {
         debugPrint('[OSIA Attach] disk read failed: $e\n$stack');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content: Text(OsiaL10n.of(context).fileReadFailed('$e'))),
+            SnackBar(content: Text(OsiaL10n.of(context).fileReadFailed('$e'))),
           );
         }
         return;
@@ -1869,9 +1921,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (bytes == null || bytes.isEmpty) {
       debugPrint('[OSIA Attach] empty / null bytes after load');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(OsiaL10n.of(context).fileEmpty)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(OsiaL10n.of(context).fileEmpty)));
       }
       return;
     }
@@ -1882,7 +1934,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _pendingIsImage = _isImageFilename(filename);
     });
     debugPrint(
-        '[OSIA Attach] staged ${bytes.length} bytes for $filename (image=$_pendingIsImage)');
+      '[OSIA Attach] staged ${bytes.length} bytes for $filename (image=$_pendingIsImage)',
+    );
   }
 
   Future<void> _openModelSelector() async {
@@ -1892,6 +1945,8 @@ class _ChatScreenState extends State<ChatScreen> {
       ModelSelectorState(
         models: _models,
         isLoading: _models.isEmpty,
+        reasoning: _reasoning,
+        reasoningReady: _reasoningConfigLoaded,
       ),
     );
     _modelSelectorNotifier = notifier;
@@ -1907,6 +1962,8 @@ class _ChatScreenState extends State<ChatScreen> {
           models: const [],
           isLoading: false,
           errorMessage: strings.modelsLoadFailed,
+          reasoning: _reasoning,
+          reasoningReady: _reasoningConfigLoaded,
         );
       });
     }
@@ -1917,6 +1974,7 @@ class _ChatScreenState extends State<ChatScreen> {
         stateListenable: notifier,
         currentModel: _selectedModel,
         hierarchyActive: _aiHierarchyEnabled,
+        onReasoningChanged: _setReasoningForModel,
       );
       if (chosen != null && chosen != _selectedModel) {
         setState(() => _selectedModel = chosen);
@@ -1929,6 +1987,31 @@ class _ChatScreenState extends State<ChatScreen> {
       _modelSelectorNotifier = null;
       notifier.dispose();
     }
+  }
+
+  void _setReasoningForModel(String modelId, String optionId) {
+    if (!_reasoningConfigLoaded) {
+      _wsService.sendGetConfig();
+      return;
+    }
+    final next = _reasoning.withModelOverride(modelId, optionId);
+    setState(() => _reasoning = next);
+    _pushModelSelectorReasoning(next);
+    _wsService.sendSetSetting('reasoning', next.toJson());
+    _wsService.sendGetConfig();
+  }
+
+  void _pushModelSelectorReasoning(ws.OsiaReasoningConfig reasoning) {
+    final notifier = _modelSelectorNotifier;
+    if (notifier == null) return;
+    final current = notifier.value;
+    notifier.value = ModelSelectorState(
+      models: current.models,
+      isLoading: current.isLoading,
+      errorMessage: current.errorMessage,
+      reasoning: reasoning,
+      reasoningReady: true,
+    );
   }
 
   // ── MCP write-tool confirmation (WOR-44 Phase 5) ─────────────────────────
@@ -1985,14 +2068,16 @@ class _ChatScreenState extends State<ChatScreen> {
   /// the live WebSocket service for the "restart server" action. When it
   /// pops, the connection is rebuilt from scratch in case anything changed.
   Future<void> _openSettings() async {
-    await Navigator.of(context).push(slideFadeRoute(
-      SettingsScreen(
-        storage: widget.storage,
-        themeController: widget.themeController,
-        languageController: widget.languageController,
-        wsService: _wsService,
+    await Navigator.of(context).push(
+      slideFadeRoute(
+        SettingsScreen(
+          storage: widget.storage,
+          themeController: widget.themeController,
+          languageController: widget.languageController,
+          wsService: _wsService,
+        ),
       ),
-    ));
+    );
     // If settings disconnected us, this whole screen was removed from the
     // navigator — don't touch state in that case.
     if (!mounted) return;
@@ -2073,9 +2158,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!_initialized && _connState == ws.ConnectionState.disconnected) {
       return Scaffold(
         backgroundColor: palette.background,
-        body: Center(
-          child: CircularProgressIndicator(color: palette.accent),
-        ),
+        body: Center(child: CircularProgressIndicator(color: palette.accent)),
       );
     }
 
@@ -2125,9 +2208,9 @@ class _ChatScreenState extends State<ChatScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.all_inclusive_rounded),
-            onPressed: () => Navigator.of(context).push(
-              slideFadeRoute(AutonomousScreen(wsService: _wsService)),
-            ),
+            onPressed: () => Navigator.of(
+              context,
+            ).push(slideFadeRoute(AutonomousScreen(wsService: _wsService))),
             tooltip: strings.autonomousTitle,
           ),
           IconButton(
@@ -2155,9 +2238,14 @@ class _ChatScreenState extends State<ChatScreen> {
                         // Dynamic bottom inset so the last message clears the
                         // floating input bar (which grows with attachments /
                         // multi-line text) on every device.
-                        padding:
-                            EdgeInsets.fromLTRB(0, 12, 0, listBottomPadding),
-                        itemCount: _entries.length +
+                        padding: EdgeInsets.fromLTRB(
+                          0,
+                          12,
+                          0,
+                          listBottomPadding,
+                        ),
+                        itemCount:
+                            _entries.length +
                             ((_showThinkingTrailer || _noResponse) ? 1 : 0),
                         itemBuilder: (context, index) {
                           // Trailing slot: the pre-stream thinking indicator,
@@ -2174,8 +2262,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 : _buildNoResponseTile(palette, strings);
                           }
                           final entry = _entries[index];
-                          final isAssistant =
-                              !entry.isUser && !entry.isSystem;
+                          final isAssistant = !entry.isUser && !entry.isSystem;
                           return ChatBubble(
                             // Stable key per slot so the bubble (and its
                             // blinking-cursor Timer) is preserved while
@@ -2191,8 +2278,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             // ThinkingIndicator). Only on the streaming bubble.
                             inlineTrailing:
                                 entry.isStreaming && _isThinkingMidStream
-                                    ? const _MiniThinkingDots()
-                                    : null,
+                                ? const _MiniThinkingDots()
+                                : null,
                             onSpeak: isAssistant
                                 ? () => _speakMessage(entry.content)
                                 : null,
@@ -2212,7 +2299,8 @@ class _ChatScreenState extends State<ChatScreen> {
               switchOutCurve: MotionCurves.exit,
               // NB: the `_bannerSeq` unique keys below (WOR-64 fix) are kept
               // intact — only the duration/curve are tokenized here.
-              child: (_connError != null &&
+              child:
+                  (_connError != null &&
                       _connState != ws.ConnectionState.connected)
                   ? _buildErrorBanner(palette, strings)
                   : SizedBox.shrink(key: ValueKey('no-banner-$_bannerSeq')),
@@ -2305,8 +2393,7 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline_rounded,
-                  color: palette.error, size: 18),
+              Icon(Icons.error_outline_rounded, color: palette.error, size: 18),
               const SizedBox(width: 10),
               Flexible(
                 child: Text(
@@ -2323,15 +2410,19 @@ class _ChatScreenState extends State<ChatScreen> {
                 onPressed: _retryLastTurn,
                 style: TextButton.styleFrom(
                   foregroundColor: palette.error,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   minimumSize: Size.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 child: Text(
                   strings.retry,
                   style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w600),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],
@@ -2375,8 +2466,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
                 child: Row(
                   children: [
-                    Icon(Icons.forum_rounded,
-                        color: palette.accent, size: 20),
+                    Icon(Icons.forum_rounded, color: palette.accent, size: 20),
                     const SizedBox(width: 10),
                     Text(
                       strings.conversations,
@@ -2390,8 +2480,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
               Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 4,
+                ),
                 child: SizedBox(
                   width: double.infinity,
                   child: PressableScale(
@@ -2405,22 +2497,23 @@ class _ChatScreenState extends State<ChatScreen> {
                             ? palette.background
                             : Colors.white,
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 12),
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),
                         ),
                         textStyle: const TextStyle(
-                            fontSize: 14, fontWeight: FontWeight.w600),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
               const SizedBox(height: 8),
-              Divider(
-                color: palette.border.withValues(alpha: 0.4),
-                height: 1,
-              ),
+              Divider(color: palette.border.withValues(alpha: 0.4), height: 1),
               Expanded(
                 child: _conversations.isEmpty
                     ? Center(
@@ -2438,7 +2531,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       )
                     : ListView.builder(
                         padding: const EdgeInsets.symmetric(
-                            vertical: 8, horizontal: 8),
+                          vertical: 8,
+                          horizontal: 8,
+                        ),
                         itemCount: _conversations.length,
                         itemBuilder: (context, index) {
                           final conv = _conversations[index];
@@ -2482,8 +2577,11 @@ class _ChatScreenState extends State<ChatScreen> {
             color: palette.error.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(Icons.delete_outline_rounded,
-              color: palette.error, size: 22),
+          child: Icon(
+            Icons.delete_outline_rounded,
+            color: palette.error,
+            size: 22,
+          ),
         ),
         child: Material(
           // Material implicitly animates its color, so the active background
@@ -2500,8 +2598,7 @@ class _ChatScreenState extends State<ChatScreen> {
             child: AnimatedContainer(
               duration: MotionDurations.medium,
               curve: MotionCurves.enter,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
@@ -2529,8 +2626,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 : FontWeight.w500,
                             color: isActive
                                 ? palette.accent
-                                : palette.textPrimary
-                                    .withValues(alpha: 0.92),
+                                : palette.textPrimary.withValues(alpha: 0.92),
                           ),
                         ),
                         if (dateLabel.isNotEmpty) ...[
@@ -2539,8 +2635,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             dateLabel,
                             style: TextStyle(
                               fontSize: 11.5,
-                              color: palette.textMuted
-                                  .withValues(alpha: 0.85),
+                              color: palette.textMuted.withValues(alpha: 0.85),
                             ),
                           ),
                         ],
@@ -2549,8 +2644,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   if (isActive) ...[
                     const SizedBox(width: 8),
-                    Icon(Icons.check_rounded,
-                        color: palette.accent, size: 16),
+                    Icon(Icons.check_rounded, color: palette.accent, size: 16),
                   ],
                 ],
               ),
@@ -2596,14 +2690,17 @@ class _ChatScreenState extends State<ChatScreen> {
             },
             style: TextButton.styleFrom(
               foregroundColor: palette.error,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: Text(strings.retry,
-                style: const TextStyle(
-                    fontSize: 12.5, fontWeight: FontWeight.w600)),
+            child: Text(
+              strings.retry,
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
         ],
       ),
@@ -2697,10 +2794,7 @@ class _MiniThinkingDotsState extends State<_MiniThinkingDots>
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: MotionDurations.pulse,
-    );
+    _ctrl = AnimationController(vsync: this, duration: MotionDurations.pulse);
   }
 
   @override
@@ -2769,8 +2863,9 @@ class _MiniThinkingDotsState extends State<_MiniThinkingDots>
                 final phase = (_ctrl.value - i * 0.18) % 1.0;
                 // Triangle wave 0 → 1 → 0 over the loop, eased for a soft pulse.
                 final tri = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
-                return MotionCurves.loop
-                    .transform(tri.clamp(0.0, 1.0).toDouble());
+                return MotionCurves.loop.transform(
+                  tri.clamp(0.0, 1.0).toDouble(),
+                );
               }),
             ),
     );

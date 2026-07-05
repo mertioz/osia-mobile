@@ -85,6 +85,18 @@ class OsiaStrings {
   final String noModelsReceived;
   final String modelsLoadFailed;
   final String otherProviders;
+  final String reasoning;
+  final String reasoningDefault;
+  final String reasoningOff;
+  final String reasoningNormal;
+  final String reasoningMax;
+  final String reasoningMinimal;
+  final String reasoningLow;
+  final String reasoningMedium;
+  final String reasoningHigh;
+  final String reasoningXhigh;
+  final String reasoningNotSupported;
+  final String reasoningUseDefault;
 
   // ── Settings ──
   final String settingsTitle;
@@ -416,6 +428,18 @@ class OsiaStrings {
     required this.noModelsReceived,
     required this.modelsLoadFailed,
     required this.otherProviders,
+    required this.reasoning,
+    required this.reasoningDefault,
+    required this.reasoningOff,
+    required this.reasoningNormal,
+    required this.reasoningMax,
+    required this.reasoningMinimal,
+    required this.reasoningLow,
+    required this.reasoningMedium,
+    required this.reasoningHigh,
+    required this.reasoningXhigh,
+    required this.reasoningNotSupported,
+    required this.reasoningUseDefault,
     required this.settingsTitle,
     required this.appearance,
     required this.colorTheme,
@@ -680,8 +704,7 @@ class OsiaStrings {
   String cronEveryHours(int n) =>
       cronEveryHoursTemplate.replaceAll('{n}', '$n');
 
-  String cronEveryDays(int n) =>
-      cronEveryDaysTemplate.replaceAll('{n}', '$n');
+  String cronEveryDays(int n) => cronEveryDaysTemplate.replaceAll('{n}', '$n');
 
   String cronDailyAt(String time) =>
       cronDailyAtTemplate.replaceAll('{t}', time);
@@ -773,6 +796,18 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   noModelsReceived: 'No models received from the server.',
   modelsLoadFailed: 'Unable to load models',
   otherProviders: 'OTHERS',
+  reasoning: 'Reasoning',
+  reasoningDefault: 'Default',
+  reasoningOff: 'Off',
+  reasoningNormal: 'Normal',
+  reasoningMax: 'Max',
+  reasoningMinimal: 'Minimal',
+  reasoningLow: 'Low',
+  reasoningMedium: 'Medium',
+  reasoningHigh: 'High',
+  reasoningXhigh: 'Xhigh',
+  reasoningNotSupported: 'Not supported',
+  reasoningUseDefault: 'Use default',
   settingsTitle: 'Settings',
   appearance: 'Appearance',
   colorTheme: 'Color theme',
@@ -1021,12 +1056,12 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   mcpConfirmArgsLabel: 'Arguments',
   mcpConfirmApprove: 'Approve',
   mcpConfirmDecline: 'Decline',
-  mcpConfirmWritesLabel: 'Confirm write actions',
+  mcpConfirmWritesLabel: 'Auto-approve connector write actions',
   mcpConfirmWritesSub:
-      'Ask before a connector creates, changes or deletes anything.',
+      'Off asks before connector writes. On lets connector writes run without a local confirmation prompt.',
   mcpUnattendedWritesLabel: 'Allow unattended writes',
   mcpUnattendedWritesSub:
-      'Let write actions run with no device connected to confirm (e.g. scheduled tasks).',
+      'Off blocks unattended connector writes when no confirmation device is available. On lets those writes proceed.',
   themeViolet: 'Violet',
   themeRose: 'Rose',
   themeNoir: 'Black',
@@ -1088,6 +1123,18 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   noModelsReceived: 'Aucun modèle reçu du serveur.',
   modelsLoadFailed: 'Impossible de charger les modèles',
   otherProviders: 'AUTRES',
+  reasoning: 'Raisonnement',
+  reasoningDefault: 'Défaut',
+  reasoningOff: 'Désactivé',
+  reasoningNormal: 'Normal',
+  reasoningMax: 'Max',
+  reasoningMinimal: 'Minimal',
+  reasoningLow: 'Faible',
+  reasoningMedium: 'Moyen',
+  reasoningHigh: 'Élevé',
+  reasoningXhigh: 'Très élevé',
+  reasoningNotSupported: 'Non pris en charge',
+  reasoningUseDefault: 'Utiliser le défaut',
   settingsTitle: 'Paramètres',
   appearance: 'Apparence',
   colorTheme: 'Thème de couleur',
@@ -1215,7 +1262,8 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   hierarchyEnable: 'Activer la hiérarchie',
   hierarchyActive: 'Hiérarchie IA active',
   hierarchyHeavy: 'Tâches lourdes',
-  hierarchyHeavySub: 'Code, débogage, raisonnement complexe, recherche approfondie.',
+  hierarchyHeavySub:
+      'Code, débogage, raisonnement complexe, recherche approfondie.',
   hierarchyMedium: 'Tâches moyennes',
   hierarchyMediumSub: 'Tout le reste : navigation, résumés, tâches courtes.',
   hierarchyAddModel: 'Ajouter un modèle',
@@ -1339,12 +1387,13 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   mcpConfirmArgsLabel: 'Arguments',
   mcpConfirmApprove: 'Approuver',
   mcpConfirmDecline: 'Refuser',
-  mcpConfirmWritesLabel: "Confirmer les actions d'écriture",
+  mcpConfirmWritesLabel:
+      'Approuver automatiquement les ecritures des connecteurs',
   mcpConfirmWritesSub:
-      'Demander avant qu’un connecteur crée, modifie ou supprime quelque chose.',
+      'Desactive, OSIA demande avant les ecritures. Active, les connecteurs ecrivent sans confirmation locale.',
   mcpUnattendedWritesLabel: 'Autoriser les écritures sans surveillance',
   mcpUnattendedWritesSub:
-      "Laisser les actions d'écriture s'exécuter sans appareil connecté pour confirmer (ex. tâches planifiées).",
+      'Desactive, bloque les ecritures sans appareil de confirmation. Active, les laisse continuer.',
   themeViolet: 'Violet',
   themeRose: 'Rose',
   themeNoir: 'Noir',
@@ -1404,6 +1453,18 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   noModelsReceived: '未从服务器收到任何模型。',
   modelsLoadFailed: '无法加载模型',
   otherProviders: '其他',
+  reasoning: '推理',
+  reasoningDefault: '默认',
+  reasoningOff: '关闭',
+  reasoningNormal: '正常',
+  reasoningMax: '最大',
+  reasoningMinimal: '最小',
+  reasoningLow: '低',
+  reasoningMedium: '中',
+  reasoningHigh: '高',
+  reasoningXhigh: '超高',
+  reasoningNotSupported: '不支持',
+  reasoningUseDefault: '使用默认值',
   settingsTitle: '设置',
   appearance: '外观',
   colorTheme: '颜色主题',
@@ -1446,18 +1507,14 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   catTtsProvidersSub: '朗读回复的语音',
   catSttProviders: 'Whisper 提供商 (STT)',
   catSttProvidersSub: '将您的语音转换为文字',
-  liveapiDesc:
-      '自然地说话，实时听到 OSIA 的回复，无需单独的转录步骤。添加您想用于实时语音的提供商的 API 密钥。',
+  liveapiDesc: '自然地说话，实时听到 OSIA 的回复，无需单独的转录步骤。添加您想用于实时语音的提供商的 API 密钥。',
   aiProvidersDesc:
       '连接为 OSIA 的聊天和推理提供支持的 AI 提供商。为每个要启用的提供商粘贴 API 密钥——密钥保存在您的设备上。',
-  voiceProvidersDesc:
-      '选择 OSIA 如何朗读其回复。本地语音在您的设备上免费运行；云端语音需要相应提供商的 API 密钥。',
+  voiceProvidersDesc: '选择 OSIA 如何朗读其回复。本地语音在您的设备上免费运行；云端语音需要相应提供商的 API 密钥。',
   whisperProvidersDesc:
       '选择 OSIA 如何将您的语音转换为文字。faster-whisper 在本地免费运行，而 Groq Whisper 需要 API 密钥。',
-  personalityDesc:
-      '赋予 OSIA 一致的性格，并添加它可以使用的自定义技能。它们决定了 OSIA 的说话方式及其额外能力。',
-  heartbeatDesc:
-      '让 OSIA 监测您设备的 CPU、内存、磁盘和温度。当某项指标超过您设定的阈值时，它可以语音提醒您。',
+  personalityDesc: '赋予 OSIA 一致的性格，并添加它可以使用的自定义技能。它们决定了 OSIA 的说话方式及其额外能力。',
+  heartbeatDesc: '让 OSIA 监测您设备的 CPU、内存、磁盘和温度。当某项指标超过您设定的阈值时，它可以语音提醒您。',
   apiKey: 'API 密钥',
   apiKeyHint: '粘贴您的 API 密钥',
   getApiKey: '获取 API 密钥',
@@ -1494,8 +1551,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   catPersonalitySkills: '个性与技能',
   catPersonalitySkillsSub: 'OSIA 的身份与自定义技能',
   cronTitle: '定时任务',
-  cronSubtitle:
-      '让 OSIA 在设定的时间自动运行任务——例如每日摘要或每小时检查。用自然语言描述它，并选择重复间隔或一次性日期。',
+  cronSubtitle: '让 OSIA 在设定的时间自动运行任务——例如每日摘要或每小时检查。用自然语言描述它，并选择重复间隔或一次性日期。',
   cronEmpty: '暂无定时任务。',
   cronAddTask: '添加任务',
   cronEditTask: '编辑任务',
@@ -1521,8 +1577,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   cronNoConversation: '无（新对话）',
   cronLoadingConversations: '加载中…',
   hierarchyTitle: 'AI 层级',
-  hierarchySubtitle:
-      '让工作通过一个有序的模型列表处理，而不是单个模型。如果某个模型遇到技术错误，OSIA 会自动回退到链中的下一个。',
+  hierarchySubtitle: '让工作通过一个有序的模型列表处理，而不是单个模型。如果某个模型遇到技术错误，OSIA 会自动回退到链中的下一个。',
   hierarchyEnable: '启用层级',
   hierarchyActive: 'AI层级已启用',
   hierarchyHeavy: '重型任务',
@@ -1628,7 +1683,8 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   gmailRestConnected: '已连接',
   gmailRestNotConnected: '未连接',
   mcpCustomTitle: '添加自定义 MCP 服务器',
-  mcpCustomHint: '添加本地 stdio 命令（例如 npx …）。远程 (HTTP) 服务器将在后续更新中推出。添加不会自动连接 — 之后请手动连接。',
+  mcpCustomHint:
+      '添加本地 stdio 命令（例如 npx …）。远程 (HTTP) 服务器将在后续更新中推出。添加不会自动连接 — 之后请手动连接。',
   mcpFieldName: '名称',
   mcpFieldNamePh: '例如：我的服务器',
   mcpFieldCommand: '命令 (stdio)',
@@ -1645,10 +1701,10 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   mcpConfirmArgsLabel: '参数',
   mcpConfirmApprove: '批准',
   mcpConfirmDecline: '拒绝',
-  mcpConfirmWritesLabel: '确认写入操作',
-  mcpConfirmWritesSub: '在连接器创建、修改或删除任何内容前先询问。',
+  mcpConfirmWritesLabel: '自动批准连接器写入操作',
+  mcpConfirmWritesSub: '关闭时，OSIA 会在连接器写入前询问。开启时，连接器无需本地确认即可写入。',
   mcpUnattendedWritesLabel: '允许无人值守写入',
-  mcpUnattendedWritesSub: '在没有设备连接确认时，也允许写入操作运行（例如计划任务）。',
+  mcpUnattendedWritesSub: '没有确认设备可用时，关闭会阻止无人值守的连接器写入。开启则允许这些写入继续。',
   themeViolet: '紫色',
   themeRose: '玫瑰',
   themeNoir: '黑色',
@@ -1708,6 +1764,18 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   noModelsReceived: 'サーバーからモデルを受信していません。',
   modelsLoadFailed: 'モデルを読み込めません',
   otherProviders: 'その他',
+  reasoning: '推論',
+  reasoningDefault: 'デフォルト',
+  reasoningOff: 'オフ',
+  reasoningNormal: '標準',
+  reasoningMax: '最大',
+  reasoningMinimal: '最小',
+  reasoningLow: '低',
+  reasoningMedium: '中',
+  reasoningHigh: '高',
+  reasoningXhigh: '最高',
+  reasoningNotSupported: '未対応',
+  reasoningUseDefault: 'デフォルトを使用',
   settingsTitle: '設定',
   appearance: '外観',
   colorTheme: 'カラーテーマ',
@@ -1905,7 +1973,8 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   mcpOauthSoon: 'OAuth — 近日対応',
   mcpHttpSoon: 'HTTP — 近日対応',
   mcpOauthConnectOnPc: 'PCで接続',
-  mcpOauthConnectOnPcHint: 'OAuth サインインはデスクトップアプリで行います。接続が完了すると、ここのステータスが更新されます。',
+  mcpOauthConnectOnPcHint:
+      'OAuth サインインはデスクトップアプリで行います。接続が完了すると、ここのステータスが更新されます。',
   mcpCopyToken: 'トークンをコピー',
   mcpTokenCopied: 'トークンをコピーしました',
   mcpTokenLabel: 'API トークン / キー',
@@ -1950,10 +2019,11 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   mcpConfirmArgsLabel: '引数',
   mcpConfirmApprove: '承認',
   mcpConfirmDecline: '拒否',
-  mcpConfirmWritesLabel: '書き込み操作を確認する',
-  mcpConfirmWritesSub: 'コネクターが作成・変更・削除を行う前に確認します。',
+  mcpConfirmWritesLabel: 'コネクターの書き込み操作を自動承認',
+  mcpConfirmWritesSub: 'オフではコネクターの書き込み前に確認します。オンではローカル確認なしで書き込みを実行します。',
   mcpUnattendedWritesLabel: '無人での書き込みを許可',
-  mcpUnattendedWritesSub: '確認する端末が接続されていなくても書き込みを実行します（例：予約タスク）。',
+  mcpUnattendedWritesSub:
+      '確認端末が利用できない場合、オフでは無人のコネクター書き込みをブロックします。オンでは続行を許可します。',
   themeViolet: 'バイオレット',
   themeRose: 'ローズ',
   themeNoir: 'ブラック',
@@ -2018,6 +2088,18 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   noModelsReceived: 'Keine Modelle vom Server erhalten.',
   modelsLoadFailed: 'Modelle können nicht geladen werden',
   otherProviders: 'ANDERE',
+  reasoning: 'Schlussfolgern',
+  reasoningDefault: 'Standard',
+  reasoningOff: 'Aus',
+  reasoningNormal: 'Normal',
+  reasoningMax: 'Max',
+  reasoningMinimal: 'Minimal',
+  reasoningLow: 'Niedrig',
+  reasoningMedium: 'Mittel',
+  reasoningHigh: 'Hoch',
+  reasoningXhigh: 'Extra hoch',
+  reasoningNotSupported: 'Nicht unterstützt',
+  reasoningUseDefault: 'Standard verwenden',
   settingsTitle: 'Einstellungen',
   appearance: 'Erscheinungsbild',
   colorTheme: 'Farbthema',
@@ -2148,7 +2230,8 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   hierarchyHeavy: 'Schwere Aufgaben',
   hierarchyHeavySub: 'Code, Debugging, komplexes Denken, tiefe Recherche.',
   hierarchyMedium: 'Mittlere Aufgaben',
-  hierarchyMediumSub: 'Alles andere: Navigation, Zusammenfassungen, kurze Aufgaben.',
+  hierarchyMediumSub:
+      'Alles andere: Navigation, Zusammenfassungen, kurze Aufgaben.',
   hierarchyAddModel: 'Modell hinzufügen',
   hierarchyEmpty: 'Kein Modell in dieser Kette.',
   hierarchyNoProviders: 'Konfigurieren Sie zuerst einen KI-Anbieter.',
@@ -2270,12 +2353,12 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   mcpConfirmArgsLabel: 'Argumente',
   mcpConfirmApprove: 'Zulassen',
   mcpConfirmDecline: 'Ablehnen',
-  mcpConfirmWritesLabel: 'Schreibaktionen bestätigen',
+  mcpConfirmWritesLabel: 'Connector-Schreibaktionen automatisch erlauben',
   mcpConfirmWritesSub:
-      'Nachfragen, bevor ein Connector etwas erstellt, ändert oder löscht.',
+      'Aus fragt vor Connector-Schreibaktionen. Ein fuehrt sie ohne lokale Bestaetigung aus.',
   mcpUnattendedWritesLabel: 'Unbeaufsichtigte Schreibvorgänge erlauben',
   mcpUnattendedWritesSub:
-      'Schreibaktionen ausführen, auch wenn kein Gerät zum Bestätigen verbunden ist (z. B. geplante Aufgaben).',
+      'Aus blockiert unbeaufsichtigte Connector-Schreibaktionen ohne Bestaetigungsgeraet. Ein erlaubt sie.',
   themeViolet: 'Violett',
   themeRose: 'Rosé',
   themeNoir: 'Schwarz',
@@ -2338,6 +2421,18 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   noModelsReceived: 'No se recibieron modelos del servidor.',
   modelsLoadFailed: 'No se pueden cargar los modelos',
   otherProviders: 'OTROS',
+  reasoning: 'Razonamiento',
+  reasoningDefault: 'Predeterminado',
+  reasoningOff: 'Desactivado',
+  reasoningNormal: 'Normal',
+  reasoningMax: 'Máximo',
+  reasoningMinimal: 'Mínimo',
+  reasoningLow: 'Bajo',
+  reasoningMedium: 'Medio',
+  reasoningHigh: 'Alto',
+  reasoningXhigh: 'Muy alto',
+  reasoningNotSupported: 'No compatible',
+  reasoningUseDefault: 'Usar predeterminado',
   settingsTitle: 'Ajustes',
   appearance: 'Apariencia',
   colorTheme: 'Tema de color',
@@ -2373,7 +2468,8 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   providersTitle: 'API y proveedores',
   configureProviders: 'Configurar API y proveedores',
   liveApi: 'API Live',
-  liveApiNotice: 'Cuando está activado, STT y TTS se desactivan automáticamente.',
+  liveApiNotice:
+      'Cuando está activado, STT y TTS se desactivan automáticamente.',
   catVoiceToVoice: 'Voz a voz (API Live)',
   catVoiceToVoiceSub: 'Conversación hablada en tiempo real con OSIA',
   catAiProviders: 'Proveedores de IA',
@@ -2464,7 +2560,8 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   hierarchyEnable: 'Activar jerarquía',
   hierarchyActive: 'Jerarquía IA activa',
   hierarchyHeavy: 'Tareas pesadas',
-  hierarchyHeavySub: 'Código, depuración, razonamiento complejo, investigación profunda.',
+  hierarchyHeavySub:
+      'Código, depuración, razonamiento complejo, investigación profunda.',
   hierarchyMedium: 'Tareas medianas',
   hierarchyMediumSub: 'Todo lo demás: navegación, resúmenes, tareas cortas.',
   hierarchyAddModel: 'Añadir un modelo',
@@ -2588,12 +2685,12 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   mcpConfirmArgsLabel: 'Argumentos',
   mcpConfirmApprove: 'Aprobar',
   mcpConfirmDecline: 'Rechazar',
-  mcpConfirmWritesLabel: 'Confirmar acciones de escritura',
+  mcpConfirmWritesLabel: 'Autoaprobar escrituras de conectores',
   mcpConfirmWritesSub:
-      'Preguntar antes de que un conector cree, modifique o elimine algo.',
+      'Desactivado pregunta antes de escribir. Activado ejecuta sin confirmacion local.',
   mcpUnattendedWritesLabel: 'Permitir escrituras desatendidas',
   mcpUnattendedWritesSub:
-      'Permitir que las acciones de escritura se ejecuten sin un dispositivo conectado para confirmar (p. ej. tareas programadas).',
+      'Desactivado bloquea escrituras sin dispositivo de confirmacion. Activado las permite.',
   themeViolet: 'Violeta',
   themeRose: 'Rosa',
   themeNoir: 'Negro',

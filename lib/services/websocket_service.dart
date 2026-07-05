@@ -21,11 +21,7 @@ const bool kOsiaDebugPlaceholder = true;
 // ── Connection state ──────────────────────────────────────────────────────
 
 /// Possible states of the WebSocket connection.
-enum ConnectionState {
-  disconnected,
-  connecting,
-  connected,
-}
+enum ConnectionState { disconnected, connecting, connected }
 
 // ── Incoming message types ────────────────────────────────────────────────
 
@@ -74,11 +70,7 @@ class Conversation {
   final String title;
   final DateTime? date;
 
-  const Conversation({
-    required this.id,
-    required this.title,
-    this.date,
-  });
+  const Conversation({required this.id, required this.title, this.date});
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
     final rawDate = json['date'] ?? json['updated_at'] ?? json['created_at'];
@@ -135,10 +127,7 @@ class HistoryMessage {
     } else {
       text = raw?.toString() ?? '';
     }
-    return HistoryMessage(
-      role: (json['role'] ?? '').toString(),
-      content: text,
-    );
+    return HistoryMessage(role: (json['role'] ?? '').toString(), content: text);
   }
 }
 
@@ -170,12 +159,16 @@ class OsiaModel {
     if (raw is Map) {
       final m = raw.cast<String, dynamic>();
       final id = (m['id'] ?? m['name'] ?? m['model'] ?? '').toString();
-      final label =
-          (m['label'] ?? m['name'] ?? m['id'] ?? m['model'] ?? id).toString();
+      final label = (m['label'] ?? m['name'] ?? m['id'] ?? m['model'] ?? id)
+          .toString();
       final desc = m['description']?.toString();
       final provider = m['provider']?.toString();
       return OsiaModel(
-          id: id, label: label, description: desc, provider: provider);
+        id: id,
+        label: label,
+        description: desc,
+        provider: provider,
+      );
     }
     final s = raw?.toString() ?? '';
     return OsiaModel(id: s, label: s);
@@ -188,6 +181,89 @@ class ModelsListMessage extends OsiaMessage {
   final List<OsiaModel> models;
   final String? current;
   const ModelsListMessage({required this.models, this.current});
+}
+
+/// Per-provider/per-model reasoning settings from `config.reasoning`.
+///
+/// This mirrors the backend WOR-77 schema additively. Old servers may omit the
+/// field entirely; in that case mobile treats reasoning as provider defaults.
+class OsiaReasoningConfig {
+  static const Set<String> _validLevels = {
+    'auto',
+    'off',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'normal',
+    'max',
+  };
+
+  final String defaultLevel;
+  final Map<String, String> providers;
+  final Map<String, String> models;
+
+  const OsiaReasoningConfig({
+    this.defaultLevel = 'auto',
+    this.providers = const {},
+    this.models = const {},
+  });
+
+  factory OsiaReasoningConfig.fromJson(Object? raw) {
+    if (raw is! Map) return const OsiaReasoningConfig();
+    final json = <String, dynamic>{};
+    raw.forEach((key, value) => json[key.toString()] = value);
+    return OsiaReasoningConfig(
+      defaultLevel: _normalizeLevel(json['default']),
+      providers: _readLevelMap(json['providers'], lowercaseKeys: true),
+      models: _readLevelMap(json['models']),
+    );
+  }
+
+  static String _normalizeLevel(Object? raw) {
+    if (raw is String) {
+      final level = raw.trim().toLowerCase();
+      if (level == 'default') return 'auto';
+      if (level == 'none') return 'off';
+      if (_validLevels.contains(level)) return level;
+    }
+    return 'auto';
+  }
+
+  static Map<String, String> _readLevelMap(
+    Object? raw, {
+    bool lowercaseKeys = false,
+  }) {
+    final out = <String, String>{};
+    if (raw is Map) {
+      raw.forEach((key, value) {
+        if (key is! String) return;
+        final cleanKey = (lowercaseKeys ? key.toLowerCase() : key).trim();
+        if (cleanKey.isEmpty) return;
+        out[cleanKey] = _normalizeLevel(value);
+      });
+    }
+    return out;
+  }
+
+  OsiaReasoningConfig withModelOverride(String modelId, String optionId) {
+    final cleanModel = modelId.trim();
+    if (cleanModel.isEmpty) return this;
+    final nextModels = Map<String, String>.from(models);
+    nextModels[cleanModel] = _normalizeLevel(optionId);
+    return OsiaReasoningConfig(
+      defaultLevel: defaultLevel,
+      providers: Map<String, String>.from(providers),
+      models: nextModels,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'default': defaultLevel,
+    'providers': Map<String, String>.from(providers),
+    'models': Map<String, String>.from(models),
+  };
 }
 
 // ── Full config snapshot (mirror of the PC settings) ──────────────────────
@@ -214,10 +290,10 @@ class ConfigSkill {
   });
 
   factory ConfigSkill.fromJson(Map<String, dynamic> json) => ConfigSkill(
-        name: (json['name'] ?? '').toString(),
-        enabled: json['enabled'] == true,
-        text: (json['text'] ?? '').toString(),
-      );
+    name: (json['name'] ?? '').toString(),
+    enabled: json['enabled'] == true,
+    text: (json['text'] ?? '').toString(),
+  );
 }
 
 /// Capability flags for the server-side native Gmail REST integration.
@@ -251,6 +327,7 @@ class GmailRestCapabilities {
 class GmailRestConfig {
   final bool connected;
   final bool canDisconnect;
+  final bool canDisconnectProvided;
   final bool configureOnPc;
   final bool elevateOnPc;
   final bool guideAvailable;
@@ -262,6 +339,7 @@ class GmailRestConfig {
   const GmailRestConfig({
     required this.connected,
     this.canDisconnect = false,
+    this.canDisconnectProvided = false,
     this.configureOnPc = false,
     this.elevateOnPc = false,
     this.guideAvailable = false,
@@ -302,6 +380,7 @@ class GmailRestConfig {
     return GmailRestConfig(
       connected: readBool(json['connected']),
       canDisconnect: readBool(json['canDisconnect']),
+      canDisconnectProvided: json.containsKey('canDisconnect'),
       configureOnPc: readBool(json['configureOnPc']),
       elevateOnPc: readBool(json['elevateOnPc']),
       guideAvailable: readBool(json['guideAvailable']),
@@ -348,6 +427,9 @@ class ConfigData {
   /// mobile; Gmail auth and REST calls remain server-side.
   final GmailRestConfig? gmailRest;
 
+  /// Per-provider/per-model reasoning controls mirrored from the PC.
+  final OsiaReasoningConfig reasoning;
+
   /// Raw mirror of the PC's `settings.json` values, for pre-filling toggles
   /// that have no dedicated typed field above (e.g. `time_format`,
   /// `heartbeat_enabled`, `heartbeat_interval_seconds`). The server may nest
@@ -364,6 +446,7 @@ class ConfigData {
     required this.personality,
     required this.skills,
     this.gmailRest,
+    this.reasoning = const OsiaReasoningConfig(),
     required this.settings,
   });
 
@@ -381,17 +464,14 @@ class ConfigData {
         : <String>[];
 
     List<Map<String, dynamic>> readJobs(dynamic raw) => raw is List
-        ? raw
-            .whereType<Map>()
-            .map((e) => e.cast<String, dynamic>())
-            .toList()
+        ? raw.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList()
         : <Map<String, dynamic>>[];
 
     List<ConfigSkill> readSkills(dynamic raw) => raw is List
         ? raw
-            .whereType<Map>()
-            .map((e) => ConfigSkill.fromJson(e.cast<String, dynamic>()))
-            .toList()
+              .whereType<Map>()
+              .map((e) => ConfigSkill.fromJson(e.cast<String, dynamic>()))
+              .toList()
         : <ConfigSkill>[];
 
     Map<String, dynamic> readSettings(Map<String, dynamic> cfg) {
@@ -402,6 +482,7 @@ class ConfigData {
       return Map<String, dynamic>.from(cfg);
     }
 
+    final settings = readSettings(config);
     return ConfigData(
       apiKeysSet: readKeysSet(config['api_keys_set']),
       cronJobs: readJobs(config['cron_jobs']),
@@ -411,7 +492,10 @@ class ConfigData {
       personality: (config['personality'] ?? '').toString(),
       skills: readSkills(config['skills']),
       gmailRest: GmailRestConfig.tryParse(config['gmail_rest']),
-      settings: readSettings(config),
+      reasoning: OsiaReasoningConfig.fromJson(
+        config['reasoning'] ?? settings['reasoning'],
+      ),
+      settings: settings,
     );
   }
 }
@@ -484,8 +568,13 @@ class HeartbeatDataMessage {
 
     return HeartbeatDataMessage(
       cpuPercent: pick(['cpu_percent', 'cpu', 'cpu_pct']),
-      ramPercent: pick(
-          ['ram_percent', 'ram', 'memory_percent', 'mem_percent', 'memory']),
+      ramPercent: pick([
+        'ram_percent',
+        'ram',
+        'memory_percent',
+        'mem_percent',
+        'memory',
+      ]),
       diskPercent: pick(['disk_percent', 'disk', 'disk_pct']),
       cpuTemp: pick(['cpu_temp', 'cpu_temp_c', 'cpu_temperature']),
       gpuTemp: pick(['gpu_temp', 'gpu_temp_c', 'gpu_temperature']),
@@ -718,8 +807,9 @@ class McpStatusMessage {
     if (raw is Map) {
       raw.forEach((k, v) {
         if (v is Map) {
-          out[k.toString()] =
-              McpServerStatus.fromJson(v.cast<String, dynamic>());
+          out[k.toString()] = McpServerStatus.fromJson(
+            v.cast<String, dynamic>(),
+          );
         }
       });
     }
@@ -1003,7 +1093,8 @@ class WebSocketService {
     if (id.isNotEmpty) _pendingConvs.add(id);
     if (kOsiaDebugPlaceholder) {
       debugPrint(
-          '[OSIA WOR-75] markPending(id="$id") → pending=$_pendingConvs');
+        '[OSIA WOR-75] markPending(id="$id") → pending=$_pendingConvs',
+      );
     }
   }
 
@@ -1023,8 +1114,10 @@ class WebSocketService {
   void clearConvBuffer(String id) {
     _streamBuffers.remove(id);
     if (kOsiaDebugPlaceholder) {
-      debugPrint('[OSIA WOR-75] clearConvBuffer(id="$id") → buffer dropped, '
-          'pending UNCHANGED=$_pendingConvs');
+      debugPrint(
+        '[OSIA WOR-75] clearConvBuffer(id="$id") → buffer dropped, '
+        'pending UNCHANGED=$_pendingConvs',
+      );
     }
   }
 
@@ -1039,8 +1132,10 @@ class WebSocketService {
     if (id.isEmpty) return;
     final removed = _pendingConvs.remove(id);
     if (kOsiaDebugPlaceholder) {
-      debugPrint('[OSIA WOR-75] clearPending(id="$id") removed=$removed → '
-          'pending=$_pendingConvs');
+      debugPrint(
+        '[OSIA WOR-75] clearPending(id="$id") removed=$removed → '
+        'pending=$_pendingConvs',
+      );
     }
   }
 
@@ -1333,10 +1428,7 @@ class WebSocketService {
   /// reports every known server; otherwise just that one. The reply arrives on
   /// [mcpStatusStream] as an [McpStatusMessage].
   void sendMcpStatus([String? id]) {
-    _send({
-      'type': 'mcp_status',
-      if (id != null && id.isNotEmpty) 'id': id,
-    });
+    _send({'type': 'mcp_status', if (id != null && id.isNotEmpty) 'id': id});
   }
 
   /// Answer a write-tool confirmation request (`mcp_confirm_request`, WOR-44
@@ -1416,8 +1508,7 @@ class WebSocketService {
   /// settings field so we can build a clean `ws://host:8765/ws` URL.
   static String _sanitizeHost(String raw) {
     var s = raw.trim();
-    s = s.replaceFirst(
-        RegExp(r'^(wss?|https?)://', caseSensitive: false), '');
+    s = s.replaceFirst(RegExp(r'^(wss?|https?)://', caseSensitive: false), '');
     final slash = s.indexOf('/');
     if (slash != -1) s = s.substring(0, slash);
     final colon = s.indexOf(':');
@@ -1482,7 +1573,8 @@ class WebSocketService {
     // First chunk of a fresh turn: drop the previous turn's text.
     if (!st.streaming) st.text.clear();
     final existing = st.text.toString();
-    final needsSpace = existing.isNotEmpty &&
+    final needsSpace =
+        existing.isNotEmpty &&
         !existing.endsWith(' ') &&
         !existing.endsWith('\n') &&
         !delta.startsWith(' ');
@@ -1491,8 +1583,10 @@ class WebSocketService {
     st.streaming = true;
     _pendingConvs.add(convId); // WOR-75/WOR-53/WOR-62: turn in flight.
     if (kOsiaDebugPlaceholder && !wasStreaming) {
-      debugPrint('[OSIA WOR-75] _appendConvDelta FIRST chunk for id="$convId" '
-          '→ streaming=true, pending=$_pendingConvs');
+      debugPrint(
+        '[OSIA WOR-75] _appendConvDelta FIRST chunk for id="$convId" '
+        '→ streaming=true, pending=$_pendingConvs',
+      );
     }
     _capConvBuffers();
     _convStreamCtrl.add(ConvStreamEvent(convId, delta: delta));
@@ -1511,8 +1605,10 @@ class WebSocketService {
     st.streaming = true;
     _pendingConvs.add(convId); // WOR-75/WOR-53/WOR-62: turn in flight.
     if (kOsiaDebugPlaceholder) {
-      debugPrint('[OSIA WOR-75] _replaceConvText full reply for id="$convId" '
-          '→ streaming=true, pending=$_pendingConvs');
+      debugPrint(
+        '[OSIA WOR-75] _replaceConvText full reply for id="$convId" '
+        '→ streaming=true, pending=$_pendingConvs',
+      );
     }
     _capConvBuffers();
     _convStreamCtrl.add(ConvStreamEvent(convId, delta: text));
@@ -1532,19 +1628,24 @@ class WebSocketService {
       // watching) and clears THAT conversation's pending — otherwise an untagged
       // done would leave pending stuck true and the background placeholder up.
       if (kOsiaDebugPlaceholder) {
-        debugPrint('[OSIA WOR-75] _finishConvStream(error=$error) UNTAGGED — '
-            'broadcasting to active conv (no id to clear in service)');
+        debugPrint(
+          '[OSIA WOR-75] _finishConvStream(error=$error) UNTAGGED — '
+          'broadcasting to active conv (no id to clear in service)',
+        );
       }
       _convStreamCtrl.add(
-          ConvStreamEvent('', done: !error, error: error, untagged: true));
+        ConvStreamEvent('', done: !error, error: error, untagged: true),
+      );
       return;
     }
     final st = _streamBuffers[convId];
     if (st != null) st.streaming = false;
     _pendingConvs.remove(convId); // WOR-75/WOR-53/WOR-62: turn finished.
     if (kOsiaDebugPlaceholder) {
-      debugPrint('[OSIA WOR-75] _finishConvStream(id="$convId", error=$error) '
-          '→ pending=$_pendingConvs');
+      debugPrint(
+        '[OSIA WOR-75] _finishConvStream(id="$convId", error=$error) '
+        '→ pending=$_pendingConvs',
+      );
     }
     _convStreamCtrl.add(ConvStreamEvent(convId, done: !error, error: error));
   }
@@ -1572,7 +1673,8 @@ class WebSocketService {
     // down and the message silently goes nowhere otherwise.
     if (_channel == null) {
       debugPrint(
-          '[OSIA WS] Send DROPPED (socket not connected): type=${json['type']}');
+        '[OSIA WS] Send DROPPED (socket not connected): type=${json['type']}',
+      );
       return;
     }
     final encoded = jsonEncode(json);
@@ -1612,7 +1714,9 @@ class WebSocketService {
     // server on port 8765 over plain ws://.
     final isDomain = RegExp(r'[a-zA-Z]').hasMatch(host);
     final url = isDomain ? 'wss://$host/ws' : 'ws://$host:8765/ws';
-    debugPrint('[OSIA WS] Connecting to $url (timeout ${_connectTimeout.inSeconds}s)');
+    debugPrint(
+      '[OSIA WS] Connecting to $url (timeout ${_connectTimeout.inSeconds}s)',
+    );
 
     try {
       final socket = await WebSocket.connect(url).timeout(_connectTimeout);
@@ -1632,7 +1736,9 @@ class WebSocketService {
       _reconnectTimer?.cancel();
       _reconnectTimer = null;
       _reconnectAttempt = 0;
-      debugPrint('[OSIA WS] Socket open, sending auth (token length ${token.length})');
+      debugPrint(
+        '[OSIA WS] Socket open, sending auth (token length ${token.length})',
+      );
 
       // Auth is the first message after the socket opens.
       _send({'type': 'auth', 'token': token});
@@ -1644,7 +1750,8 @@ class WebSocketService {
         cancelOnError: false,
       );
     } on TimeoutException {
-      final msg = 'Connexion expirée après ${_connectTimeout.inSeconds}s ($url)';
+      final msg =
+          'Connexion expirée après ${_connectTimeout.inSeconds}s ($url)';
       debugPrint('[OSIA WS] $msg');
       _errorCtrl.add(msg);
       _setState(ConnectionState.disconnected);
@@ -1672,8 +1779,9 @@ class WebSocketService {
 
   void _onData(dynamic raw) {
     try {
-      final Map<String, dynamic> json =
-          (raw is String) ? jsonDecode(raw) as Map<String, dynamic> : raw;
+      final Map<String, dynamic> json = (raw is String)
+          ? jsonDecode(raw) as Map<String, dynamic>
+          : raw;
 
       final type = json['type'] as String?;
       final content = json['content'] as String?;
@@ -1708,8 +1816,9 @@ class WebSocketService {
           if (data != null) {
             final source = json['source'] as String?;
             debugPrint(
-                '[OSIA WS] audio frame received: ${data.length} b64 chars, '
-                'source=$source');
+              '[OSIA WS] audio frame received: ${data.length} b64 chars, '
+              'source=$source',
+            );
             _emit(AudioMessage(data, source: source));
           }
         case 'status':
@@ -1721,8 +1830,10 @@ class WebSocketService {
             // [_finishConvStream]'s null guard.
             if (content == 'done' || content == 'error') {
               if (kOsiaDebugPlaceholder) {
-                debugPrint('[OSIA WOR-75] status="$content" conversation_id='
-                    '${convId == null ? "null (UNTAGGED!)" : "id=$convId"}');
+                debugPrint(
+                  '[OSIA WOR-75] status="$content" conversation_id='
+                  '${convId == null ? "null (UNTAGGED!)" : "id=$convId"}',
+                );
               }
               _finishConvStream(convId, error: content == 'error');
             }
@@ -1732,35 +1843,36 @@ class WebSocketService {
           if (raw is List) {
             final list = raw
                 .whereType<Map>()
-                .map((e) =>
-                    Conversation.fromJson(e.cast<String, dynamic>()))
+                .map((e) => Conversation.fromJson(e.cast<String, dynamic>()))
                 .toList();
             debugPrint(
-                '[OSIA WS] conversations received: ${list.length} item(s)');
+              '[OSIA WS] conversations received: ${list.length} item(s)',
+            );
             if (list.isNotEmpty) {
               debugPrint(
-                  '[OSIA WS]   first: id=${list.first.id} title="${list.first.title}" date=${list.first.date}');
+                '[OSIA WS]   first: id=${list.first.id} title="${list.first.title}" date=${list.first.date}',
+              );
             }
             _emit(ConversationsMessage(list));
           } else {
             debugPrint(
-                '[OSIA WS] conversations message had no list payload: keys=${json.keys.toList()}');
+              '[OSIA WS] conversations message had no list payload: keys=${json.keys.toList()}',
+            );
           }
         case 'active_conversation':
           final id = json['id']?.toString();
           final title = json['title']?.toString();
-          debugPrint(
-              '[OSIA WS] active_conversation: id=$id title="$title"');
+          debugPrint('[OSIA WS] active_conversation: id=$id title="$title"');
           _emit(ActiveConversationMessage(id: id, title: title));
         case 'models_list':
           final rawModels = json['models'] ?? json['items'];
           final list = rawModels is List
               ? rawModels.map(OsiaModel.fromJson).toList()
               : <OsiaModel>[];
-          final current =
-              (json['current'] ?? json['selected'])?.toString();
+          final current = (json['current'] ?? json['selected'])?.toString();
           debugPrint(
-              '[OSIA WS] models_list: ${list.length} model(s), current=$current');
+            '[OSIA WS] models_list: ${list.length} model(s), current=$current',
+          );
           _emit(ModelsListMessage(models: list, current: current));
         case 'config':
           // Full config snapshot. Delivered on its own [configStream] (NOT
@@ -1770,9 +1882,10 @@ class WebSocketService {
           if (cfg is Map) {
             final data = ConfigData.fromJson(cfg.cast<String, dynamic>());
             debugPrint(
-                '[OSIA WS] config received: ${data.skills.length} skill(s), '
-                '${data.cronJobs.length} cron job(s), '
-                'heavy=${data.heavyChain.length} medium=${data.mediumChain.length}');
+              '[OSIA WS] config received: ${data.skills.length} skill(s), '
+              '${data.cronJobs.length} cron job(s), '
+              'heavy=${data.heavyChain.length} medium=${data.mediumChain.length}',
+            );
             if (!_configCtrl.isClosed) _configCtrl.add(data);
           } else {
             debugPrint('[OSIA WS] config message had no config payload');
@@ -1781,24 +1894,29 @@ class WebSocketService {
           final raw = json['messages'];
           final list = raw is List
               ? raw
-                  .whereType<Map>()
-                  .map((m) =>
-                      HistoryMessage.fromJson(m.cast<String, dynamic>()))
-                  .toList()
+                    .whereType<Map>()
+                    .map(
+                      (m) => HistoryMessage.fromJson(m.cast<String, dynamic>()),
+                    )
+                    .toList()
               : <HistoryMessage>[];
           debugPrint(
-              '[OSIA WS] conversation_history: ${list.length} message(s) for id=${json['id']}');
-          _emit(ConversationHistoryMessage(
-            id: json['id']?.toString(),
-            messages: list,
-          ));
+            '[OSIA WS] conversation_history: ${list.length} message(s) for id=${json['id']}',
+          );
+          _emit(
+            ConversationHistoryMessage(
+              id: json['id']?.toString(),
+              messages: list,
+            ),
+          );
         case 'api_keys':
           // Raw provider keys for pre-filling editors. Delivered on its own
           // [apiKeysStream] (NOT the paced message queue) so it can't disturb
           // response-chunk streaming.
           final keysMsg = ApiKeysMessage.fromJson(json);
           debugPrint(
-              '[OSIA WS] api_keys received: ${keysMsg.keys.length} key(s)');
+            '[OSIA WS] api_keys received: ${keysMsg.keys.length} key(s)',
+          );
           if (!_apiKeysCtrl.isClosed) _apiKeysCtrl.add(keysMsg);
         case 'heartbeat_data':
           // Live system metrics. Own [heartbeatStream], same rationale.
@@ -1820,10 +1938,12 @@ class WebSocketService {
           final rawList = json['conversations'];
           final convs = rawList is List
               ? rawList
-                  .whereType<Map>()
-                  .map((e) =>
-                      ConversationItem.fromJson(e.cast<String, dynamic>()))
-                  .toList()
+                    .whereType<Map>()
+                    .map(
+                      (e) =>
+                          ConversationItem.fromJson(e.cast<String, dynamic>()),
+                    )
+                    .toList()
               : <ConversationItem>[];
           debugPrint('[OSIA WS] conversations_list: ${convs.length} item(s)');
           if (!_conversationsListCtrl.isClosed) {
@@ -1835,8 +1955,9 @@ class WebSocketService {
           // disturb response-chunk streaming.
           final prog = AutonomousProgressMessage.fromJson(json);
           debugPrint(
-              '[OSIA WS] autonomous_progress: event=${prog.event} '
-              'phase="${prog.phaseName}" ${prog.tasksDone}/${prog.tasksTotal}');
+            '[OSIA WS] autonomous_progress: event=${prog.event} '
+            'phase="${prog.phaseName}" ${prog.tasksDone}/${prog.tasksTotal}',
+          );
           if (!_autonomousCtrl.isClosed) {
             _autonomousCtrl.add(prog);
           }
@@ -1873,7 +1994,8 @@ class WebSocketService {
           }
         default:
           debugPrint(
-              '[OSIA WS] unhandled message type="$type" keys=${json.keys.toList()}');
+            '[OSIA WS] unhandled message type="$type" keys=${json.keys.toList()}',
+          );
       }
     } catch (e) {
       debugPrint('[OSIA WS] Parse error: $e');
@@ -1891,8 +2013,9 @@ class WebSocketService {
     final code = _channel?.closeCode;
     final reason = _channel?.closeReason;
     debugPrint(
-        '[OSIA WS] Connection closed (code=$code, reason="$reason", '
-        'intentional=$_intentionalClose, autoReconnect=$autoReconnect).');
+      '[OSIA WS] Connection closed (code=$code, reason="$reason", '
+      'intentional=$_intentionalClose, autoReconnect=$autoReconnect).',
+    );
     _channel = null;
     _setState(ConnectionState.disconnected);
     if (!_intentionalClose) {
@@ -1914,7 +2037,8 @@ class WebSocketService {
         _baseReconnectMs * pow(2, min(_reconnectAttempt, 6)).toInt();
     _reconnectAttempt++;
     debugPrint(
-        '[OSIA WS] Reconnecting in ${delayMs}ms (attempt $_reconnectAttempt)...');
+      '[OSIA WS] Reconnecting in ${delayMs}ms (attempt $_reconnectAttempt)...',
+    );
 
     _reconnectTimer = Timer(Duration(milliseconds: delayMs), () {
       // Only reconnect if we're still actually down. A connection may have come

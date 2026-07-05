@@ -12,12 +12,137 @@ class ModelSelectorState {
   final List<ws.OsiaModel> models;
   final bool isLoading;
   final String? errorMessage;
+  final ws.OsiaReasoningConfig reasoning;
+  final bool reasoningReady;
 
   const ModelSelectorState({
     required this.models,
     required this.isLoading,
     this.errorMessage,
+    this.reasoning = const ws.OsiaReasoningConfig(),
+    this.reasoningReady = true,
   });
+}
+
+typedef ModelReasoningChanged = void Function(String modelId, String optionId);
+
+class ModelReasoningOption {
+  final String id;
+  final bool isDefault;
+
+  const ModelReasoningOption(this.id, {this.isDefault = false});
+
+  String label(OsiaStrings strings) {
+    switch (id) {
+      case 'auto':
+        return strings.reasoningDefault;
+      case 'off':
+        return strings.reasoningOff;
+      case 'normal':
+        return strings.reasoningNormal;
+      case 'max':
+        return strings.reasoningMax;
+      case 'minimal':
+        return strings.reasoningMinimal;
+      case 'low':
+        return strings.reasoningLow;
+      case 'medium':
+        return strings.reasoningMedium;
+      case 'high':
+        return strings.reasoningHigh;
+      case 'xhigh':
+        return strings.reasoningXhigh;
+    }
+    return id;
+  }
+}
+
+const ModelReasoningOption _defaultReasoningOption = ModelReasoningOption(
+  'auto',
+  isDefault: true,
+);
+
+const Set<String> _googleReasoningModels = {
+  'gemini-3.5-flash',
+  'gemini-3.1-pro-preview',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+};
+
+const Set<String> _googleOffReasoningModels = {
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+};
+
+const Set<String> _deepSeekReasoningModels = {
+  'deepseek-v4-pro',
+  'deepseek-v4-flash',
+};
+
+@visibleForTesting
+List<ModelReasoningOption> reasoningOptionsForModel(ws.OsiaModel model) {
+  final provider = _reasoningProviderFor(model);
+  final modelId = model.id.trim();
+  if (provider.isEmpty || modelId.isEmpty) return const [];
+
+  if (provider == 'deepseek' && _deepSeekReasoningModels.contains(modelId)) {
+    return const [
+      _defaultReasoningOption,
+      ModelReasoningOption('off'),
+      ModelReasoningOption('normal'),
+      ModelReasoningOption('max'),
+    ];
+  }
+
+  if (provider == 'google' && _googleReasoningModels.contains(modelId)) {
+    return [
+      _defaultReasoningOption,
+      if (_googleOffReasoningModels.contains(modelId))
+        const ModelReasoningOption('off'),
+      const ModelReasoningOption('minimal'),
+      const ModelReasoningOption('low'),
+      const ModelReasoningOption('medium'),
+      const ModelReasoningOption('high'),
+    ];
+  }
+
+  if (provider == 'groq' && modelId.startsWith('openai/gpt-oss-')) {
+    return const [
+      _defaultReasoningOption,
+      ModelReasoningOption('low'),
+      ModelReasoningOption('medium'),
+      ModelReasoningOption('high'),
+    ];
+  }
+
+  if (provider == 'mistral' && modelId == 'mistral-medium-3-5') {
+    return const [
+      _defaultReasoningOption,
+      ModelReasoningOption('off'),
+      ModelReasoningOption('minimal'),
+      ModelReasoningOption('low'),
+      ModelReasoningOption('medium'),
+      ModelReasoningOption('high'),
+      ModelReasoningOption('xhigh'),
+    ];
+  }
+
+  return const [];
+}
+
+String _reasoningProviderFor(ws.OsiaModel model) {
+  final tagged = (model.provider ?? '').trim().toLowerCase();
+  if (tagged.isNotEmpty) return tagged;
+  final id = model.id.trim().toLowerCase();
+  if (id.contains('deepseek')) return 'deepseek';
+  if (id.contains('gemini')) return 'google';
+  if (id.startsWith('openai/gpt-oss-') || id.contains('gpt-oss')) {
+    return 'groq';
+  }
+  if (id.startsWith('mistral-') || id == 'codestral-2508') return 'mistral';
+  return '';
 }
 
 /// Bottom sheet that displays the list of models reported by the server.
@@ -29,6 +154,7 @@ Future<String?> showModelSelector({
   required ValueListenable<ModelSelectorState> stateListenable,
   required String? currentModel,
   required bool hierarchyActive,
+  ModelReasoningChanged? onReasoningChanged,
 }) {
   return showModalBottomSheet<String>(
     context: context,
@@ -43,6 +169,9 @@ Future<String?> showModelSelector({
           isLoading: state.isLoading,
           errorMessage: state.errorMessage,
           hierarchyActive: hierarchyActive,
+          reasoning: state.reasoning,
+          reasoningReady: state.reasoningReady,
+          onReasoningChanged: onReasoningChanged,
         ),
       );
       // Reduced motion: skip the added fade + spring-scale; the modal route's
@@ -82,6 +211,9 @@ class _ModelSelectorSheet extends StatelessWidget {
   final String? currentModel;
   final bool isLoading;
   final String? errorMessage;
+  final ws.OsiaReasoningConfig reasoning;
+  final bool reasoningReady;
+  final ModelReasoningChanged? onReasoningChanged;
 
   /// When true, the PC's AI hierarchy is on, so the chosen model is overridden
   /// by the configured chain — the sheet shows an explanatory note.
@@ -93,6 +225,9 @@ class _ModelSelectorSheet extends StatelessWidget {
     required this.isLoading,
     this.errorMessage,
     required this.hierarchyActive,
+    required this.reasoning,
+    required this.reasoningReady,
+    this.onReasoningChanged,
   });
 
   @override
@@ -123,8 +258,7 @@ class _ModelSelectorSheet extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
               child: Row(
                 children: [
-                  Icon(Icons.tune_rounded,
-                      color: palette.accent, size: 18),
+                  Icon(Icons.tune_rounded, color: palette.accent, size: 18),
                   const SizedBox(width: 8),
                   Text(
                     strings.availableModels,
@@ -191,9 +325,7 @@ class _ModelSelectorSheet extends StatelessWidget {
     if (isLoading && models.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 36),
-        child: Center(
-          child: CircularProgressIndicator(color: palette.accent),
-        ),
+        child: Center(child: CircularProgressIndicator(color: palette.accent)),
       );
     }
     // Error and no cached list to fall back on — explicit message.
@@ -234,6 +366,9 @@ class _ModelSelectorSheet extends StatelessWidget {
           model: m,
           isActive: isActive,
           palette: palette,
+          reasoning: reasoning,
+          reasoningReady: reasoningReady,
+          onReasoningChanged: onReasoningChanged,
           onTap: () => Navigator.of(context).pop(m.id),
         );
       },
@@ -244,16 +379,15 @@ class _ModelSelectorSheet extends StatelessWidget {
   /// (groups ordered by first appearance) followed by that provider's models.
   /// Falls back to a flat list when no model carries provider info.
   List<_SheetEntry> _buildEntries(OsiaStrings strings) {
-    final hasProviders =
-        models.any((m) => (m.provider ?? '').trim().isNotEmpty);
+    final hasProviders = models.any(
+      (m) => (m.provider ?? '').trim().isNotEmpty,
+    );
     if (!hasProviders) {
       return [for (final m in models) _SheetEntry.item(m)];
     }
     final groups = <String, List<ws.OsiaModel>>{};
     for (final m in models) {
-      groups
-          .putIfAbsent(_providerName(m.provider, strings), () => [])
-          .add(m);
+      groups.putIfAbsent(_providerName(m.provider, strings), () => []).add(m);
     }
     return [
       for (final group in groups.entries) ...[
@@ -273,6 +407,7 @@ class _ModelSelectorSheet extends StatelessWidget {
     'ollama': 'LOCAL',
     'xai': 'XAI',
     'deepseek': 'DEEPSEEK',
+    'mistral': 'MISTRAL',
   };
 
   String _providerName(String? provider, OsiaStrings strings) {
@@ -334,78 +469,316 @@ class _ModelTile extends StatelessWidget {
   final ws.OsiaModel model;
   final bool isActive;
   final OsiaPalette palette;
+  final ws.OsiaReasoningConfig reasoning;
+  final bool reasoningReady;
+  final ModelReasoningChanged? onReasoningChanged;
   final VoidCallback onTap;
 
   const _ModelTile({
     required this.model,
     required this.isActive,
     required this.palette,
+    required this.reasoning,
+    required this.reasoningReady,
+    this.onReasoningChanged,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final strings = OsiaL10n.of(context);
+    final reasoningOptions = reasoningOptionsForModel(model);
+    final reasoningId = _selectedReasoningId(reasoningOptions);
+    final reasoningOption = _findReasoningOption(reasoningOptions, reasoningId);
+    final showChip = reasoningOption != null && !reasoningOption.isDefault;
+    final showReasoningControl =
+        reasoningReady &&
+        reasoningOptions.isNotEmpty &&
+        onReasoningChanged != null;
+
     return PressableScale(
       child: Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: isActive
-                ? palette.accent.withValues(alpha: 0.10)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
               color: isActive
-                  ? palette.accent.withValues(alpha: 0.4)
+                  ? palette.accent.withValues(alpha: 0.10)
                   : Colors.transparent,
-              width: 1,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: isActive
+                    ? palette.accent.withValues(alpha: 0.4)
+                    : Colors.transparent,
+                width: 1,
+              ),
             ),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      model.label,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight:
-                            isActive ? FontWeight.w600 : FontWeight.w500,
-                        color: isActive
-                            ? palette.accent
-                            : palette.textPrimary,
-                      ),
-                    ),
-                    if (model.description != null &&
-                        model.description!.isNotEmpty) ...[
-                      const SizedBox(height: 3),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                       Text(
-                        model.description!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        model.label,
                         style: TextStyle(
-                          fontSize: 11.5,
-                          color: palette.textMuted,
+                          fontSize: 14,
+                          fontWeight: isActive
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                          color: isActive
+                              ? palette.accent
+                              : palette.textPrimary,
                         ),
                       ),
+                      if (model.description != null &&
+                          model.description!.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          model.description!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: palette.textMuted,
+                          ),
+                        ),
+                      ],
+                      if (showChip) ...[
+                        const SizedBox(height: 6),
+                        _ReasoningChip(
+                          label:
+                              '${strings.reasoning}: ${reasoningOption.label(strings)}',
+                          palette: palette,
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-              if (isActive)
-                Icon(Icons.check_rounded,
-                    color: palette.accent, size: 18),
-            ],
+                if (showReasoningControl) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: strings.reasoning,
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 34,
+                      height: 34,
+                    ),
+                    padding: EdgeInsets.zero,
+                    onPressed: () => _showReasoningSheet(
+                      context,
+                      options: reasoningOptions,
+                      currentId: reasoningId,
+                    ),
+                    icon: Icon(
+                      Icons.settings_rounded,
+                      color: showChip ? palette.accent : palette.textMuted,
+                      size: 18,
+                    ),
+                  ),
+                ],
+                if (isActive) ...[
+                  const SizedBox(width: 4),
+                  Icon(Icons.check_rounded, color: palette.accent, size: 18),
+                ],
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  String _selectedReasoningId(List<ModelReasoningOption> options) {
+    final selected = (reasoning.models[model.id] ?? 'auto')
+        .trim()
+        .toLowerCase();
+    return options.any((option) => option.id == selected) ? selected : 'auto';
+  }
+
+  ModelReasoningOption? _findReasoningOption(
+    List<ModelReasoningOption> options,
+    String id,
+  ) {
+    for (final option in options) {
+      if (option.id == id) return option;
+    }
+    return null;
+  }
+
+  Future<void> _showReasoningSheet(
+    BuildContext context, {
+    required List<ModelReasoningOption> options,
+    required String currentId,
+  }) {
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => _ReasoningOptionsSheet(
+        model: model,
+        options: options,
+        currentId: currentId,
+        onSelected: (optionId) {
+          onReasoningChanged?.call(model.id, optionId);
+          Navigator.of(ctx).pop();
+        },
+      ),
+    );
+  }
+}
+
+class _ReasoningChip extends StatelessWidget {
+  final String label;
+  final OsiaPalette palette;
+
+  const _ReasoningChip({required this.label, required this.palette});
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: palette.accent.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: palette.accent.withValues(alpha: 0.22)),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: palette.accent,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReasoningOptionsSheet extends StatelessWidget {
+  final ws.OsiaModel model;
+  final List<ModelReasoningOption> options;
+  final String currentId;
+  final ValueChanged<String> onSelected;
+
+  const _ReasoningOptionsSheet({
+    required this.model,
+    required this.options,
+    required this.currentId,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    return SafeArea(
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: palette.border, width: 0.5),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 38,
+              height: 4,
+              decoration: BoxDecoration(
+                color: palette.border,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.settings_rounded, color: palette.accent, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      strings.reasoning,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: palette.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  model.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12.5, color: palette.textMuted),
+                ),
+              ),
+            ),
+            ListView.separated(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+              itemCount: options.length,
+              separatorBuilder: (context, index) => const SizedBox(height: 2),
+              itemBuilder: (context, index) {
+                final option = options[index];
+                final selected = option.id == currentId;
+                return Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () => onSelected(option.id),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              option.label(strings),
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: selected
+                                    ? FontWeight.w600
+                                    : FontWeight.w500,
+                                color: selected
+                                    ? palette.accent
+                                    : palette.textPrimary,
+                              ),
+                            ),
+                          ),
+                          if (selected)
+                            Icon(
+                              Icons.check_rounded,
+                              color: palette.accent,
+                              size: 18,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }

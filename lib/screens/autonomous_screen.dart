@@ -64,6 +64,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
   /// Set once the user explicitly picks a model in the selector, so the
   /// auto-selection stops overriding their choice when later frames arrive.
   bool _userPickedModel = false;
+  ws.OsiaReasoningConfig _reasoning = const ws.OsiaReasoningConfig();
 
   /// Latest progress frame, or null before the first one arrives.
   ws.AutonomousProgressMessage? _latest;
@@ -88,7 +89,10 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     // reply must not be able to land before we're listening.
     _configSub = widget.wsService.configStream.listen((cfg) {
       if (!mounted) return;
-      setState(() => _config = cfg);
+      setState(() {
+        _config = cfg;
+        _reasoning = cfg.reasoning;
+      });
       _syncModelSelection();
     });
     _msgSub = widget.wsService.messageStream.listen((msg) {
@@ -283,8 +287,11 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       } else if (_selectedModel != null && !ids.contains(_selectedModel)) {
         // A manual pick that is no longer configured (config changed) — clamp
         // back to the first configured model (or clear when none remain).
-        setState(() =>
-            _selectedModel = configured.isNotEmpty ? configured.first.id : null);
+        setState(
+          () => _selectedModel = configured.isNotEmpty
+              ? configured.first.id
+              : null,
+        );
       }
     }
     final notifier = _selectorNotifier;
@@ -297,6 +304,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         errorMessage: (_config != null && configured.isEmpty)
             ? OsiaL10n.of(context).autonomousNoConfiguredModels
             : null,
+        reasoning: _reasoning,
       );
     }
   }
@@ -315,6 +323,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         errorMessage: (_config != null && configured.isEmpty)
             ? strings.autonomousNoConfiguredModels
             : null,
+        reasoning: _reasoning,
       ),
     );
     _selectorNotifier = notifier;
@@ -332,6 +341,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
           errorMessage: _config != null
               ? strings.autonomousNoConfiguredModels
               : strings.modelsLoadFailed,
+          reasoning: _reasoning,
         );
       });
     }
@@ -344,6 +354,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         // The run uses the explicitly chosen model — the AI-hierarchy override
         // note doesn't apply here.
         hierarchyActive: false,
+        onReasoningChanged: _setReasoningForModel,
       );
       if (chosen != null) {
         // A manual pick wins over auto-selection from here on.
@@ -358,6 +369,23 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     }
   }
 
+  void _setReasoningForModel(String modelId, String optionId) {
+    final next = _reasoning.withModelOverride(modelId, optionId);
+    setState(() => _reasoning = next);
+    final notifier = _selectorNotifier;
+    if (notifier != null) {
+      final current = notifier.value;
+      notifier.value = ModelSelectorState(
+        models: current.models,
+        isLoading: current.isLoading,
+        errorMessage: current.errorMessage,
+        reasoning: next,
+      );
+    }
+    widget.wsService.sendSetSetting('reasoning', next.toJson());
+    widget.wsService.sendGetConfig();
+  }
+
   void _start() {
     final objective = _objectiveCtrl.text.trim();
     final strings = OsiaL10n.of(context);
@@ -365,7 +393,8 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-            SnackBar(content: Text(strings.autonomousObjectiveRequired)));
+          SnackBar(content: Text(strings.autonomousObjectiveRequired)),
+        );
       return;
     }
     final model = _selectedModel;
@@ -373,7 +402,8 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-            SnackBar(content: Text(strings.autonomousModelRequired)));
+          SnackBar(content: Text(strings.autonomousModelRequired)),
+        );
       return;
     }
     FocusScope.of(context).unfocus();
@@ -413,13 +443,17 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child:
-                Text(strings.cancel, style: TextStyle(color: palette.textMuted)),
+            child: Text(
+              strings.cancel,
+              style: TextStyle(color: palette.textMuted),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child:
-                Text(strings.autonomousAbort, style: TextStyle(color: palette.error)),
+            child: Text(
+              strings.autonomousAbort,
+              style: TextStyle(color: palette.error),
+            ),
           ),
         ],
       ),
@@ -436,7 +470,8 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     final strings = OsiaL10n.of(context);
 
     final configuredCount = _configuredModels.length;
-    final canStart = !_isActive &&
+    final canStart =
+        !_isActive &&
         _objectiveCtrl.text.trim().isNotEmpty &&
         _selectedModel != null &&
         configuredCount > 0;
@@ -458,7 +493,9 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
               StaggeredAppear(
                 index: 0,
                 child: _SectionLabel(
-                    label: strings.autonomousObjectiveLabel, palette: palette),
+                  label: strings.autonomousObjectiveLabel,
+                  palette: palette,
+                ),
               ),
               StaggeredAppear(
                 index: 1,
@@ -474,16 +511,23 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                     cursorColor: palette.accent,
                     onChanged: (_) => setState(() {}),
                     style: TextStyle(
-                        color: palette.textPrimary, fontSize: 15, height: 1.4),
+                      color: palette.textPrimary,
+                      fontSize: 15,
+                      height: 1.4,
+                    ),
                     decoration: InputDecoration(
                       isDense: true,
                       filled: true,
                       fillColor: palette.surfaceElevated,
                       hintText: strings.autonomousObjectiveHint,
-                      hintStyle:
-                          TextStyle(color: palette.textMuted, fontSize: 14.5),
+                      hintStyle: TextStyle(
+                        color: palette.textMuted,
+                        fontSize: 14.5,
+                      ),
                       contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 14),
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(color: palette.border),
@@ -495,11 +539,15 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                       disabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide(
-                            color: palette.border.withValues(alpha: 0.5)),
+                          color: palette.border.withValues(alpha: 0.5),
+                        ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(color: palette.accent, width: 1.4),
+                        borderSide: BorderSide(
+                          color: palette.accent,
+                          width: 1.4,
+                        ),
                       ),
                     ),
                   ),
@@ -548,15 +596,19 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                             : Icons.rocket_launch_rounded,
                         size: 20,
                       ),
-                      label: Text(_runPhase == _RunPhase.planning
-                          ? strings.autonomousPlanning
-                          : strings.autonomousStart),
+                      label: Text(
+                        _runPhase == _RunPhase.planning
+                            ? strings.autonomousPlanning
+                            : strings.autonomousStart,
+                      ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: palette.accent,
-                        foregroundColor:
-                            palette.isDark ? palette.background : Colors.white,
-                        disabledBackgroundColor:
-                            palette.accent.withValues(alpha: 0.4),
+                        foregroundColor: palette.isDark
+                            ? palette.background
+                            : Colors.white,
+                        disabledBackgroundColor: palette.accent.withValues(
+                          alpha: 0.4,
+                        ),
                         disabledForegroundColor:
                             (palette.isDark ? palette.background : Colors.white)
                                 .withValues(alpha: 0.7),
@@ -565,7 +617,9 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                           borderRadius: BorderRadius.circular(16),
                         ),
                         textStyle: const TextStyle(
-                            fontSize: 15.5, fontWeight: FontWeight.w600),
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
@@ -604,13 +658,14 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                             style: OutlinedButton.styleFrom(
                               foregroundColor: palette.accent,
                               side: BorderSide(color: palette.border),
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 14),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14),
                               ),
                               textStyle: const TextStyle(
-                                  fontSize: 14.5, fontWeight: FontWeight.w600),
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
@@ -621,18 +676,22 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                         child: PressableScale(
                           child: OutlinedButton.icon(
                             onPressed: _resume,
-                            icon: const Icon(Icons.play_arrow_rounded, size: 19),
+                            icon: const Icon(
+                              Icons.play_arrow_rounded,
+                              size: 19,
+                            ),
                             label: Text(strings.autonomousResume),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: palette.accent,
                               side: BorderSide(color: palette.border),
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 14),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14),
                               ),
                               textStyle: const TextStyle(
-                                  fontSize: 14.5, fontWeight: FontWeight.w600),
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
@@ -648,13 +707,16 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                           style: OutlinedButton.styleFrom(
                             foregroundColor: palette.error,
                             side: BorderSide(
-                                color: palette.error.withValues(alpha: 0.5)),
+                              color: palette.error.withValues(alpha: 0.5),
+                            ),
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14),
                             ),
                             textStyle: const TextStyle(
-                                fontSize: 14.5, fontWeight: FontWeight.w600),
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ),
@@ -752,11 +814,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
               valueOnly: true,
             ),
             const SizedBox(height: 8),
-            _TaskProgressBar(
-              done: done,
-              total: total,
-              palette: palette,
-            ),
+            _TaskProgressBar(done: done, total: total, palette: palette),
           ],
           if (status.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -876,11 +934,7 @@ class _SectionLabel extends StatelessWidget {
 class _OsiaCard extends StatelessWidget {
   final OsiaPalette palette;
   final Widget child;
-  const _OsiaCard({
-    super.key,
-    required this.palette,
-    required this.child,
-  });
+  const _OsiaCard({super.key, required this.palette, required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -919,8 +973,7 @@ class _ModelPickerTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           onTap: onTap,
           child: Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
             decoration: BoxDecoration(
               color: palette.surface,
               borderRadius: BorderRadius.circular(16),
@@ -928,11 +981,13 @@ class _ModelPickerTile extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Icon(Icons.tune_rounded,
-                    size: 18,
-                    color: enabled
-                        ? palette.accent
-                        : palette.accent.withValues(alpha: 0.5)),
+                Icon(
+                  Icons.tune_rounded,
+                  size: 18,
+                  color: enabled
+                      ? palette.accent
+                      : palette.accent.withValues(alpha: 0.5),
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
@@ -942,16 +997,16 @@ class _ModelPickerTile extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 14.5,
                       fontWeight: FontWeight.w500,
-                      color: enabled
-                          ? palette.textPrimary
-                          : palette.textMuted,
+                      color: enabled ? palette.textPrimary : palette.textMuted,
                     ),
                   ),
                 ),
-                Icon(Icons.keyboard_arrow_down_rounded,
-                    color: enabled
-                        ? palette.accent
-                        : palette.accent.withValues(alpha: 0.5)),
+                Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: enabled
+                      ? palette.accent
+                      : palette.accent.withValues(alpha: 0.5),
+                ),
               ],
             ),
           ),
