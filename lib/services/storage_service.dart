@@ -20,20 +20,22 @@ class StorageService {
   static const _keyAutoTts = 'osia_auto_tts';
   static const _keyLiveApi = 'osia_liveapi_enabled';
 
-  /// Default server host used by the connection screen — the app always
-  /// connects to the public OSIA endpoint; only the token is asked for.
-  static const String defaultHost = 'osia.space';
+  /// Default/fallback server host. Normal connections resolve the current
+  /// quick-tunnel host through rendezvous; only the token is asked for.
+  static const String defaultHost = 'app.osia.space';
+  static const String _legacyDefaultHost = 'osia.space';
 
   final FlutterSecureStorage _storage;
 
   StorageService({FlutterSecureStorage? storage})
-      : _storage = storage ??
-            const FlutterSecureStorage(
-              // resetOnError makes the Android plugin auto-drop entries it can
-              // no longer decrypt (keystore change) instead of throwing — a
-              // native backstop to the Dart-level [_safeRead] guard below.
-              aOptions: AndroidOptions(resetOnError: true),
-            );
+    : _storage =
+          storage ??
+          const FlutterSecureStorage(
+            // resetOnError makes the Android plugin auto-drop entries it can
+            // no longer decrypt (keystore change) instead of throwing — a
+            // native backstop to the Dart-level [_safeRead] guard below.
+            aOptions: AndroidOptions(resetOnError: true),
+          );
 
   /// Read a value from secure storage, tolerating decryption failures.
   ///
@@ -48,7 +50,8 @@ class StorageService {
       return await _storage.read(key: key);
     } catch (e) {
       debugPrint(
-          '[OSIA Storage] read("$key") failed: $e — dropping corrupted entry');
+        '[OSIA Storage] read("$key") failed: $e — dropping corrupted entry',
+      );
       try {
         await _storage.delete(key: key);
       } catch (_) {
@@ -67,7 +70,16 @@ class StorageService {
 
   /// Read the saved Tailscale IP, or `null` if never set.
   Future<String?> getTailscaleIp() async {
-    return _safeRead(_keyTailscaleIp);
+    final saved = await _safeRead(_keyTailscaleIp);
+    if (saved == _legacyDefaultHost) {
+      try {
+        await _storage.write(key: _keyTailscaleIp, value: defaultHost);
+      } catch (e) {
+        debugPrint('[OSIA Storage] legacy host migration write failed: $e');
+      }
+      return defaultHost;
+    }
+    return saved;
   }
 
   // ── Auth token ────────────────────────────────────────────────────────
