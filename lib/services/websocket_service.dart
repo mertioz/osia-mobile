@@ -8,6 +8,8 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'relay_service.dart';
+
 // ── WOR-75 diagnostic flag ────────────────────────────────────────────────
 
 /// TEMPORARY instrumentation (WOR-75): when true, the background-work
@@ -1071,9 +1073,11 @@ class WebSocketService {
   Timer? _reconnectTimer;
   int _reconnectAttempt = 0;
   bool _intentionalClose = false;
+  bool _suppressReconnectOnce = false;
 
   static const int _baseReconnectMs = 500;
   static const Duration _connectTimeout = Duration(seconds: 10);
+  static const Duration _relayReadyTimeout = Duration(seconds: 5);
 
   // ── Streams ───────────────────────────────────────────────────────────
 
@@ -1380,12 +1384,19 @@ class WebSocketService {
   /// (PC offline / network) is funnelled into the existing error stream and
   /// reconnect path, exactly like a socket-level failure.
   final Future<String> Function()? resolveHost;
+  final Future<RelayConnectionConfig> Function()? resolveRelay;
+
+  bool _connectedViaRelay = false;
+  RelayConnectionConfig? _relayConfig;
+  Completer<bool>? _relayReadyCompleter;
+  int _relaySeq = 0;
 
   WebSocketService({
     required this.ip,
     required this.token,
     this.autoReconnect = true,
     this.resolveHost,
+    this.resolveRelay,
   });
 
   // ── Public API ───────────────────────────────────────────────────────
@@ -1408,6 +1419,9 @@ class WebSocketService {
     _reconnectAttempt = 0;
     _channel?.sink.close();
     _channel = null;
+    _connectedViaRelay = false;
+    _relayConfig = null;
+    _relayReadyCompleter = null;
     _setState(ConnectionState.disconnected);
   }
 
@@ -1928,6 +1942,9 @@ class WebSocketService {
       );
       return false;
     }
+    if (_connectedViaRelay) {
+      return _sendRelayEnvelope('FRAME', {'frame': json});
+    }
     final encoded = jsonEncode(json);
     try {
       _channel?.sink.add(encoded);
@@ -1944,8 +1961,176 @@ class WebSocketService {
     _setConversationBusy(id, false);
   }
 
+  Future<bool> _tryRelayConnect(RelayConnectionConfig config) async {
+    final uri = _relayUri(config);
+    debugPrint(
+      '[OSIA Relay] Connecting to $uri '
+      '(timeout ${_connectTimeout.inSeconds}s)',
+    );
+
+    try {
+      final socket = await WebSocket.connect(
+        uri.toString(),
+      ).timeout(_connectTimeout);
+      _channel = IOWebSocketChannel(socket);
+      _connectedViaRelay = true;
+      _relayConfig = config;
+      _relaySeq = 0;
+      _relayReadyCompleter = Completer<bool>();
+
+      _channel!.stream.listen(
+        _onRelayData,
+        onError: _onError,
+        onDone: _onDone,
+        cancelOnError: false,
+      );
+
+      _sendRelayEnvelope('PAIR_START', {'secret': config.secret});
+      _sendRelayEnvelope('MOBILE_READY', {});
+
+      final ready = await _relayReadyCompleter!.future.timeout(
+        _relayReadyTimeout,
+        onTimeout: () => false,
+      );
+      if (ready) return true;
+
+      _suppressReconnectOnce = true;
+      _channel?.sink.close();
+      _channel = null;
+      _connectedViaRelay = false;
+      _relayConfig = null;
+      _relayReadyCompleter = null;
+      _setState(ConnectionState.disconnected);
+      return false;
+    } catch (e) {
+      _channel = null;
+      _connectedViaRelay = false;
+      _relayConfig = null;
+      _relayReadyCompleter = null;
+      debugPrint('[OSIA Relay] connect failed: $e');
+      return false;
+    }
+  }
+
+  Uri _relayUri(RelayConnectionConfig config) {
+    final query = <String, String>{
+      ...config.endpoint.queryParameters,
+      'role': 'mobile',
+      'pair_id': config.pairId,
+      'device_id': config.deviceId,
+      'session_id': config.sessionId,
+    };
+    return config.endpoint.replace(queryParameters: query);
+  }
+
+  bool _sendRelayEnvelope(String type, Map<String, dynamic> payload) {
+    final config = _relayConfig;
+    if (_channel == null || config == null) return false;
+    _relaySeq++;
+    final encoded = jsonEncode({
+      'v': 1,
+      'type': type,
+      'role': 'mobile',
+      'pair_id': config.pairId,
+      'device_id': config.deviceId,
+      'session_id': config.sessionId,
+      'seq': _relaySeq,
+      'ack': 0,
+      'payload': payload,
+    });
+    try {
+      _channel?.sink.add(encoded);
+      return true;
+    } catch (e) {
+      debugPrint('[OSIA Relay] send error: $e');
+      return false;
+    }
+  }
+
+  void _markConnected() {
+    if (_state != ConnectionState.connected) {
+      _setState(ConnectionState.connected);
+    }
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _reconnectAttempt = 0;
+  }
+
+  void _completeRelayReady(bool ready) {
+    final completer = _relayReadyCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(ready);
+    }
+  }
+
+  void _onRelayData(dynamic raw) {
+    try {
+      final Map<String, dynamic> envelope = (raw is String)
+          ? jsonDecode(raw) as Map<String, dynamic>
+          : raw;
+      final type = envelope['type']?.toString() ?? '';
+      final payload = envelope['payload'];
+
+      switch (type) {
+        case 'PAIR_CONFIRM':
+          debugPrint('[OSIA Relay] pair confirmed');
+        case 'PC_READY':
+          _markConnected();
+          _completeRelayReady(true);
+        case 'FRAME':
+          _markConnected();
+          _completeRelayReady(true);
+          if (payload is Map) {
+            final frame = payload['frame'];
+            if (frame is Map) {
+              _onData(frame.cast<String, dynamic>());
+            }
+          }
+        case 'BATCH':
+          _markConnected();
+          _completeRelayReady(true);
+          if (payload is Map && payload['frames'] is List) {
+            for (final frame in payload['frames'] as List) {
+              if (frame is Map) _onData(frame.cast<String, dynamic>());
+            }
+          }
+        case 'PING':
+          _sendRelayEnvelope('PONG', {
+            't': DateTime.now().millisecondsSinceEpoch,
+          });
+        case 'DISCONNECT':
+          _channel?.sink.close();
+        case 'ERROR':
+          final code = payload is Map ? payload['code']?.toString() ?? '' : '';
+          if (code != 'peer_unavailable') {
+            final msg = code.isEmpty ? 'relay_error' : code;
+            debugPrint('[OSIA Relay] error: $msg');
+            _errorCtrl.add(msg);
+          }
+          _completeRelayReady(false);
+        default:
+          debugPrint('[OSIA Relay] unhandled envelope type="$type"');
+      }
+    } catch (e) {
+      debugPrint('[OSIA Relay] parse error: $e');
+    }
+  }
+
   Future<void> _doConnect() async {
     _setState(ConnectionState.connecting);
+
+    if (resolveRelay != null) {
+      try {
+        final relayConfig = await resolveRelay!();
+        final relayReady = await _tryRelayConnect(relayConfig);
+        if (relayReady) return;
+        debugPrint(
+          '[OSIA Relay] Relay unavailable, falling back to rendezvous',
+        );
+      } catch (e) {
+        debugPrint('[OSIA Relay] Relay setup failed, falling back: $e');
+      }
+    }
 
     // Host acquisition (WOR-64). With a [resolveHost] callback we fetch the
     // PC's current server host fresh on every connect AND reconnect (handling a
@@ -1983,7 +2168,7 @@ class WebSocketService {
       // Socket is open — we're connected. Don't wait for any server message
       // to flip state, or the badge stays on "Connexion…" forever.
       _channel = IOWebSocketChannel(socket);
-      _setState(ConnectionState.connected);
+      _markConnected();
       // The socket is open and healthy: kill any reconnect timer left pending
       // from an earlier failed attempt. Otherwise that stale timer fires while
       // we're already connected and calls _doConnect() directly (it bypasses
@@ -2300,8 +2485,14 @@ class WebSocketService {
       'intentional=$_intentionalClose, autoReconnect=$autoReconnect).',
     );
     _channel = null;
+    _connectedViaRelay = false;
+    _relayConfig = null;
+    _completeRelayReady(false);
+    _relayReadyCompleter = null;
     _setState(ConnectionState.disconnected);
-    if (!_intentionalClose) {
+    if (_suppressReconnectOnce) {
+      _suppressReconnectOnce = false;
+    } else if (!_intentionalClose) {
       _scheduleReconnect();
     }
   }

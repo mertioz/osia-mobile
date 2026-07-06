@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -19,6 +21,7 @@ class StorageService {
   static const _keyLanguage = 'osia_language';
   static const _keyAutoTts = 'osia_auto_tts';
   static const _keyLiveApi = 'osia_liveapi_enabled';
+  static const _keyRelayDeviceId = 'osia_relay_device_id';
 
   /// Default/fallback server host. Normal connections resolve the current
   /// quick-tunnel host through rendezvous; only the token is asked for.
@@ -92,6 +95,20 @@ class StorageService {
   /// Read the saved token, or `null` if never set.
   Future<String?> getToken() async {
     return _safeRead(_keyToken);
+  }
+
+  Future<String> getOrCreateRelayDeviceId() async {
+    final saved = (await _safeRead(_keyRelayDeviceId))?.trim();
+    if (saved != null && saved.isNotEmpty) return saved;
+
+    final random = Random.secure();
+    final suffix = List<int>.generate(
+      16,
+      (_) => random.nextInt(256),
+    ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    final id = 'mobile-$suffix';
+    await _storage.write(key: _keyRelayDeviceId, value: id);
+    return id;
   }
 
   // ── Theme ────────────────────────────────────────────────────────────
