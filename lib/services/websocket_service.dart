@@ -887,6 +887,20 @@ class ConvStreamEvent {
   });
 }
 
+/// Busy-state update for one conversation (WOR-103). Delivered on its own
+/// stream so the sealed chat message switch remains unchanged.
+class ConversationBusyEvent {
+  final String conversationId;
+  final bool busy;
+  final String message;
+
+  const ConversationBusyEvent({
+    required this.conversationId,
+    required this.busy,
+    this.message = '',
+  });
+}
+
 /// Per-conversation accumulation of a streamed reply (WOR-53). Holds the text
 /// streamed so far for one conversation plus whether its turn is still live, so
 /// a backgrounded conversation's reply survives a screen switch and can be
@@ -1105,6 +1119,9 @@ class WebSocketService {
   final StreamController<McpOauthUrl> _mcpOauthUrlCtrl =
       StreamController<McpOauthUrl>.broadcast();
 
+  final StreamController<ConversationBusyEvent> _conversationBusyCtrl =
+      StreamController<ConversationBusyEvent>.broadcast();
+
   // ── Per-conversation stream buffers (WOR-53) ──────────────────────────
   //
   // A parallel sink to the paced [messageStream]: every streamed
@@ -1134,6 +1151,11 @@ class WebSocketService {
   /// ([_finishConvStream]) and on delete/new ([clearConvBuffer]). Superset of
   /// [isStreaming]: it can be set at send time, before the first chunk lands.
   final Set<String> _pendingConvs = {};
+
+  /// Conversations the server/local send path says are currently busy
+  /// (WOR-103). This is separate from [_pendingConvs]: pending drives recovery
+  /// and stream hydration, while busy gates new sends for the same conversation.
+  final Set<String> _busyConvs = {};
 
   /// Hard cap on retained per-conversation buffers (WOR-53) — a backstop for
   /// buffers the user never explicitly leaves or deletes (e.g. a server-streamed
@@ -1212,6 +1234,10 @@ class WebSocketService {
   /// route a backgrounded stream to the right conversation.
   Stream<ConvStreamEvent> get convStreamStream => _convStreamCtrl.stream;
 
+  /// Stream of per-conversation busy-state changes (WOR-103).
+  Stream<ConversationBusyEvent> get conversationBusyStream =>
+      _conversationBusyCtrl.stream;
+
   /// The reply text streamed so far for conversation [id] (WOR-53), for
   /// hydrating the chat when switching to a conversation whose reply streamed
   /// while it was backgrounded. Empty when nothing has streamed for [id].
@@ -1228,6 +1254,39 @@ class WebSocketService {
   /// a pending conversation the user switched back to, or returned to after a
   /// disconnect/sleep. See [markPending] / [_pendingConvs].
   bool isPending(String id) => _pendingConvs.contains(id);
+
+  /// Whether conversation [id] is currently blocked for another send
+  /// (WOR-103).
+  bool isConversationBusy(String id) => _busyConvs.contains(id);
+
+  void _setConversationBusy(String id, bool busy, {String message = ''}) {
+    if (id.isEmpty) return;
+    if (busy) {
+      _busyConvs.add(id);
+    } else {
+      _busyConvs.remove(id);
+    }
+    if (!_conversationBusyCtrl.isClosed) {
+      _conversationBusyCtrl.add(
+        ConversationBusyEvent(conversationId: id, busy: busy, message: message),
+      );
+    }
+  }
+
+  void _handleConversationBusyFrame(Map<String, dynamic> json) {
+    final id = json['conversation_id']?.toString() ?? '';
+    if ((json['type'] ?? '').toString() == 'conversation_busy') {
+      final message = json['message']?.toString() ?? '';
+      _setConversationBusy(id, true, message: message);
+      return;
+    }
+    _setConversationBusy(id, json['busy'] == true);
+  }
+
+  @visibleForTesting
+  void handleConversationBusyFrameForTest(Map<String, dynamic> json) {
+    _handleConversationBusyFrame(json);
+  }
 
   /// Mark conversation [id]'s turn as in flight at SEND time (WOR-75/WOR-53/
   /// WOR-62) — before the first streamed chunk lands, so switching away and
@@ -1352,14 +1411,28 @@ class WebSocketService {
     _setState(ConnectionState.disconnected);
   }
 
-  /// Send a text command.
-  void sendText(String content) {
-    _send({'type': 'text', 'content': content});
+  /// Send a text command. Returns false when the target conversation is busy.
+  bool sendText(String content, {String? conversationId}) {
+    final id = conversationId ?? '';
+    if (id.isNotEmpty && isConversationBusy(id)) {
+      _setConversationBusy(id, true);
+      return false;
+    }
+    final sent = _send({'type': 'text', 'content': content});
+    if (sent && id.isNotEmpty) _setConversationBusy(id, true);
+    return sent;
   }
 
   /// Send a base64-encoded WAV audio command.
-  void sendAudio(String base64Data) {
-    _send({'type': 'audio', 'format': 'wav', 'data': base64Data});
+  bool sendAudio(String base64Data, {String? conversationId}) {
+    final id = conversationId ?? '';
+    if (id.isNotEmpty && isConversationBusy(id)) {
+      _setConversationBusy(id, true);
+      return false;
+    }
+    final sent = _send({'type': 'audio', 'format': 'wav', 'data': base64Data});
+    if (sent && id.isNotEmpty) _setConversationBusy(id, true);
+    return sent;
   }
 
   /// Ask the server to load a specific conversation.
@@ -1385,6 +1458,7 @@ class WebSocketService {
     // WOR-75: ...and clear its pending flag (clearConvBuffer no longer does so),
     // so no stale background placeholder lingers for a deleted conversation.
     clearPending(id);
+    _setConversationBusy(id, false);
   }
 
   /// Ask the server to rename conversation [id] to [title] (WOR-76). The server
@@ -1673,9 +1747,11 @@ class WebSocketService {
     _mcpStatusCtrl.close();
     _mcpConfirmCtrl.close();
     _mcpOauthUrlCtrl.close();
+    _conversationBusyCtrl.close();
     _convStreamCtrl.close();
     _streamBuffers.clear();
     _pendingConvs.clear();
+    _busyConvs.clear();
   }
 
   /// Strip any scheme, path, or port the user may have pasted into the
@@ -1815,6 +1891,7 @@ class WebSocketService {
     final st = _streamBuffers[convId];
     if (st != null) st.streaming = false;
     _pendingConvs.remove(convId); // WOR-75/WOR-53/WOR-62: turn finished.
+    _setConversationBusy(convId, false);
     if (kOsiaDebugPlaceholder) {
       debugPrint(
         '[OSIA WOR-75] _finishConvStream(id="$convId", error=$error) '
@@ -1842,21 +1919,29 @@ class WebSocketService {
     if (victim != null) _streamBuffers.remove(victim);
   }
 
-  void _send(Map<String, dynamic> json) {
+  bool _send(Map<String, dynamic> json) {
     // Surface dropped sends loudly — a null channel means the socket is
     // down and the message silently goes nowhere otherwise.
     if (_channel == null) {
       debugPrint(
         '[OSIA WS] Send DROPPED (socket not connected): type=${json['type']}',
       );
-      return;
+      return false;
     }
     final encoded = jsonEncode(json);
     try {
       _channel?.sink.add(encoded);
+      return true;
     } catch (e) {
       debugPrint('[OSIA WS] Send error: $e');
+      return false;
     }
+  }
+
+  /// Clear conversation [id]'s busy flag (WOR-103), used by recovery paths that
+  /// learn a turn finished via refreshed history instead of a terminal frame.
+  void clearConversationBusy(String id) {
+    _setConversationBusy(id, false);
   }
 
   Future<void> _doConnect() async {
@@ -2186,6 +2271,10 @@ class WebSocketService {
               !_mcpOauthUrlCtrl.isClosed) {
             _mcpOauthUrlCtrl.add(McpOauthUrl(id: oid, url: ourl));
           }
+        case 'conversation_busy_changed':
+          _handleConversationBusyFrame(json);
+        case 'conversation_busy':
+          _handleConversationBusyFrame(json);
         default:
           debugPrint(
             '[OSIA WS] unhandled message type="$type" keys=${json.keys.toList()}',

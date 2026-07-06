@@ -23,12 +23,14 @@ const Curve _kBarAnimCurve = MotionCurves.enter;
 /// the chat content shows faintly underneath.
 class GlassInputBar extends StatelessWidget {
   final TextEditingController textController;
+
   /// Optional external focus handle for the text field. When provided, the
   /// chat screen owns it so it can conditionally request focus (new empty
   /// chat → open the keyboard) or unfocus (existing conversation → keep it
   /// down). When null the field falls back to its own internal node, so the
   /// manual-tap-to-focus behaviour is unchanged either way. Additive only.
   final FocusNode? focusNode;
+  final bool enabled;
   final bool isRecording;
   final bool hasText;
   final VoidCallback onSend;
@@ -49,6 +51,7 @@ class GlassInputBar extends StatelessWidget {
     super.key,
     required this.textController,
     this.focusNode,
+    this.enabled = true,
     required this.isRecording,
     required this.hasText,
     required this.onSend,
@@ -66,10 +69,12 @@ class GlassInputBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
     final strings = OsiaL10n.of(context);
-    final glassFill =
-        palette.surface.withValues(alpha: palette.isDark ? 0.55 : 0.70);
-    final borderColor =
-        palette.accent.withValues(alpha: palette.isDark ? 0.20 : 0.30);
+    final glassFill = palette.surface.withValues(
+      alpha: palette.isDark ? 0.55 : 0.70,
+    );
+    final borderColor = palette.accent.withValues(
+      alpha: palette.isDark ? 0.20 : 0.30,
+    );
     final radius = BorderRadius.circular(16);
 
     return ClipRRect(
@@ -84,7 +89,8 @@ class GlassInputBar extends StatelessWidget {
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(
-                    alpha: palette.isDark ? 0.35 : 0.08),
+                  alpha: palette.isDark ? 0.35 : 0.08,
+                ),
                 blurRadius: 24,
                 offset: const Offset(0, 8),
               ),
@@ -126,8 +132,9 @@ class GlassInputBar extends StatelessWidget {
                   minLines: 1,
                   maxLines: 5,
                   textInputAction: TextInputAction.send,
+                  enabled: enabled,
                   onChanged: onChanged,
-                  onSubmitted: onSubmitted,
+                  onSubmitted: enabled ? onSubmitted : null,
                   cursorColor: palette.accent,
                   style: TextStyle(
                     color: palette.textPrimary,
@@ -137,7 +144,9 @@ class GlassInputBar extends StatelessWidget {
                   decoration: InputDecoration(
                     isCollapsed: true,
                     contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 12),
+                      horizontal: 8,
+                      vertical: 12,
+                    ),
                     hintText: strings.messageHint,
                     hintStyle: TextStyle(
                       color: palette.textMuted,
@@ -164,22 +173,17 @@ class GlassInputBar extends StatelessWidget {
                   Expanded(
                     child: Align(
                       alignment: Alignment.centerLeft,
-                      child: _ModelPill(
-                        label: modelLabel,
-                        onTap: onModelTap,
-                      ),
+                      child: _ModelPill(label: modelLabel, onTap: onModelTap),
                     ),
                   ),
                   const SizedBox(width: 4),
                   _GlassMicButton(
                     isRecording: isRecording,
+                    enabled: enabled,
                     onTap: onMicTap,
                   ),
                   const SizedBox(width: 6),
-                  _GlassSendButton(
-                    active: hasText,
-                    onTap: onSend,
-                  ),
+                  _GlassSendButton(active: enabled && hasText, onTap: onSend),
                 ],
               ),
             ],
@@ -202,60 +206,63 @@ class _ModelPill extends StatelessWidget {
     final palette = OsiaTheme.of(context);
     return PressableScale(
       child: Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: _kBarAnimDuration,
-          curve: _kBarAnimCurve,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: palette.accent.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: palette.accent.withValues(alpha: 0.28),
-              width: 0.7,
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: _kBarAnimDuration,
+            curve: _kBarAnimCurve,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: palette.accent.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: palette.accent.withValues(alpha: 0.28),
+                width: 0.7,
+              ),
             ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.auto_awesome_rounded,
-                  size: 13, color: palette.accent),
-              const SizedBox(width: 5),
-              Flexible(
-                child: AnimatedSwitcher(
-                  duration: _kBarAnimDuration,
-                  switchInCurve: _kBarAnimCurve,
-                  switchOutCurve: MotionCurves.exit,
-                  layoutBuilder: (current, previous) => Stack(
-                    alignment: Alignment.centerLeft,
-                    children: [...previous, ?current],
-                  ),
-                  child: Text(
-                    label,
-                    key: ValueKey(label),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w500,
-                      color: palette.accent,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.auto_awesome_rounded,
+                  size: 13,
+                  color: palette.accent,
+                ),
+                const SizedBox(width: 5),
+                Flexible(
+                  child: AnimatedSwitcher(
+                    duration: _kBarAnimDuration,
+                    switchInCurve: _kBarAnimCurve,
+                    switchOutCurve: MotionCurves.exit,
+                    layoutBuilder: (current, previous) => Stack(
+                      alignment: Alignment.centerLeft,
+                      children: [...previous, ?current],
+                    ),
+                    child: Text(
+                      label,
+                      key: ValueKey(label),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w500,
+                        color: palette.accent,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 3),
-              Icon(
-                Icons.keyboard_arrow_down_rounded,
-                size: 15,
-                color: palette.accent.withValues(alpha: 0.7),
-              ),
-            ],
+                const SizedBox(width: 3),
+                Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  size: 15,
+                  color: palette.accent.withValues(alpha: 0.7),
+                ),
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -282,8 +289,7 @@ class _PendingFileChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.attach_file_rounded,
-              size: 16, color: palette.accent),
+          Icon(Icons.attach_file_rounded, size: 16, color: palette.accent),
           const SizedBox(width: 6),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 220),
@@ -321,8 +327,11 @@ class _GlassIconButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
   final String? tooltip;
-  const _GlassIconButton(
-      {required this.icon, required this.onTap, this.tooltip});
+  const _GlassIconButton({
+    required this.icon,
+    required this.onTap,
+    this.tooltip,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -333,11 +342,7 @@ class _GlassIconButton extends StatelessWidget {
       child: SizedBox(
         width: 40,
         height: 40,
-        child: Icon(
-          icon,
-          size: 20,
-          color: palette.textMuted,
-        ),
+        child: Icon(icon, size: 20, color: palette.textMuted),
       ),
     );
     return PressableScale(
@@ -348,8 +353,13 @@ class _GlassIconButton extends StatelessWidget {
 
 class _GlassMicButton extends StatefulWidget {
   final bool isRecording;
+  final bool enabled;
   final VoidCallback onTap;
-  const _GlassMicButton({required this.isRecording, required this.onTap});
+  const _GlassMicButton({
+    required this.isRecording,
+    this.enabled = true,
+    required this.onTap,
+  });
 
   @override
   State<_GlassMicButton> createState() => _GlassMicButtonState();
@@ -363,10 +373,7 @@ class _GlassMicButtonState extends State<_GlassMicButton>
   @override
   void initState() {
     super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: MotionDurations.pulse,
-    );
+    _pulse = AnimationController(vsync: this, duration: MotionDurations.pulse);
   }
 
   @override
@@ -413,38 +420,38 @@ class _GlassMicButtonState extends State<_GlassMicButton>
     );
     return PressableScale(
       child: InkWell(
-      borderRadius: BorderRadius.circular(20),
-      onTap: widget.onTap,
-      child: AnimatedBuilder(
-        animation: _pulse,
-        child: glyph,
-        builder: (context, child) {
-          final glow = widget.isRecording ? 0.3 + 0.4 * _pulse.value : 0.0;
-          // Plain Container: the fill colour is chosen directly from
-          // isRecording, so the grey ↔ accent change paints immediately (no
-          // morph). Only the recording glow keeps pulsing.
-          return Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: widget.isRecording
-                  ? palette.accent.withValues(alpha: 0.18)
-                  : Colors.transparent,
-              boxShadow: widget.isRecording
-                  ? [
-                      BoxShadow(
-                        color: palette.accent.withValues(alpha: glow),
-                        blurRadius: 14,
-                        spreadRadius: 1,
-                      ),
-                    ]
-                  : null,
-            ),
-            child: child,
-          );
-        },
-      ),
+        borderRadius: BorderRadius.circular(20),
+        onTap: widget.enabled ? widget.onTap : null,
+        child: AnimatedBuilder(
+          animation: _pulse,
+          child: glyph,
+          builder: (context, child) {
+            final glow = widget.isRecording ? 0.3 + 0.4 * _pulse.value : 0.0;
+            // Plain Container: the fill colour is chosen directly from
+            // isRecording, so the grey ↔ accent change paints immediately (no
+            // morph). Only the recording glow keeps pulsing.
+            return Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: widget.isRecording
+                    ? palette.accent.withValues(alpha: 0.18)
+                    : Colors.transparent,
+                boxShadow: widget.isRecording
+                    ? [
+                        BoxShadow(
+                          color: palette.accent.withValues(alpha: glow),
+                          blurRadius: 14,
+                          spreadRadius: 1,
+                        ),
+                      ]
+                    : null,
+              ),
+              child: child,
+            );
+          },
+        ),
       ),
     );
   }

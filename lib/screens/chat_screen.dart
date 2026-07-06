@@ -81,6 +81,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _newChatSub;
   StreamSubscription? _configSub;
   StreamSubscription? _mcpConfirmSub;
+  StreamSubscription? _busySub;
   String? _connError;
   // Monotonic generation for the connection-banner AnimatedSwitcher keys.
   // Bumped on every connection-state change so the error banner / placeholder
@@ -364,6 +365,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // other conversations keep accumulating in the service buffer and hydrate
     // when the user switches to them.
     _convStreamSub = _wsService.convStreamStream.listen(_onConvStream);
+    _busySub = _wsService.conversationBusyStream.listen(_onConversationBusy);
 
     // AI-hierarchy state arrives on its own config channel (kept off the
     // sealed-message switch). Track it so the model selector can note when
@@ -714,6 +716,7 @@ class _ChatScreenState extends State<ChatScreen> {
             // the turn is over and no recovery poll should linger (e.g. a
             // disconnect ate the terminal `done`, or it was untagged).
             _wsService.clearPending(convId);
+            _wsService.clearConversationBusy(convId);
           }
           final liveText = convId != null
               ? _wsService.bufferedText(convId)
@@ -799,6 +802,34 @@ class _ChatScreenState extends State<ChatScreen> {
   /// rendering never diverge and can't double-append. This performs the
   /// append/finalize the old `response_chunk` / `status`-done message cases did,
   /// now routed by conversation id.
+  void _onConversationBusy(ws.ConversationBusyEvent event) {
+    if (!mounted) return;
+    if (event.conversationId != _activeConversationId) return;
+    final rejected = event.busy && event.message.isNotEmpty;
+    if (rejected) {
+      _cancelFirstTokenTimer();
+      _pendingTurn = null;
+    }
+    setState(() {
+      if (rejected && _entries.isNotEmpty && _entries.last.isUser) {
+        _entries.removeLast();
+      }
+      if (!event.busy) {
+        _awaitingResponse = false;
+        _thinking = false;
+      } else if (rejected) {
+        _awaitingResponse = false;
+        _thinking = false;
+        _noResponse = false;
+      }
+    });
+    if (event.busy && event.message.isNotEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(event.message)));
+    }
+  }
+
   void _onConvStream(ws.ConvStreamEvent event) {
     if (!mounted) return;
     if (ws.kOsiaDebugPlaceholder && (event.done || event.error)) {
@@ -822,6 +853,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final active = _activeConversationId;
       if (active != null && active.isNotEmpty) {
         _wsService.clearPending(active);
+        _wsService.clearConversationBusy(active);
       }
     } else if (event.conversationId != _activeConversationId) {
       return;
@@ -1506,8 +1538,15 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  bool get _activeConversationBusy {
+    final id = _activeConversationId;
+    if (id == null || id.isEmpty) return _awaitingResponse;
+    return _wsService.isConversationBusy(id);
+  }
+
   bool get _canSend =>
-      _textCtrl.text.trim().isNotEmpty || _pendingFileBytes != null;
+      !_activeConversationBusy &&
+      (_textCtrl.text.trim().isNotEmpty || _pendingFileBytes != null);
 
   /// True when OSIA pauses to think *mid-stream*: the thinking flag is set
   /// while a streaming assistant bubble already holds some text. Mirrors the
@@ -1538,6 +1577,15 @@ class _ChatScreenState extends State<ChatScreen> {
     final isImage = _pendingIsImage;
     final hasFile = filename != null && bytes != null;
     if (text.isEmpty && !hasFile) return;
+    if (_activeConversationBusy) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('OSIA is still working in this conversation.'),
+        ),
+      );
+      return;
+    }
+    final sendingConv = _activeConversationId;
 
     final displayContent = hasFile
         ? (text.isEmpty ? '📎 $filename' : '📎 $filename\n$text')
@@ -1554,13 +1602,19 @@ class _ChatScreenState extends State<ChatScreen> {
         : (isImage
               ? strings.analyzeImagePrompt
               : strings.hereIsFile(filename ?? ''));
-    _wsService.sendText(prompt);
+    if (!_wsService.sendText(prompt, conversationId: sendingConv)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('OSIA is still working in this conversation.'),
+        ),
+      );
+      return;
+    }
     // WOR-75/WOR-53/WOR-62: mark this conversation's turn in flight at send
     // time (when its id is known) so switching away and straight back arms the
     // recovery poll (and, once chunks have accumulated, buffer hydration) even
     // before the first chunk arrives. A brand-new conversation has no id yet —
     // its first streamed chunk carries the id and marks it then.
-    final sendingConv = _activeConversationId;
     if (ws.kOsiaDebugPlaceholder) {
       debugPrint(
         '[OSIA WOR-75] _sendText: activeConversationId='
@@ -1712,6 +1766,15 @@ class _ChatScreenState extends State<ChatScreen> {
   void _retryLastTurn() {
     final turn = _pendingTurn;
     if (turn == null) return;
+    final retryConv = _activeConversationId;
+    if (_activeConversationBusy) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('OSIA is still working in this conversation.'),
+        ),
+      );
+      return;
+    }
     if (turn.hasFile) {
       _wsService.sendFile(
         turn.filename!,
@@ -1719,11 +1782,17 @@ class _ChatScreenState extends State<ChatScreen> {
         isImage: turn.isImage,
       );
     }
-    _wsService.sendText(turn.prompt);
+    if (!_wsService.sendText(turn.prompt, conversationId: retryConv)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('OSIA is still working in this conversation.'),
+        ),
+      );
+      return;
+    }
     // WOR-75/WOR-53/WOR-62: re-mark the displayed conversation's turn in flight
     // (see [_sendText]) so a switch-away-and-back arms the recovery poll / buffer
     // hydration.
-    final retryConv = _activeConversationId;
     if (retryConv != null && retryConv.isNotEmpty) {
       _wsService.markPending(retryConv);
     }
@@ -1783,12 +1852,30 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _toggleRecording() async {
     if (_audioService.isRecording) {
       final base64Wav = await _audioService.stopRecording();
+      if (!mounted) return;
       if (base64Wav != null && base64Wav.isNotEmpty) {
-        _wsService.sendAudio(base64Wav);
+        final voiceConv = _activeConversationId;
+        if (_activeConversationBusy) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('OSIA is still working in this conversation.'),
+            ),
+          );
+          setState(() {});
+          return;
+        }
+        if (!_wsService.sendAudio(base64Wav, conversationId: voiceConv)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('OSIA is still working in this conversation.'),
+            ),
+          );
+          setState(() {});
+          return;
+        }
         _awaitingResponse = true;
         // WOR-75/WOR-53/WOR-62: mark the displayed conversation's turn in flight
         // (see [_sendText]).
-        final voiceConv = _activeConversationId;
         if (voiceConv != null && voiceConv.isNotEmpty) {
           _wsService.markPending(voiceConv);
         }
@@ -1801,6 +1888,14 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       setState(() {});
     } else {
+      if (_activeConversationBusy) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('OSIA is still working in this conversation.'),
+          ),
+        );
+        return;
+      }
       try {
         await _audioService.startRecording();
         setState(() {});
@@ -2088,6 +2183,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _newChatSub?.cancel();
     _configSub?.cancel();
     _mcpConfirmSub?.cancel();
+    _busySub?.cancel();
     // The service (and its confirm stream) is rebuilt below — drop any queued
     // requests so a stale one isn't answered against the new socket.
     _mcpConfirmQueue.clear();
@@ -2142,6 +2238,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _newChatSub?.cancel();
     _configSub?.cancel();
     _mcpConfirmSub?.cancel();
+    _busySub?.cancel();
     _wsService.dispose();
     _audioService.dispose();
     _textCtrl.dispose();
@@ -2314,6 +2411,7 @@ class _ChatScreenState extends State<ChatScreen> {
               key: _inputBarKey,
               textController: _textCtrl,
               focusNode: _inputFocusNode,
+              enabled: !_activeConversationBusy,
               isRecording: _audioService.isRecording,
               hasText: _canSend,
               onSend: _sendText,
