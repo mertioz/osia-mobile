@@ -71,11 +71,21 @@ bool _modelHasVision(String provider, String model) {
   final prov = provider.toLowerCase();
   final lid = model.toLowerCase();
   if (prov == 'anthropic' || prov == 'google' || prov == 'xai') return true;
-  if (lid.contains('claude') || lid.contains('gemini') || lid.contains('grok')) {
+  if (lid.contains('claude') ||
+      lid.contains('gemini') ||
+      lid.contains('grok')) {
     return true;
   }
   if (prov == 'openai') {
-    const tags = ['gpt-4o', 'gpt-4.1', 'gpt-5', 'gpt-4-turbo', 'o1', 'o3', 'o4'];
+    const tags = [
+      'gpt-4o',
+      'gpt-4.1',
+      'gpt-5',
+      'gpt-4-turbo',
+      'o1',
+      'o3',
+      'o4',
+    ];
     return tags.any((t) => lid.contains(t));
   }
   return false;
@@ -146,6 +156,7 @@ const String _kUrlGoogle = 'https://aistudio.google.com/app/apikey';
 const String _kUrlDeepSeek = 'https://platform.deepseek.com/api_keys';
 const String _kUrlXai = 'https://console.x.ai';
 const String _kUrlGroq = 'https://console.groq.com/keys';
+bool get _liveApiAvailable => false;
 
 /// The providers shown under each category.
 List<ProviderEntry> providersFor(ProviderCategory category) {
@@ -200,17 +211,50 @@ const List<String> _kTtsProviderOrder = ['local', 'openai', 'google'];
 
 /// OpenAI TTS voices, mirroring the PC list exactly. Default: `nova`.
 const List<String> _kOpenAiVoices = [
-  'alloy', 'ash', 'coral', 'echo', 'fable', 'marin',
-  'nova', 'onyx', 'sage', 'shimmer',
+  'alloy',
+  'ash',
+  'coral',
+  'echo',
+  'fable',
+  'marin',
+  'nova',
+  'onyx',
+  'sage',
+  'shimmer',
 ];
 
 /// Google (Gemini) TTS voices, mirroring the PC list exactly. Default: `Kore`.
 const List<String> _kGoogleVoices = [
-  'Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Aoede',
-  'Callirrhoe', 'Autonoe', 'Enceladus', 'Iapetus', 'Umbriel', 'Algieba',
-  'Despina', 'Erinome', 'Algenib', 'Rasalgethi', 'Laomedeia', 'Achernar',
-  'Alnilam', 'Schedar', 'Gacrux', 'Pulcherrima', 'Achird', 'Zubenelgenubi',
-  'Vindemiatrix', 'Sadachbia', 'Sadaltager', 'Sulafat',
+  'Zephyr',
+  'Puck',
+  'Charon',
+  'Kore',
+  'Fenrir',
+  'Leda',
+  'Orus',
+  'Aoede',
+  'Callirrhoe',
+  'Autonoe',
+  'Enceladus',
+  'Iapetus',
+  'Umbriel',
+  'Algieba',
+  'Despina',
+  'Erinome',
+  'Algenib',
+  'Rasalgethi',
+  'Laomedeia',
+  'Achernar',
+  'Alnilam',
+  'Schedar',
+  'Gacrux',
+  'Pulcherrima',
+  'Achird',
+  'Zubenelgenubi',
+  'Vindemiatrix',
+  'Sadachbia',
+  'Sadaltager',
+  'Sulafat',
 ];
 
 /// Selectable voices for a TTS provider — empty when the provider has none
@@ -437,19 +481,23 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
     // entries of the server's model list (`models_list` ships them regardless
     // of which providers have a key, so the dropdown is populated even when only
     // a text-only provider is configured).
-    final mainModel =
-        (config?.settings['selected_model'] ?? '').toString().trim();
-    final visionModels =
-        _models.where((m) => _modelHasVision(m.provider ?? '', m.id)).toList();
-    final showVisionCard = mainModel.isNotEmpty &&
+    final mainModel = (config?.settings['selected_model'] ?? '')
+        .toString()
+        .trim();
+    final visionModels = _models
+        .where((m) => _modelHasVision(m.provider ?? '', m.id))
+        .toList();
+    final showVisionCard =
+        mainModel.isNotEmpty &&
         !_modelHasVision(_providerForModel(mainModel, _models), mainModel) &&
         visionModels.isNotEmpty;
 
     // Fallback API keys (WOR-29): per-provider ordered backup keys shipped in
     // the config snapshot. Threaded into the AI providers list so each provider
     // editor can manage its own list.
-    final apiKeyFallbacks =
-        _readFallbacks(config?.settings['api_key_fallbacks']);
+    final apiKeyFallbacks = _readFallbacks(
+      config?.settings['api_key_fallbacks'],
+    );
 
     return Scaffold(
       backgroundColor: palette.background,
@@ -468,7 +516,9 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                   children: [
                     // ── General (time format) ──
                     _SectionLabel(
-                        label: strings.sectionGeneral, palette: palette),
+                      label: strings.sectionGeneral,
+                      palette: palette,
+                    ),
                     _OsiaCard(
                       palette: palette,
                       child: Row(
@@ -507,6 +557,11 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                         // Short localized description (WOR-78 point 1). The
                         // brand list now lives only on the config screen.
                         subtitle: _categorySub(category, strings),
+                        trailingLabel:
+                            category == ProviderCategory.voiceToVoice &&
+                                !_liveApiAvailable
+                            ? strings.comingSoon
+                            : null,
                         palette: palette,
                         onTap: () => _open(
                           _ProviderListScreen(
@@ -521,7 +576,8 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                             // sub-section inside the AI providers screen, only
                             // when the selected main model can't process images.
                             // Inert for the other categories.
-                            showVisionCard: category == ProviderCategory.ai &&
+                            showVisionCard:
+                                category == ProviderCategory.ai &&
                                 showVisionCard,
                             visionModels: visionModels,
                             visionProvider:
@@ -532,14 +588,12 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                             // TTS / STT selectors (WOR-78.2) — read from the
                             // same config snapshot; only the matching screen
                             // (tts / stt) renders and uses these.
-                            ttsProvider:
-                                (config.settings['tts_provider'] ?? '')
-                                    .toString(),
+                            ttsProvider: (config.settings['tts_provider'] ?? '')
+                                .toString(),
                             ttsVoice: (config.settings['tts_voice'] ?? '')
                                 .toString(),
-                            sttProvider:
-                                (config.settings['stt_provider'] ?? '')
-                                    .toString(),
+                            sttProvider: (config.settings['stt_provider'] ?? '')
+                                .toString(),
                           ),
                         ),
                       ),
@@ -645,8 +699,10 @@ class _LoadingBody extends StatelessWidget {
           SizedBox(
             width: 26,
             height: 26,
-            child:
-                CircularProgressIndicator(strokeWidth: 2.4, color: palette.accent),
+            child: CircularProgressIndicator(
+              strokeWidth: 2.4,
+              color: palette.accent,
+            ),
           ),
           const SizedBox(height: 16),
           Text(
@@ -828,9 +884,9 @@ class _VisionCompanionCardState extends State<_VisionCompanionCard> {
     // Refresh the snapshot so the "configured" check reflects the new key.
     widget.wsService.sendGetConfig();
     FocusScope.of(context).unfocus();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(OsiaL10n.of(context).apiKeySaved)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(OsiaL10n.of(context).apiKeySaved)));
   }
 
   @override
@@ -898,8 +954,10 @@ class _VisionCompanionCardState extends State<_VisionCompanionCard> {
                   child: Text(
                     _kProviderNames[p] ?? p,
                     overflow: TextOverflow.ellipsis,
-                    style:
-                        TextStyle(fontSize: 14.5, color: palette.textPrimary),
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      color: palette.textPrimary,
+                    ),
                   ),
                 ),
             ],
@@ -921,8 +979,10 @@ class _VisionCompanionCardState extends State<_VisionCompanionCard> {
                   child: Text(
                     m.label,
                     overflow: TextOverflow.ellipsis,
-                    style:
-                        TextStyle(fontSize: 14.5, color: palette.textPrimary),
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      color: palette.textPrimary,
+                    ),
                   ),
                 ),
             ],
@@ -952,10 +1012,14 @@ class _VisionCompanionCardState extends State<_VisionCompanionCard> {
                     hintText: keyConfigured
                         ? strings.apiKeyReplaceHint
                         : strings.apiKeyHint,
-                    hintStyle:
-                        TextStyle(color: palette.textMuted, fontSize: 14),
+                    hintStyle: TextStyle(
+                      color: palette.textMuted,
+                      fontSize: 14,
+                    ),
                     contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 14),
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(14),
                       borderSide: BorderSide(color: palette.border),
@@ -969,8 +1033,9 @@ class _VisionCompanionCardState extends State<_VisionCompanionCard> {
                       borderSide: BorderSide(color: palette.accent, width: 1.4),
                     ),
                     suffixIcon: IconButton(
-                      tooltip:
-                          _obscured ? strings.showApiKey : strings.hideApiKey,
+                      tooltip: _obscured
+                          ? strings.showApiKey
+                          : strings.hideApiKey,
                       onPressed: () => setState(() => _obscured = !_obscured),
                       icon: Icon(
                         _obscured
@@ -990,10 +1055,12 @@ class _VisionCompanionCardState extends State<_VisionCompanionCard> {
                   onPressed: _hasText ? _saveKey : null,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: palette.accent,
-                    foregroundColor:
-                        palette.isDark ? palette.background : Colors.white,
-                    disabledBackgroundColor:
-                        palette.accent.withValues(alpha: 0.4),
+                    foregroundColor: palette.isDark
+                        ? palette.background
+                        : Colors.white,
+                    disabledBackgroundColor: palette.accent.withValues(
+                      alpha: 0.4,
+                    ),
                     disabledForegroundColor:
                         (palette.isDark ? palette.background : Colors.white)
                             .withValues(alpha: 0.7),
@@ -1002,7 +1069,9 @@ class _VisionCompanionCardState extends State<_VisionCompanionCard> {
                       borderRadius: BorderRadius.circular(14),
                     ),
                     textStyle: const TextStyle(
-                        fontSize: 14.5, fontWeight: FontWeight.w600),
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   child: Text(strings.save),
                 ),
@@ -1014,8 +1083,11 @@ class _VisionCompanionCardState extends State<_VisionCompanionCard> {
             const SizedBox(height: 10),
             Row(
               children: [
-                Icon(Icons.check_circle_rounded,
-                    size: 15, color: palette.accent),
+                Icon(
+                  Icons.check_circle_rounded,
+                  size: 15,
+                  color: palette.accent,
+                ),
                 const SizedBox(width: 8),
                 Text(
                   strings.apiKeyConfigured,
@@ -1133,8 +1205,9 @@ class _TtsSelectorCardState extends State<_TtsSelectorCard> {
 
     // Clamp the rendered values so DropdownButton always finds its value among
     // the items (its "exactly one match" invariant).
-    final provider =
-        _kTtsProviderOrder.contains(_provider) ? _provider : 'local';
+    final provider = _kTtsProviderOrder.contains(_provider)
+        ? _provider
+        : 'local';
     final voices = _ttsVoicesFor(provider);
     final voice = voices.contains(_voice)
         ? _voice
@@ -1157,8 +1230,10 @@ class _TtsSelectorCardState extends State<_TtsSelectorCard> {
                   child: Text(
                     _kTtsProviderLabels[p] ?? p,
                     overflow: TextOverflow.ellipsis,
-                    style:
-                        TextStyle(fontSize: 14.5, color: palette.textPrimary),
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      color: palette.textPrimary,
+                    ),
                   ),
                 ),
             ],
@@ -1185,7 +1260,9 @@ class _TtsSelectorCardState extends State<_TtsSelectorCard> {
                       v,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                          fontSize: 14.5, color: palette.textPrimary),
+                        fontSize: 14.5,
+                        color: palette.textPrimary,
+                      ),
                     ),
                   ),
               ],
@@ -1240,8 +1317,9 @@ class _SttSelectorCardState extends State<_SttSelectorCard> {
     final palette = OsiaTheme.of(context);
     final strings = OsiaL10n.of(context);
 
-    final provider =
-        _kSttProviderOrder.contains(_provider) ? _provider : 'local';
+    final provider = _kSttProviderOrder.contains(_provider)
+        ? _provider
+        : 'local';
 
     return _OsiaCard(
       palette: palette,
@@ -1260,8 +1338,10 @@ class _SttSelectorCardState extends State<_SttSelectorCard> {
                   child: Text(
                     _kSttProviderLabels[p] ?? p,
                     overflow: TextOverflow.ellipsis,
-                    style:
-                        TextStyle(fontSize: 14.5, color: palette.textPrimary),
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      color: palette.textPrimary,
+                    ),
                   ),
                 ),
             ],
@@ -1413,7 +1493,10 @@ class _ProviderListScreen extends StatelessWidget {
               Text(
                 _categoryDesc(category, strings),
                 style: TextStyle(
-                    fontSize: 12.5, height: 1.4, color: palette.textMuted),
+                  fontSize: 12.5,
+                  height: 1.4,
+                  color: palette.textMuted,
+                ),
               ),
               const SizedBox(height: 16),
               // ── TTS / STT selector (WOR-78.2) ──
@@ -1461,9 +1544,9 @@ class _ProviderListScreen extends StatelessWidget {
                               // only for providers that take a key (not local).
                               showFallbackKeys:
                                   category == ProviderCategory.ai &&
-                                      providers[i].apiProvider != null,
-                              fallbackKeys: apiKeyFallbacks[
-                                      providers[i].apiProvider] ??
+                                  providers[i].apiProvider != null,
+                              fallbackKeys:
+                                  apiKeyFallbacks[providers[i].apiProvider] ??
                                   const [],
                             ),
                           ),
@@ -1598,9 +1681,9 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
     // reflect the new key on the next visit.
     widget.wsService.sendGetConfig();
     final strings = OsiaL10n.of(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(strings.apiKeySaved)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(strings.apiKeySaved)));
     Navigator.of(context).pop();
   }
 
@@ -1621,8 +1704,10 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child:
-                Text(strings.cancel, style: TextStyle(color: palette.textMuted)),
+            child: Text(
+              strings.cancel,
+              style: TextStyle(color: palette.textMuted),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -1643,9 +1728,9 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
       _keyCtrl.clear();
       _configured = false;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(strings.apiKeyRemoved)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(strings.apiKeyRemoved)));
   }
 
   @override
@@ -1705,8 +1790,11 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             child: Row(
               children: [
-                Icon(Icons.check_circle_rounded,
-                    size: 18, color: palette.accent),
+                Icon(
+                  Icons.check_circle_rounded,
+                  size: 18,
+                  color: palette.accent,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -1744,8 +1832,10 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
                 ? strings.apiKeyReplaceHint
                 : strings.apiKeyHint,
             hintStyle: TextStyle(color: palette.textMuted, fontSize: 14.5),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 18,
+              vertical: 16,
+            ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
               borderSide: BorderSide(color: palette.border),
@@ -1789,7 +1879,11 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
         if (widget.entry.apiKeyUrl != null)
           OutlinedButton.icon(
             onPressed: _openKeyPage,
-            icon: Icon(Icons.open_in_new_rounded, size: 17, color: palette.accent),
+            icon: Icon(
+              Icons.open_in_new_rounded,
+              size: 17,
+              color: palette.accent,
+            ),
             label: Text(strings.getApiKey),
             style: OutlinedButton.styleFrom(
               foregroundColor: palette.accent,
@@ -1811,7 +1905,9 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
             onPressed: _hasText ? _save : null,
             style: ElevatedButton.styleFrom(
               backgroundColor: palette.accent,
-              foregroundColor: palette.isDark ? palette.background : Colors.white,
+              foregroundColor: palette.isDark
+                  ? palette.background
+                  : Colors.white,
               disabledBackgroundColor: palette.accent.withValues(alpha: 0.4),
               disabledForegroundColor:
                   (palette.isDark ? palette.background : Colors.white)
@@ -1820,8 +1916,10 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
               ),
-              textStyle:
-                  const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w600),
+              textStyle: const TextStyle(
+                fontSize: 15.5,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             child: Text(strings.save),
           ),
@@ -1831,8 +1929,11 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
           const SizedBox(height: 8),
           TextButton.icon(
             onPressed: _remove,
-            icon: Icon(Icons.delete_outline_rounded,
-                size: 18, color: palette.error),
+            icon: Icon(
+              Icons.delete_outline_rounded,
+              size: 18,
+              color: palette.error,
+            ),
             label: Text(
               strings.removeApiKey,
               style: TextStyle(color: palette.error, fontSize: 14),
@@ -1941,9 +2042,9 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
     // Refresh the snapshot so the landing reflects the change on the next visit.
     widget.wsService.sendGetConfig();
     FocusScope.of(context).unfocus();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(OsiaL10n.of(context).apiKeySaved)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(OsiaL10n.of(context).apiKeySaved)));
   }
 
   Future<void> _delete(int index) async {
@@ -1961,8 +2062,10 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child:
-                Text(strings.cancel, style: TextStyle(color: palette.textMuted)),
+            child: Text(
+              strings.cancel,
+              style: TextStyle(color: palette.textMuted),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -1982,9 +2085,9 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
     widget.wsService.sendDeleteApiFallbackKey(widget.provider, index);
     widget.wsService.sendGetConfig();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(strings.apiKeyRemoved)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(strings.apiKeyRemoved)));
   }
 
   @override
@@ -2073,8 +2176,8 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
               : Icons.visibility_rounded,
           tooltip: revealed ? strings.hideApiKey : strings.showApiKey,
           palette: palette,
-          onTap: () => setState(() =>
-              revealed ? _revealed.remove(i) : _revealed.add(i)),
+          onTap: () =>
+              setState(() => revealed ? _revealed.remove(i) : _revealed.add(i)),
         ),
         _MiniIconButton(
           icon: Icons.edit_rounded,
@@ -2123,8 +2226,10 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
             fillColor: palette.surfaceElevated,
             hintText: strings.apiKeyHint,
             hintStyle: TextStyle(color: palette.textMuted, fontSize: 14),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 14,
+            ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
               borderSide: BorderSide(color: palette.border),
@@ -2165,7 +2270,9 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
                       borderRadius: BorderRadius.circular(14),
                     ),
                     textStyle: const TextStyle(
-                        fontSize: 14.5, fontWeight: FontWeight.w500),
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                   child: Text(strings.cancel),
                 ),
@@ -2179,10 +2286,12 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
                   onPressed: _editHasText ? _saveEditor : null,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: palette.accent,
-                    foregroundColor:
-                        palette.isDark ? palette.background : Colors.white,
-                    disabledBackgroundColor:
-                        palette.accent.withValues(alpha: 0.4),
+                    foregroundColor: palette.isDark
+                        ? palette.background
+                        : Colors.white,
+                    disabledBackgroundColor: palette.accent.withValues(
+                      alpha: 0.4,
+                    ),
                     disabledForegroundColor:
                         (palette.isDark ? palette.background : Colors.white)
                             .withValues(alpha: 0.7),
@@ -2191,7 +2300,9 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
                       borderRadius: BorderRadius.circular(14),
                     ),
                     textStyle: const TextStyle(
-                        fontSize: 14.5, fontWeight: FontWeight.w600),
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   child: Text(strings.save),
                 ),
@@ -2234,23 +2345,28 @@ class _CategoryTile extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
+  final String? trailingLabel;
   final OsiaPalette palette;
   final VoidCallback onTap;
   const _CategoryTile({
     required this.icon,
     required this.title,
     required this.subtitle,
+    this.trailingLabel,
     required this.palette,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final enabled = trailingLabel == null;
+    final titleColor = enabled ? palette.textPrimary : palette.textMuted;
+    final iconColor = enabled ? palette.accent : palette.textMuted;
     return _OsiaCard(
       palette: palette,
       padding: EdgeInsets.zero,
       child: InkWell(
-        onTap: onTap,
+        onTap: enabled ? onTap : null,
         borderRadius: BorderRadius.circular(18),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -2261,9 +2377,9 @@ class _CategoryTile extends StatelessWidget {
                 height: 38,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: palette.accent.withValues(alpha: 0.12),
+                  color: iconColor.withValues(alpha: enabled ? 0.12 : 0.08),
                 ),
-                child: Icon(icon, size: 19, color: palette.accent),
+                child: Icon(icon, size: 19, color: iconColor),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -2276,7 +2392,7 @@ class _CategoryTile extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 14.5,
                         fontWeight: FontWeight.w600,
-                        color: palette.textPrimary,
+                        color: titleColor,
                       ),
                     ),
                     const SizedBox(height: 3),
@@ -2290,13 +2406,43 @@ class _CategoryTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 18,
-                color: palette.textMuted,
-              ),
+              if (trailingLabel != null) ...[
+                _SoonPill(label: trailingLabel!, palette: palette),
+              ] else
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: palette.textMuted,
+                ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SoonPill extends StatelessWidget {
+  final String label;
+  final OsiaPalette palette;
+
+  const _SoonPill({required this.label, required this.palette});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: palette.textMuted.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: palette.textMuted.withValues(alpha: 0.18)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: palette.textMuted,
         ),
       ),
     );
@@ -2369,8 +2515,11 @@ class _CronScreen extends StatefulWidget {
   // Current time format ('12h'/'24h'), resolved by the parent. Display-only:
   // the schedule strings saved to the PC stay canonical 24h.
   final String timeFormat;
-  const _CronScreen(
-      {required this.wsService, required this.jobs, required this.timeFormat});
+  const _CronScreen({
+    required this.wsService,
+    required this.jobs,
+    required this.timeFormat,
+  });
 
   @override
   State<_CronScreen> createState() => _CronScreenState();
@@ -2440,7 +2589,10 @@ class _CronScreenState extends State<_CronScreen> {
               Text(
                 strings.cronSubtitle,
                 style: TextStyle(
-                    fontSize: 12.5, height: 1.4, color: palette.textMuted),
+                  fontSize: 12.5,
+                  height: 1.4,
+                  color: palette.textMuted,
+                ),
               ),
               const SizedBox(height: 16),
               if (_jobs.isEmpty)
@@ -2534,8 +2686,9 @@ class _CronRow extends StatelessWidget {
                 value: enabled,
                 onChanged: onToggle,
                 activeTrackColor: palette.accent,
-                activeThumbColor:
-                    palette.isDark ? palette.background : Colors.white,
+                activeThumbColor: palette.isDark
+                    ? palette.background
+                    : Colors.white,
                 inactiveTrackColor: palette.border.withValues(alpha: 0.5),
                 inactiveThumbColor: palette.textMuted,
               ),
@@ -2543,8 +2696,11 @@ class _CronRow extends StatelessWidget {
                 onPressed: onDelete,
                 tooltip: strings.delete,
                 visualDensity: VisualDensity.compact,
-                icon: Icon(Icons.delete_outline_rounded,
-                    size: 20, color: palette.textMuted),
+                icon: Icon(
+                  Icons.delete_outline_rounded,
+                  size: 20,
+                  color: palette.textMuted,
+                ),
               ),
             ],
           ),
@@ -2648,7 +2804,8 @@ class _CronEditScreenState extends State<_CronEditScreen> {
   Future<void> _pickTime(bool once) async {
     final picked = await showTimePicker(
       context: context,
-      initialTime: (once ? _onceTime : _dailyTime) ??
+      initialTime:
+          (once ? _onceTime : _dailyTime) ??
           const TimeOfDay(hour: 9, minute: 0),
     );
     if (picked != null && mounted) {
@@ -2693,9 +2850,9 @@ class _CronEditScreenState extends State<_CronEditScreen> {
     final task = _taskCtrl.text.trim();
     final schedule = _composeSchedule();
     if (task.isEmpty || schedule == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(strings.cronInvalid)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(strings.cronInvalid)));
       return;
     }
     final job = <String, dynamic>{
@@ -2746,7 +2903,8 @@ class _CronEditScreenState extends State<_CronEditScreen> {
                 index: _type == _CronType.repeat ? 0 : 1,
                 palette: palette,
                 onChanged: (i) => setState(
-                    () => _type = i == 0 ? _CronType.repeat : _CronType.once),
+                  () => _type = i == 0 ? _CronType.repeat : _CronType.once,
+                ),
               ),
               const SizedBox(height: 20),
               if (_type == _CronType.repeat)
@@ -2757,7 +2915,10 @@ class _CronEditScreenState extends State<_CronEditScreen> {
               _buildConversationField(palette, strings),
               const SizedBox(height: 28),
               _PrimaryButton(
-                  label: strings.save, onTap: _save, palette: palette),
+                label: strings.save,
+                onTap: _save,
+                palette: palette,
+              ),
             ],
           ),
         ),
@@ -2778,19 +2939,28 @@ class _CronEditScreenState extends State<_CronEditScreen> {
             isExpanded: true,
             dropdownColor: palette.surfaceElevated,
             borderRadius: BorderRadius.circular(14),
-            icon: Icon(Icons.keyboard_arrow_down_rounded,
-                color: palette.accent),
+            icon: Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: palette.accent,
+            ),
             style: TextStyle(color: palette.textPrimary, fontSize: 14.5),
             items: [
               DropdownMenuItem(
-                  value: _RepeatUnit.minutes,
-                  child: Text(strings.cronUnitMinutes)),
+                value: _RepeatUnit.minutes,
+                child: Text(strings.cronUnitMinutes),
+              ),
               DropdownMenuItem(
-                  value: _RepeatUnit.hours, child: Text(strings.cronUnitHours)),
+                value: _RepeatUnit.hours,
+                child: Text(strings.cronUnitHours),
+              ),
               DropdownMenuItem(
-                  value: _RepeatUnit.days, child: Text(strings.cronUnitDays)),
+                value: _RepeatUnit.days,
+                child: Text(strings.cronUnitDays),
+              ),
               DropdownMenuItem(
-                  value: _RepeatUnit.daily, child: Text(strings.cronModeDaily)),
+                value: _RepeatUnit.daily,
+                child: Text(strings.cronModeDaily),
+              ),
             ],
             onChanged: (v) {
               if (v != null) setState(() => _unit = v);
@@ -2864,11 +3034,11 @@ class _CronEditScreenState extends State<_CronEditScreen> {
   }
 
   String _unitWord(OsiaStrings s) => switch (_unit) {
-        _RepeatUnit.minutes => s.cronUnitMinutes,
-        _RepeatUnit.hours => s.cronUnitHours,
-        _RepeatUnit.days => s.cronUnitDays,
-        _RepeatUnit.daily => s.cronModeDaily,
-      };
+    _RepeatUnit.minutes => s.cronUnitMinutes,
+    _RepeatUnit.hours => s.cronUnitHours,
+    _RepeatUnit.days => s.cronUnitDays,
+    _RepeatUnit.daily => s.cronModeDaily,
+  };
 
   /// "Linked conversation" picker (WOR-24): a loader until the PC's list lands,
   /// then a dropdown of "None (new conversation)" + every conversation by title.
@@ -2890,7 +3060,9 @@ class _CronEditScreenState extends State<_CronEditScreen> {
                   width: 16,
                   height: 16,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: palette.accent),
+                    strokeWidth: 2,
+                    color: palette.accent,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Text(
@@ -2910,8 +3082,10 @@ class _CronEditScreenState extends State<_CronEditScreen> {
                 isExpanded: true,
                 dropdownColor: palette.surfaceElevated,
                 borderRadius: BorderRadius.circular(14),
-                icon: Icon(Icons.keyboard_arrow_down_rounded,
-                    color: palette.accent),
+                icon: Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: palette.accent,
+                ),
                 style: TextStyle(color: palette.textPrimary, fontSize: 14.5),
                 items: _conversationItems(convs, strings, palette),
                 onChanged: (v) => setState(() => _conversationId = v),
@@ -2927,9 +3101,10 @@ class _CronEditScreenState extends State<_CronEditScreen> {
   /// conversation) is kept as a trailing entry so the dropdown stays valid and
   /// the link isn't silently dropped — mirrors the hierarchy editor.
   List<DropdownMenuItem<String?>> _conversationItems(
-      List<ws.ConversationItem> convs,
-      OsiaStrings strings,
-      OsiaPalette palette) {
+    List<ws.ConversationItem> convs,
+    OsiaStrings strings,
+    OsiaPalette palette,
+  ) {
     final items = <DropdownMenuItem<String?>>[
       DropdownMenuItem<String?>(
         value: null,
@@ -2947,25 +3122,29 @@ class _CronEditScreenState extends State<_CronEditScreen> {
       // moment one is selected. Skip them outright.
       if (c.id.isEmpty) continue;
       final title = c.title.trim().isEmpty ? strings.untitled : c.title;
-      items.add(DropdownMenuItem<String?>(
-        value: c.id,
-        child: Text(
-          title,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 14.5, color: palette.textPrimary),
+      items.add(
+        DropdownMenuItem<String?>(
+          value: c.id,
+          child: Text(
+            title,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 14.5, color: palette.textPrimary),
+          ),
         ),
-      ));
+      );
     }
     final id = _conversationId;
     if (id != null && !convs.any((c) => c.id == id)) {
-      items.add(DropdownMenuItem<String?>(
-        value: id,
-        child: Text(
-          strings.untitled,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 14.5, color: palette.textMuted),
+      items.add(
+        DropdownMenuItem<String?>(
+          value: id,
+          child: Text(
+            strings.untitled,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 14.5, color: palette.textMuted),
+          ),
         ),
-      ));
+      );
     }
     return items;
   }
@@ -3007,8 +3186,8 @@ _CronSpec? _parseCron(String schedule) {
   if (s.isEmpty) return null;
 
   final once = RegExp(
-          r'^once:(\d{4})-(\d{2})-(\d{2})t([01]?\d|2[0-3]):([0-5]\d)$')
-      .firstMatch(s);
+    r'^once:(\d{4})-(\d{2})-(\d{2})t([01]?\d|2[0-3]):([0-5]\d)$',
+  ).firstMatch(s);
   if (once != null) {
     return _CronSpec(
       isOnce: true,
@@ -3022,8 +3201,7 @@ _CronSpec? _parseCron(String schedule) {
     );
   }
 
-  final every =
-      RegExp(r'^every\s+(\d+)\s*(minute|hour|day)s?$').firstMatch(s);
+  final every = RegExp(r'^every\s+(\d+)\s*(minute|hour|day)s?$').firstMatch(s);
   if (every != null) {
     final n = int.parse(every.group(1)!);
     final u = switch (every.group(2)!) {
@@ -3031,8 +3209,7 @@ _CronSpec? _parseCron(String schedule) {
       'hour' => _RepeatUnit.hours,
       _ => _RepeatUnit.days,
     };
-    return _CronSpec(
-        isOnce: false, unit: u, interval: n, hour: 0, minute: 0);
+    return _CronSpec(isOnce: false, unit: u, interval: n, hour: 0, minute: 0);
   }
 
   final daily = RegExp(r'^(?:at\s+)?([01]?\d|2[0-3]):([0-5]\d)$').firstMatch(s);
@@ -3046,8 +3223,9 @@ _CronSpec? _parseCron(String schedule) {
     );
   }
 
-  final daily12 =
-      RegExp(r'^(?:at\s+)?(1[0-2]|0?[1-9]):([0-5]\d)\s*(am|pm)$').firstMatch(s);
+  final daily12 = RegExp(
+    r'^(?:at\s+)?(1[0-2]|0?[1-9]):([0-5]\d)\s*(am|pm)$',
+  ).firstMatch(s);
   if (daily12 != null) {
     var h = int.parse(daily12.group(1)!) % 12;
     if (daily12.group(3) == 'pm') h += 12;
@@ -3077,8 +3255,9 @@ String _cronSummary(String schedule, OsiaStrings s, String timeFormat) {
     _RepeatUnit.minutes => s.cronEveryMinutes(spec.interval),
     _RepeatUnit.hours => s.cronEveryHours(spec.interval),
     _RepeatUnit.days => s.cronEveryDays(spec.interval),
-    _RepeatUnit.daily =>
-      s.cronDailyAt(_formatCronTime(_hm(spec.hour, spec.minute), timeFormat)),
+    _RepeatUnit.daily => s.cronDailyAt(
+      _formatCronTime(_hm(spec.hour, spec.minute), timeFormat),
+    ),
   };
 }
 
@@ -3163,17 +3342,20 @@ class _HierarchyScreenState extends State<_HierarchyScreen> {
           provider == 'ollama' || (_apiKeysSet[provider] ?? false);
       if (!configured) continue;
       final pname = _kProviderNames[provider] ?? provider;
-      out.add(_ModelChoice(
-        value: '$provider:${m.id}',
-        providerName: pname,
-        modelLabel: m.label,
-      ));
+      out.add(
+        _ModelChoice(
+          value: '$provider:${m.id}',
+          providerName: pname,
+          modelLabel: m.label,
+        ),
+      );
     }
     // Cluster by provider (so the grouped picker's section headers come out in
     // a stable order) then by model name within each provider.
     out.sort((a, b) {
-      final byProvider =
-          a.providerName.toLowerCase().compareTo(b.providerName.toLowerCase());
+      final byProvider = a.providerName.toLowerCase().compareTo(
+        b.providerName.toLowerCase(),
+      );
       if (byProvider != 0) return byProvider;
       return a.modelLabel.toLowerCase().compareTo(b.modelLabel.toLowerCase());
     });
@@ -3197,9 +3379,10 @@ class _HierarchyScreenState extends State<_HierarchyScreen> {
     return '$pname · $modelLabel';
   }
 
-  void _persist(bool heavy) => widget.wsService
-      .sendSetSetting(heavy ? 'heavy_chain' : 'medium_chain',
-          heavy ? _heavy : _medium);
+  void _persist(bool heavy) => widget.wsService.sendSetSetting(
+    heavy ? 'heavy_chain' : 'medium_chain',
+    heavy ? _heavy : _medium,
+  );
 
   void _toggleEnabled(bool v) {
     setState(() => _enabled = v);
@@ -3260,13 +3443,18 @@ class _HierarchyScreenState extends State<_HierarchyScreen> {
               Text(
                 strings.hierarchySubtitle,
                 style: TextStyle(
-                    fontSize: 12.5, height: 1.4, color: palette.textMuted),
+                  fontSize: 12.5,
+                  height: 1.4,
+                  color: palette.textMuted,
+                ),
               ),
               const SizedBox(height: 14),
               _OsiaCard(
                 palette: palette,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
                 child: Row(
                   children: [
                     Expanded(
@@ -3283,21 +3471,33 @@ class _HierarchyScreenState extends State<_HierarchyScreen> {
                       value: _enabled,
                       onChanged: _toggleEnabled,
                       activeTrackColor: palette.accent,
-                      activeThumbColor:
-                          palette.isDark ? palette.background : Colors.white,
-                      inactiveTrackColor:
-                          palette.border.withValues(alpha: 0.5),
+                      activeThumbColor: palette.isDark
+                          ? palette.background
+                          : Colors.white,
+                      inactiveTrackColor: palette.border.withValues(alpha: 0.5),
                       inactiveThumbColor: palette.textMuted,
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 20),
-              _buildChain(palette, strings, true, strings.hierarchyHeavy,
-                  strings.hierarchyHeavySub, _heavy),
+              _buildChain(
+                palette,
+                strings,
+                true,
+                strings.hierarchyHeavy,
+                strings.hierarchyHeavySub,
+                _heavy,
+              ),
               const SizedBox(height: 24),
-              _buildChain(palette, strings, false, strings.hierarchyMedium,
-                  strings.hierarchyMediumSub, _medium),
+              _buildChain(
+                palette,
+                strings,
+                false,
+                strings.hierarchyMedium,
+                strings.hierarchyMediumSub,
+                _medium,
+              ),
             ],
           ),
         ),
@@ -3305,8 +3505,14 @@ class _HierarchyScreenState extends State<_HierarchyScreen> {
     );
   }
 
-  Widget _buildChain(OsiaPalette palette, OsiaStrings strings, bool heavy,
-      String title, String sub, List<String> list) {
+  Widget _buildChain(
+    OsiaPalette palette,
+    OsiaStrings strings,
+    bool heavy,
+    String title,
+    String sub,
+    List<String> list,
+  ) {
     final choices = _choices;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3427,11 +3633,16 @@ class _HierarchyRow extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            fontSize: 13.5, color: palette.textPrimary),
+                          fontSize: 13.5,
+                          color: palette.textPrimary,
+                        ),
                       ),
                     ),
-                    Icon(Icons.keyboard_arrow_down_rounded,
-                        color: palette.accent, size: 20),
+                    Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color: palette.accent,
+                      size: 20,
+                    ),
                   ],
                 ),
               ),
@@ -3570,8 +3781,11 @@ class _HierarchyModelPickerSheet extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
               child: Row(
                 children: [
-                  Icon(Icons.account_tree_rounded,
-                      color: palette.accent, size: 18),
+                  Icon(
+                    Icons.account_tree_rounded,
+                    color: palette.accent,
+                    size: 18,
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     strings.availableModels,
@@ -3594,7 +3808,9 @@ class _HierarchyModelPickerSheet extends StatelessWidget {
                   final entry = entries[index];
                   if (entry.providerName != null) {
                     return _PickerProviderHeader(
-                        name: entry.providerName!, palette: palette);
+                      name: entry.providerName!,
+                      palette: palette,
+                    );
                   }
                   final c = entry.choice!;
                   return _PickerModelTile(
@@ -3807,8 +4023,10 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child:
-                Text(strings.cancel, style: TextStyle(color: palette.textMuted)),
+            child: Text(
+              strings.cancel,
+              style: TextStyle(color: palette.textMuted),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -3818,7 +4036,9 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
       ),
     );
     if (ok != true) return;
-    setState(() => _skills = _skills.where((s) => s.name != skill.name).toList());
+    setState(
+      () => _skills = _skills.where((s) => s.name != skill.name).toList(),
+    );
     widget.wsService.sendDeleteSkill(skill.name);
     widget.wsService.sendGetConfig();
   }
@@ -3842,8 +4062,10 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child:
-                Text(strings.cancel, style: TextStyle(color: palette.textMuted)),
+            child: Text(
+              strings.cancel,
+              style: TextStyle(color: palette.textMuted),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()),
@@ -3877,7 +4099,10 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
               child: Text(
                 strings.personalityDesc,
                 style: TextStyle(
-                    fontSize: 12.5, height: 1.4, color: palette.textMuted),
+                  fontSize: 12.5,
+                  height: 1.4,
+                  color: palette.textMuted,
+                ),
               ),
             ),
             Padding(
@@ -3920,7 +4145,10 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
               textAlignVertical: TextAlignVertical.top,
               cursorColor: palette.accent,
               style: TextStyle(
-                  color: palette.textPrimary, fontSize: 14.5, height: 1.4),
+                color: palette.textPrimary,
+                fontSize: 14.5,
+                height: 1.4,
+              ),
               decoration: InputDecoration(
                 filled: true,
                 fillColor: palette.surface,
@@ -3944,7 +4172,10 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
           ),
           const SizedBox(height: 14),
           _PrimaryButton(
-              label: strings.save, onTap: _savePersonality, palette: palette),
+            label: strings.save,
+            onTap: _savePersonality,
+            palette: palette,
+          ),
         ],
       ),
     );
@@ -3972,7 +4203,10 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
             ],
           const SizedBox(height: 6),
           _AddButton(
-              label: strings.skillAdd, palette: palette, onTap: _addSkill),
+            label: strings.skillAdd,
+            palette: palette,
+            onTap: _addSkill,
+          ),
         ],
       ),
     );
@@ -4018,8 +4252,9 @@ class _SkillRow extends StatelessWidget {
             value: skill.enabled,
             onChanged: onToggle,
             activeTrackColor: palette.accent,
-            activeThumbColor:
-                palette.isDark ? palette.background : Colors.white,
+            activeThumbColor: palette.isDark
+                ? palette.background
+                : Colors.white,
             inactiveTrackColor: palette.border.withValues(alpha: 0.5),
             inactiveThumbColor: palette.textMuted,
           ),
@@ -4033,8 +4268,11 @@ class _SkillRow extends StatelessWidget {
             onPressed: onDelete,
             tooltip: strings.delete,
             visualDensity: VisualDensity.compact,
-            icon: Icon(Icons.delete_outline_rounded,
-                size: 19, color: palette.textMuted),
+            icon: Icon(
+              Icons.delete_outline_rounded,
+              size: 19,
+              color: palette.textMuted,
+            ),
           ),
         ],
       ),
@@ -4069,9 +4307,9 @@ class _SkillEditScreenState extends State<_SkillEditScreen> {
 
   void _save() {
     widget.wsService.sendSetSkill(widget.skill.name, text: _ctrl.text);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(OsiaL10n.of(context).skillSaved)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(OsiaL10n.of(context).skillSaved)));
     Navigator.of(context).pop();
   }
 
@@ -4101,7 +4339,10 @@ class _SkillEditScreenState extends State<_SkillEditScreen> {
                   textAlignVertical: TextAlignVertical.top,
                   cursorColor: palette.accent,
                   style: TextStyle(
-                      color: palette.textPrimary, fontSize: 14, height: 1.4),
+                    color: palette.textPrimary,
+                    fontSize: 14,
+                    height: 1.4,
+                  ),
                   decoration: InputDecoration(
                     filled: true,
                     fillColor: palette.surface,
@@ -4125,7 +4366,10 @@ class _SkillEditScreenState extends State<_SkillEditScreen> {
               ),
               const SizedBox(height: 14),
               _PrimaryButton(
-                  label: strings.save, onTap: _save, palette: palette),
+                label: strings.save,
+                onTap: _save,
+                palette: palette,
+              ),
             ],
           ),
         ),
@@ -4135,8 +4379,9 @@ class _SkillEditScreenState extends State<_SkillEditScreen> {
 }
 
 /// Skill filenames carry a `.md` suffix on disk; show the bare stem.
-String _skillDisplay(String name) =>
-    name.toLowerCase().endsWith('.md') ? name.substring(0, name.length - 3) : name;
+String _skillDisplay(String name) => name.toLowerCase().endsWith('.md')
+    ? name.substring(0, name.length - 3)
+    : name;
 
 // ══════════════════════════════════════════════════════════════════════════
 // System status (heartbeat)
@@ -4204,8 +4449,9 @@ class _HeartbeatScreenState extends State<_HeartbeatScreen> {
 
   void _persistInterval() {
     final parsed = int.tryParse(_intervalCtrl.text.trim());
-    final int clamped =
-        (parsed ?? _defaultInterval).clamp(_minInterval, _maxInterval).toInt();
+    final int clamped = (parsed ?? _defaultInterval)
+        .clamp(_minInterval, _maxInterval)
+        .toInt();
     // Reflect the clamped value back so the user sees what was actually saved.
     final text = '$clamped';
     if (_intervalCtrl.text != text) _intervalCtrl.text = text;
@@ -4233,14 +4479,19 @@ class _HeartbeatScreenState extends State<_HeartbeatScreen> {
               Text(
                 strings.heartbeatDesc,
                 style: TextStyle(
-                    fontSize: 12.5, height: 1.4, color: palette.textMuted),
+                  fontSize: 12.5,
+                  height: 1.4,
+                  color: palette.textMuted,
+                ),
               ),
               const SizedBox(height: 16),
               // ── Enable monitoring ──
               _OsiaCard(
                 palette: palette,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
                 child: Row(
                   children: [
                     Expanded(
@@ -4257,10 +4508,10 @@ class _HeartbeatScreenState extends State<_HeartbeatScreen> {
                       value: _enabled,
                       onChanged: _toggle,
                       activeTrackColor: palette.accent,
-                      activeThumbColor:
-                          palette.isDark ? palette.background : Colors.white,
-                      inactiveTrackColor:
-                          palette.border.withValues(alpha: 0.5),
+                      activeThumbColor: palette.isDark
+                          ? palette.background
+                          : Colors.white,
+                      inactiveTrackColor: palette.border.withValues(alpha: 0.5),
                       inactiveThumbColor: palette.textMuted,
                     ),
                   ],
@@ -4279,18 +4530,20 @@ class _HeartbeatScreenState extends State<_HeartbeatScreen> {
                       focusNode: _intervalFocus,
                       keyboardType: TextInputType.number,
                       textInputAction: TextInputAction.done,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                      ],
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                       onSubmitted: (_) => _persistInterval(),
                       cursorColor: palette.accent,
-                      style:
-                          TextStyle(color: palette.textPrimary, fontSize: 15),
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 15,
+                      ),
                       decoration: InputDecoration(
                         filled: true,
                         fillColor: palette.surface,
                         contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 14),
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(14),
                           borderSide: BorderSide(color: palette.border),
@@ -4301,8 +4554,10 @@ class _HeartbeatScreenState extends State<_HeartbeatScreen> {
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(14),
-                          borderSide:
-                              BorderSide(color: palette.accent, width: 1.4),
+                          borderSide: BorderSide(
+                            color: palette.accent,
+                            width: 1.4,
+                          ),
                         ),
                       ),
                     ),
@@ -4311,8 +4566,10 @@ class _HeartbeatScreenState extends State<_HeartbeatScreen> {
                   Expanded(
                     child: Text(
                       strings.heartbeatIntervalRange,
-                      style:
-                          TextStyle(fontSize: 12.5, color: palette.textMuted),
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: palette.textMuted,
+                      ),
                     ),
                   ),
                 ],
@@ -4320,7 +4577,9 @@ class _HeartbeatScreenState extends State<_HeartbeatScreen> {
               const SizedBox(height: 24),
               // ── Live metrics dashboard ──
               _SectionLabel(
-                  label: strings.systemMetricsHeader, palette: palette),
+                label: strings.systemMetricsHeader,
+                palette: palette,
+              ),
               const SizedBox(height: 4),
               if (hb == null)
                 _EmptyHint(label: strings.heartbeatWaiting, palette: palette)
@@ -4403,8 +4662,9 @@ class _MetricBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final v = value;
-    final double fraction =
-        v == null ? 0.0 : (v / 100).clamp(0.0, 1.0).toDouble();
+    final double fraction = v == null
+        ? 0.0
+        : (v / 100).clamp(0.0, 1.0).toDouble();
     final readout = v == null ? '—' : '${v.round()}$unit';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -4416,8 +4676,7 @@ class _MetricBar extends StatelessWidget {
               Expanded(
                 child: Text(
                   label,
-                  style:
-                      TextStyle(fontSize: 13.5, color: palette.textPrimary),
+                  style: TextStyle(fontSize: 13.5, color: palette.textPrimary),
                 ),
               ),
               Text(
@@ -4463,10 +4722,8 @@ class _FieldLabel extends StatelessWidget {
   const _FieldLabel(this.label, this.palette);
 
   @override
-  Widget build(BuildContext context) => Text(
-        label,
-        style: TextStyle(fontSize: 13, color: palette.textMuted),
-      );
+  Widget build(BuildContext context) =>
+      Text(label, style: TextStyle(fontSize: 13, color: palette.textMuted));
 }
 
 /// Small uppercase section label (mirrors the settings screen's section
@@ -4521,8 +4778,10 @@ class _OsiaTextField extends StatelessWidget {
         fillColor: palette.surface,
         hintText: hint,
         hintStyle: TextStyle(color: palette.textMuted, fontSize: 14.5),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide: BorderSide(color: palette.border),
@@ -4576,7 +4835,9 @@ class _PickerButton extends StatelessWidget {
                 value ?? label,
                 style: TextStyle(
                   fontSize: 14.5,
-                  color: value == null ? palette.textMuted : palette.textPrimary,
+                  color: value == null
+                      ? palette.textMuted
+                      : palette.textPrimary,
                 ),
               ),
             ),
@@ -4667,8 +4928,10 @@ class _PrimaryButton extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
-          textStyle:
-              const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w600),
+          textStyle: const TextStyle(
+            fontSize: 15.5,
+            fontWeight: FontWeight.w600,
+          ),
         ),
         child: Text(label),
       ),
@@ -4724,8 +4987,8 @@ class _MiniIconButton extends StatelessWidget {
     final color = onTap == null
         ? palette.textMuted.withValues(alpha: 0.3)
         : danger
-            ? palette.error
-            : palette.textMuted;
+        ? palette.error
+        : palette.textMuted;
     return IconButton(
       onPressed: onTap,
       tooltip: tooltip,
@@ -5056,6 +5319,8 @@ class _McpScreenState extends State<_McpScreen> {
   /// Native Gmail REST state from the config snapshot. Gmail auth and REST
   /// calls stay server-side; mobile can request the safe disconnect action.
   ws.GmailRestConfig? _gmailRest;
+  bool _gmailRestDisconnecting = false;
+  String? _gmailRestDisconnectError;
 
   /// The connector currently shown in the panel.
   String _selectedId = _mcpCatalog.first.id;
@@ -5121,7 +5386,18 @@ class _McpScreenState extends State<_McpScreen> {
           cfg.settings['mcp_allow_unattended_writes'],
           false,
         );
-        _gmailRest = cfg.gmailRest;
+        final nextGmail = cfg.gmailRest;
+        _gmailRest = nextGmail;
+        if (nextGmail?.connected != true) {
+          _gmailRestDisconnecting = false;
+          _gmailRestDisconnectError = null;
+        } else if ((nextGmail?.status ?? '').trim().toLowerCase() == 'failed') {
+          final reason = nextGmail?.reason?.trim() ?? '';
+          _gmailRestDisconnecting = false;
+          _gmailRestDisconnectError = reason.isEmpty
+              ? OsiaL10n.of(context).mcpStatusFailed
+              : reason;
+        }
       });
     });
     _apiKeysSub = widget.wsService.apiKeysStream.listen((msg) {
@@ -5131,7 +5407,20 @@ class _McpScreenState extends State<_McpScreen> {
       if (!mounted) return;
       // Merge: a transition push is scoped to one server; a poll reply is the
       // full set — so a single-server broadcast can't wipe the others.
-      setState(() => _statuses.addAll(msg.servers));
+      setState(() {
+        _statuses.addAll(msg.servers);
+        final gmailStatus =
+            msg.servers[_nativeGmailRestIntegration] ??
+            msg.servers[_nativeGmailRestId];
+        final raw = gmailStatus?.status.trim().toLowerCase() ?? '';
+        if (raw == 'failed') {
+          final error = gmailStatus?.error.trim() ?? '';
+          _gmailRestDisconnecting = false;
+          _gmailRestDisconnectError = error.isEmpty
+              ? OsiaL10n.of(context).mcpStatusFailed
+              : error;
+        }
+      });
     });
     _oauthSub = widget.wsService.mcpOauthUrlStream.listen((evt) {
       if (!mounted) return;
@@ -5338,6 +5627,12 @@ class _McpScreenState extends State<_McpScreen> {
 
   String _gmailRestStatus() {
     final gmail = _gmailRest;
+    if (_gmailRestDisconnecting) return 'connecting';
+    if (_gmailRestDisconnectError != null) return 'failed';
+    final actionStatus =
+        _statuses[_nativeGmailRestIntegration]?.status.trim().toLowerCase() ??
+        '';
+    if (actionStatus == 'failed') return actionStatus;
     if (gmail?.connected == true) return 'connected';
     final status = gmail?.status?.trim().toLowerCase() ?? '';
     if (status == 'connecting' || status == 'failed') return status;
@@ -5455,25 +5750,66 @@ class _McpScreenState extends State<_McpScreen> {
     widget.wsService.sendGetApiKeys();
   }
 
-  void _disconnect(_McpConnector c) {
+  void _disconnect(
+    _McpConnector c, {
+    String? actionId,
+    String? statusId,
+    bool updateSavedEntry = true,
+    ws.McpServerStatus optimisticStatus = const ws.McpServerStatus(
+      status: 'disconnected',
+    ),
+  }) {
     final saved = _savedFor(c.id);
-    if (saved != null) {
+    if (updateSavedEntry && saved != null) {
       final entry = Map<String, dynamic>.from(saved);
       entry['enabled'] = false;
       entry['env'] = <String, dynamic>{};
       _upsert(entry);
       widget.wsService.sendSetSetting('mcp_servers', _servers);
     }
-    widget.wsService.sendMcpDisconnect(c.id);
-    setState(
-      () => _statuses[c.id] = const ws.McpServerStatus(status: 'disconnected'),
-    );
+    widget.wsService.sendMcpDisconnect(actionId ?? c.id);
+    setState(() => _statuses[statusId ?? c.id] = optimisticStatus);
     widget.wsService.sendGetConfig();
   }
 
-  void _disconnectGmailRest() {
-    widget.wsService.sendMcpDisconnect(_nativeGmailRestIntegration);
-    widget.wsService.sendGetConfig();
+  void _disconnectGmailRest(_McpConnector c) {
+    final strings = OsiaL10n.of(context);
+    final gmail = _gmailRest;
+    final connected = gmail?.connected == true;
+    final blockedByServer =
+        connected &&
+        gmail?.canDisconnectProvided == true &&
+        gmail?.canDisconnect == false;
+    if (!connected || blockedByServer || _gmailRestDisconnecting) return;
+    if (widget.wsService.state != ws.ConnectionState.connected) {
+      setState(() {
+        _gmailRestDisconnecting = false;
+        _gmailRestDisconnectError = strings.pcOffline;
+        _statuses[_nativeGmailRestIntegration] = ws.McpServerStatus(
+          status: 'failed',
+          error: strings.pcOffline,
+        );
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(strings.pcOffline)));
+      return;
+    }
+
+    debugPrint(
+      '[OSIA MCP] action=mcp_disconnect id=$_nativeGmailRestIntegration',
+    );
+    setState(() {
+      _gmailRestDisconnecting = true;
+      _gmailRestDisconnectError = null;
+    });
+    _disconnect(
+      c,
+      actionId: _nativeGmailRestIntegration,
+      statusId: _nativeGmailRestIntegration,
+      updateSavedEntry: false,
+      optimisticStatus: const ws.McpServerStatus(status: 'connecting'),
+    );
   }
 
   void _toggle(_McpConnector c) {
@@ -5811,11 +6147,16 @@ class _McpScreenState extends State<_McpScreen> {
     final connected = gmail?.connected == true;
     final caps = gmail?.capabilities ?? const ws.GmailRestCapabilities();
     final email = gmail?.emailAddress?.trim() ?? '';
-    final canDisconnect = connected && gmail?.canDisconnect == true;
+    final disconnectBlockedByServer =
+        connected &&
+        gmail?.canDisconnectProvided == true &&
+        gmail?.canDisconnect == false;
+    final canDisconnect = connected && !disconnectBlockedByServer;
     final showConfigureOnPc = gmail?.configureOnPc == true || gmail == null;
     final showElevateOnPc = gmail?.elevateOnPc == true;
     final showGuide = gmail?.guideAvailable == true;
-    final showDisconnectOnPc = connected && !canDisconnect && !showElevateOnPc;
+    final showDisconnectOnPc = disconnectBlockedByServer && !showElevateOnPc;
+    final disconnectError = _gmailRestDisconnectError;
 
     return _OsiaCard(
       palette: palette,
@@ -5924,7 +6265,24 @@ class _McpScreenState extends State<_McpScreen> {
           ),
           if (canDisconnect) ...[
             const SizedBox(height: 14),
-            _gmailRestDisconnectButton(palette, strings, c),
+            _gmailRestDisconnectButton(
+              palette,
+              strings,
+              c,
+              pending: _gmailRestDisconnecting,
+              onPressed: () => _disconnectGmailRest(c),
+            ),
+          ],
+          if (disconnectError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              disconnectError,
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.35,
+                color: palette.error,
+              ),
+            ),
           ],
           if (showConfigureOnPc) ...[
             const SizedBox(height: 14),
@@ -5995,15 +6353,20 @@ class _McpScreenState extends State<_McpScreen> {
   Widget _gmailRestDisconnectButton(
     OsiaPalette palette,
     OsiaStrings strings,
-    _McpConnector c,
-  ) {
+    _McpConnector c, {
+    required bool pending,
+    required VoidCallback onPressed,
+  }) {
+    final label = '${strings.mcpDisconnect} ${c.name}';
     return SizedBox(
       height: 50,
       child: ElevatedButton(
-        onPressed: _disconnectGmailRest,
+        onPressed: pending ? null : onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: palette.surfaceElevated,
           foregroundColor: palette.textPrimary,
+          disabledBackgroundColor: palette.surfaceElevated,
+          disabledForegroundColor: palette.textMuted,
           elevation: 0,
           side: BorderSide(color: palette.border),
           shape: RoundedRectangleBorder(
@@ -6011,7 +6374,24 @@ class _McpScreenState extends State<_McpScreen> {
           ),
           textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         ),
-        child: Text('${strings.mcpDisconnect} ${c.name}'),
+        child: pending
+            ? Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: palette.textMuted,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(label),
+                ],
+              )
+            : Text(label),
       ),
     );
   }
@@ -6535,12 +6915,14 @@ class _McpCustomDialogState extends State<_McpCustomDialog> {
       setState(() => _error = strings.mcpErrCommand);
       return;
     }
-    Navigator.of(context).pop(_McpCustomResult(
-      name: _nameCtrl.text,
-      command: _commandCtrl.text,
-      token: _tokenCtrl.text,
-      tokenEnv: _tokenEnvCtrl.text,
-    ));
+    Navigator.of(context).pop(
+      _McpCustomResult(
+        name: _nameCtrl.text,
+        command: _commandCtrl.text,
+        token: _tokenCtrl.text,
+        tokenEnv: _tokenEnvCtrl.text,
+      ),
+    );
   }
 
   @override
@@ -6562,7 +6944,10 @@ class _McpCustomDialogState extends State<_McpCustomDialog> {
             Text(
               strings.mcpCustomHint,
               style: TextStyle(
-                  fontSize: 12.5, height: 1.4, color: palette.textMuted),
+                fontSize: 12.5,
+                height: 1.4,
+                color: palette.textMuted,
+              ),
             ),
             const SizedBox(height: 16),
             _FieldLabel(strings.mcpFieldName, palette),
@@ -6609,8 +6994,10 @@ class _McpCustomDialogState extends State<_McpCustomDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child:
-              Text(strings.cancel, style: TextStyle(color: palette.textMuted)),
+          child: Text(
+            strings.cancel,
+            style: TextStyle(color: palette.textMuted),
+          ),
         ),
         TextButton(
           onPressed: _submit,

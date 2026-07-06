@@ -15,6 +15,7 @@ import 'providers_screen.dart';
 
 /// Placeholder donation URL — to be replaced with the real one later.
 const String _kDonationUrl = 'https://osia.space/donate';
+bool get _liveApiAvailable => false;
 
 /// Settings screen. Only reachable from the chat screen, i.e. after a
 /// successful connection. Hosts five sections plus a donation link:
@@ -66,7 +67,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) setState(() => _autoTts = enabled);
     });
     widget.storage.getLiveApiEnabled().then((enabled) {
-      if (mounted) setState(() => _liveApi = enabled);
+      if (mounted) setState(() => _liveApi = _liveApiAvailable && enabled);
     });
     _connState = widget.wsService.state;
     // Track connection state only to enable/disable the restart tile; the
@@ -107,6 +108,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _onToggleLiveApi(bool enabled) {
+    if (!_liveApiAvailable) return;
     setState(() => _liveApi = enabled);
     widget.storage.setLiveApiEnabled(enabled);
     // Push the choice to the PC; it disables STT/TTS while Live API is on.
@@ -114,15 +116,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _openProviders() {
-    Navigator.of(context).push(
-      slideFadeRoute(ProvidersScreen(wsService: widget.wsService)),
-    );
+    Navigator.of(
+      context,
+    ).push(slideFadeRoute(ProvidersScreen(wsService: widget.wsService)));
   }
 
   void _openMemory() {
-    Navigator.of(context).push(
-      slideFadeRoute(MemoryScreen(wsService: widget.wsService)),
-    );
+    Navigator.of(
+      context,
+    ).push(slideFadeRoute(MemoryScreen(wsService: widget.wsService)));
   }
 
   void _restartServer() {
@@ -231,9 +233,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _openLegal(LegalDocument document) {
     // Use the shared slide-fade route so the legal screen opens with the same
     // motion as every other navigation (not the default Material transition).
-    Navigator.of(context).push(
-      slideFadeRoute(LegalScreen(document: document)),
-    );
+    Navigator.of(context).push(slideFadeRoute(LegalScreen(document: document)));
   }
 
   // ── Build ───────────────────────────────────────────────────────────────
@@ -342,8 +342,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       icon: Icons.graphic_eq_rounded,
                       title: strings.liveApi,
                       subtitle: strings.liveApiNotice,
-                      value: _liveApi,
-                      onChanged: _onToggleLiveApi,
+                      value: _liveApiAvailable && _liveApi,
+                      onChanged: _liveApiAvailable ? _onToggleLiveApi : null,
+                      trailingLabel: strings.comingSoon,
                       palette: palette,
                     ),
                   ],
@@ -619,38 +620,38 @@ class _ThemeSwatch extends StatelessWidget {
       children: [
         PressableScale(
           child: GestureDetector(
-          onTap: onTap,
-          child: AnimatedContainer(
-            duration: MotionDurations.medium,
-            curve: MotionCurves.enter,
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: target.swatch,
-              border: Border.all(
-                color: isActive ? highlight : muted.withValues(alpha: 0.3),
-                width: isActive ? 2.2 : 1,
+            onTap: onTap,
+            child: AnimatedContainer(
+              duration: MotionDurations.medium,
+              curve: MotionCurves.enter,
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: target.swatch,
+                border: Border.all(
+                  color: isActive ? highlight : muted.withValues(alpha: 0.3),
+                  width: isActive ? 2.2 : 1,
+                ),
+                boxShadow: isActive
+                    ? [
+                        BoxShadow(
+                          color: highlight.withValues(alpha: 0.4),
+                          blurRadius: 10,
+                          spreadRadius: 1,
+                        ),
+                      ]
+                    : null,
               ),
-              boxShadow: isActive
-                  ? [
-                      BoxShadow(
-                        color: highlight.withValues(alpha: 0.4),
-                        blurRadius: 10,
-                        spreadRadius: 1,
-                      ),
-                    ]
+              child: isActive
+                  ? Icon(
+                      Icons.check_rounded,
+                      size: 20,
+                      color: target.isDark ? Colors.white : Colors.black,
+                    )
                   : null,
             ),
-            child: isActive
-                ? Icon(
-                    Icons.check_rounded,
-                    size: 20,
-                    color: target.isDark ? Colors.white : Colors.black,
-                  )
-                : null,
           ),
-        ),
         ),
         const SizedBox(height: 6),
         Text(
@@ -846,7 +847,8 @@ class _ToggleTile extends StatelessWidget {
   final String title;
   final String subtitle;
   final bool value;
-  final ValueChanged<bool> onChanged;
+  final ValueChanged<bool>? onChanged;
+  final String? trailingLabel;
   final OsiaPalette palette;
   const _ToggleTile({
     required this.icon,
@@ -854,22 +856,23 @@ class _ToggleTile extends StatelessWidget {
     required this.subtitle,
     required this.value,
     required this.onChanged,
+    this.trailingLabel,
     required this.palette,
   });
 
   @override
   Widget build(BuildContext context) {
+    final enabled = onChanged != null;
+    final contentColor = enabled ? palette.textPrimary : palette.textMuted;
+    final iconColor = enabled ? palette.accent : palette.textMuted;
     return InkWell(
-      onTap: () => onChanged(!value),
+      onTap: enabled ? () => onChanged!(!value) : null,
       borderRadius: BorderRadius.circular(14),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: [
-            SizedBox(
-              width: 28,
-              child: Icon(icon, size: 18, color: palette.accent),
-            ),
+            SizedBox(width: 28, child: Icon(icon, size: 18, color: iconColor)),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -881,7 +884,7 @@ class _ToggleTile extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: palette.textPrimary,
+                      color: contentColor,
                     ),
                   ),
                   const SizedBox(height: 2),
@@ -893,16 +896,48 @@ class _ToggleTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
+            if (trailingLabel != null) ...[
+              _SoonPill(label: trailingLabel!, palette: palette),
+              const SizedBox(width: 8),
+            ],
             Switch(
               value: value,
               onChanged: onChanged,
               activeTrackColor: palette.accent,
-              activeThumbColor:
-                  palette.isDark ? palette.background : Colors.white,
+              activeThumbColor: palette.isDark
+                  ? palette.background
+                  : Colors.white,
               inactiveTrackColor: palette.border.withValues(alpha: 0.5),
               inactiveThumbColor: palette.textMuted,
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SoonPill extends StatelessWidget {
+  final String label;
+  final OsiaPalette palette;
+
+  const _SoonPill({required this.label, required this.palette});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: palette.textMuted.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: palette.textMuted.withValues(alpha: 0.18)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: palette.textMuted,
         ),
       ),
     );

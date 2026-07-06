@@ -161,6 +161,7 @@ class OsiaStrings {
   final String configureProviders;
   final String liveApi;
   final String liveApiNotice;
+  final String comingSoon;
   final String catVoiceToVoice;
   final String catVoiceToVoiceSub;
   final String catAiProviders;
@@ -514,6 +515,7 @@ class OsiaStrings {
     required this.configureProviders,
     required this.liveApi,
     required this.liveApiNotice,
+    required this.comingSoon,
     required this.catVoiceToVoice,
     required this.catVoiceToVoiceSub,
     required this.catAiProviders,
@@ -906,6 +908,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   configureProviders: 'Configure APIs & Providers',
   liveApi: 'Live API',
   liveApiNotice: 'When enabled, STT and TTS are automatically disabled.',
+  comingSoon: 'Coming soon',
   catVoiceToVoice: 'Voice-to-voice (Live API)',
   catVoiceToVoiceSub: 'Real-time spoken conversation with OSIA',
   catAiProviders: 'AI Providers',
@@ -1256,6 +1259,7 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   liveApi: 'API Live',
   liveApiNotice:
       'Une fois activé, la transcription (STT) et la synthèse vocale (TTS) sont automatiquement désactivées.',
+  comingSoon: 'Bientôt disponible',
   catVoiceToVoice: 'Voix à voix (API Live)',
   catVoiceToVoiceSub: 'Conversation vocale en temps réel avec OSIA',
   catAiProviders: 'Fournisseurs IA',
@@ -1603,6 +1607,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   configureProviders: '配置 API 与提供商',
   liveApi: '实时 API',
   liveApiNotice: '启用后，语音转文字 (STT) 和文字转语音 (TTS) 将自动停用。',
+  comingSoon: '即将推出',
   catVoiceToVoice: '语音对话（实时 API）',
   catVoiceToVoiceSub: '与 OSIA 进行实时语音对话',
   catAiProviders: 'AI 提供商',
@@ -1934,6 +1939,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   configureProviders: 'API とプロバイダーを設定',
   liveApi: 'ライブ API',
   liveApiNotice: '有効にすると、音声認識 (STT) と音声合成 (TTS) は自動的に無効になります。',
+  comingSoon: '近日公開',
   catVoiceToVoice: '音声対音声（ライブ API）',
   catVoiceToVoiceSub: 'OSIA とのリアルタイム音声会話',
   catAiProviders: 'AI プロバイダー',
@@ -2285,6 +2291,7 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   configureProviders: 'APIs & Anbieter konfigurieren',
   liveApi: 'Live-API',
   liveApiNotice: 'Wenn aktiviert, werden STT und TTS automatisch deaktiviert.',
+  comingSoon: 'Bald verfügbar',
   catVoiceToVoice: 'Sprache-zu-Sprache (Live-API)',
   catVoiceToVoiceSub: 'Gesprochener Echtzeit-Dialog mit OSIA',
   catAiProviders: 'KI-Anbieter',
@@ -2639,6 +2646,7 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   liveApi: 'API Live',
   liveApiNotice:
       'Cuando está activado, STT y TTS se desactivan automáticamente.',
+  comingSoon: 'Próximamente',
   catVoiceToVoice: 'Voz a voz (API Live)',
   catVoiceToVoiceSub: 'Conversación hablada en tiempo real con OSIA',
   catAiProviders: 'Proveedores de IA',
