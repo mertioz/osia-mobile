@@ -2768,6 +2768,10 @@ class _CronEditScreenState extends State<_CronEditScreen> {
         } else if (spec.unit == _RepeatUnit.daily) {
           _unit = _RepeatUnit.daily;
           _dailyTime = TimeOfDay(hour: spec.hour, minute: spec.minute);
+        } else if (spec.unit == _RepeatUnit.daysAt) {
+          _unit = _RepeatUnit.daysAt;
+          _intervalCtrl.text = '${spec.interval}';
+          _dailyTime = TimeOfDay(hour: spec.hour, minute: spec.minute);
         } else {
           _unit = spec.unit;
           _intervalCtrl.text = '${spec.interval}';
@@ -2836,10 +2840,16 @@ class _CronEditScreenState extends State<_CronEditScreen> {
     }
     final n = int.tryParse(_intervalCtrl.text.trim());
     if (n == null || n <= 0) return null;
+    if (_unit == _RepeatUnit.daysAt) {
+      final t = _dailyTime;
+      if (t == null) return null;
+      return 'every $n days at ${_d2(t.hour)}:${_d2(t.minute)}';
+    }
     final unit = switch (_unit) {
       _RepeatUnit.minutes => 'minutes',
       _RepeatUnit.hours => 'hours',
       _RepeatUnit.days => 'days',
+      _RepeatUnit.daysAt => 'days', // handled above
       _RepeatUnit.daily => 'minutes', // unreachable (handled above)
     };
     return 'every $n $unit';
@@ -2958,6 +2968,10 @@ class _CronEditScreenState extends State<_CronEditScreen> {
                 child: Text(strings.cronUnitDays),
               ),
               DropdownMenuItem(
+                value: _RepeatUnit.daysAt,
+                child: Text('${strings.cronUnitDays} + ${strings.cronTime}'),
+              ),
+              DropdownMenuItem(
                 value: _RepeatUnit.daily,
                 child: Text(strings.cronModeDaily),
               ),
@@ -2980,24 +2994,41 @@ class _CronEditScreenState extends State<_CronEditScreen> {
           onTap: () => _pickTime(false),
         )
       else
-        Row(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SizedBox(
-              width: 110,
-              child: _OsiaTextField(
-                controller: _intervalCtrl,
-                hint: '5',
+            Row(
+              children: [
+                SizedBox(
+                  width: 110,
+                  child: _OsiaTextField(
+                    controller: _intervalCtrl,
+                    hint: '5',
+                    palette: palette,
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    _unitWord(strings),
+                    style: TextStyle(fontSize: 14, color: palette.textMuted),
+                  ),
+                ),
+              ],
+            ),
+            if (_unit == _RepeatUnit.daysAt) ...[
+              const SizedBox(height: 14),
+              _PickerButton(
+                icon: Icons.access_time_rounded,
+                label: strings.cronTime,
+                value: _dailyTime == null
+                    ? null
+                    : _formatCronTime(_hmOfDay(_dailyTime!), widget.timeFormat),
                 palette: palette,
-                keyboardType: TextInputType.number,
+                onTap: () => _pickTime(false),
               ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                _unitWord(strings),
-                style: TextStyle(fontSize: 14, color: palette.textMuted),
-              ),
-            ),
+            ],
           ],
         ),
     ];
@@ -3037,6 +3068,7 @@ class _CronEditScreenState extends State<_CronEditScreen> {
     _RepeatUnit.minutes => s.cronUnitMinutes,
     _RepeatUnit.hours => s.cronUnitHours,
     _RepeatUnit.days => s.cronUnitDays,
+    _RepeatUnit.daysAt => s.cronUnitDays,
     _RepeatUnit.daily => s.cronModeDaily,
   };
 
@@ -3154,7 +3186,7 @@ class _CronEditScreenState extends State<_CronEditScreen> {
 
 enum _CronType { repeat, once }
 
-enum _RepeatUnit { minutes, hours, days, daily }
+enum _RepeatUnit { minutes, hours, days, daysAt, daily }
 
 /// Parsed view of a canonical schedule string.
 class _CronSpec {
@@ -3198,6 +3230,19 @@ _CronSpec? _parseCron(String schedule) {
       day: int.parse(once.group(3)!),
       hour: int.parse(once.group(4)!),
       minute: int.parse(once.group(5)!),
+    );
+  }
+
+  final daysAt = RegExp(
+    r'^every\s+(\d+)\s*days?\s+at\s+([01]?\d|2[0-3]):([0-5]\d)$',
+  ).firstMatch(s);
+  if (daysAt != null) {
+    return _CronSpec(
+      isOnce: false,
+      unit: _RepeatUnit.daysAt,
+      interval: int.parse(daysAt.group(1)!),
+      hour: int.parse(daysAt.group(2)!),
+      minute: int.parse(daysAt.group(3)!),
     );
   }
 
@@ -3255,6 +3300,8 @@ String _cronSummary(String schedule, OsiaStrings s, String timeFormat) {
     _RepeatUnit.minutes => s.cronEveryMinutes(spec.interval),
     _RepeatUnit.hours => s.cronEveryHours(spec.interval),
     _RepeatUnit.days => s.cronEveryDays(spec.interval),
+    _RepeatUnit.daysAt =>
+      '${s.cronEveryDays(spec.interval)} · ${_formatCronTime(_hm(spec.hour, spec.minute), timeFormat)}',
     _RepeatUnit.daily => s.cronDailyAt(
       _formatCronTime(_hm(spec.hour, spec.minute), timeFormat),
     ),
