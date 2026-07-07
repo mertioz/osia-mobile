@@ -79,6 +79,9 @@ class OsiaStrings {
   final String settingsTooltip;
   final String noResponseError;
   final String osiaWorkingBackground;
+  final String scheduledTaskCompleted;
+  final String scheduledTaskFailed;
+  final String taskCompleted;
 
   // ── Model selector ──
   final String availableModels;
@@ -445,6 +448,9 @@ class OsiaStrings {
     required this.settingsTooltip,
     required this.noResponseError,
     required this.osiaWorkingBackground,
+    required this.scheduledTaskCompleted,
+    required this.scheduledTaskFailed,
+    required this.taskCompleted,
     required this.availableModels,
     required this.noModelsReceived,
     required this.modelsLoadFailed,
@@ -834,6 +840,9 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   settingsTooltip: 'Settings',
   noResponseError: "OSIA didn't respond.",
   osiaWorkingBackground: 'OSIA is working in the background',
+  scheduledTaskCompleted: 'Scheduled task completed',
+  scheduledTaskFailed: 'Scheduled task failed',
+  taskCompleted: 'Task completed',
   availableModels: 'Available models',
   noModelsReceived: 'No models received from the server.',
   modelsLoadFailed: 'Unable to load models',
@@ -1184,6 +1193,9 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   settingsTooltip: 'Paramètres',
   noResponseError: "OSIA n'a pas répondu.",
   osiaWorkingBackground: 'OSIA travaille en arrière-plan',
+  scheduledTaskCompleted: 'Tâche planifiée terminée',
+  scheduledTaskFailed: 'Tâche planifiée échouée',
+  taskCompleted: 'Tâche terminée',
   availableModels: 'Modèles disponibles',
   noModelsReceived: 'Aucun modèle reçu du serveur.',
   modelsLoadFailed: 'Impossible de charger les modèles',
@@ -1537,6 +1549,9 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   settingsTooltip: '设置',
   noResponseError: 'OSIA 没有回应。',
   osiaWorkingBackground: 'OSIA 正在后台工作',
+  scheduledTaskCompleted: '定时任务已完成',
+  scheduledTaskFailed: '定时任务失败',
+  taskCompleted: '任务完成',
   availableModels: '可用模型',
   noModelsReceived: '未从服务器收到任何模型。',
   modelsLoadFailed: '无法加载模型',
@@ -1869,6 +1884,9 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   settingsTooltip: '設定',
   noResponseError: 'OSIA から応答がありませんでした。',
   osiaWorkingBackground: 'OSIA はバックグラウンドで作業中',
+  scheduledTaskCompleted: 'スケジュールタスク完了',
+  scheduledTaskFailed: 'スケジュールタスク失敗',
+  taskCompleted: 'タスク完了',
   availableModels: '利用可能なモデル',
   noModelsReceived: 'サーバーからモデルを受信していません。',
   modelsLoadFailed: 'モデルを読み込めません',
@@ -2214,6 +2232,9 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   settingsTooltip: 'Einstellungen',
   noResponseError: 'OSIA hat nicht geantwortet.',
   osiaWorkingBackground: 'OSIA arbeitet im Hintergrund',
+  scheduledTaskCompleted: 'Geplante Aufgabe abgeschlossen',
+  scheduledTaskFailed: 'Geplante Aufgabe fehlgeschlagen',
+  taskCompleted: 'Aufgabe abgeschlossen',
   availableModels: 'Verfügbare Modelle',
   noModelsReceived: 'Keine Modelle vom Server erhalten.',
   modelsLoadFailed: 'Modelle können nicht geladen werden',
@@ -2571,6 +2592,9 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   settingsTooltip: 'Ajustes',
   noResponseError: 'OSIA no respondió.',
   osiaWorkingBackground: 'OSIA está trabajando en segundo plano',
+  scheduledTaskCompleted: 'Tarea programada completada',
+  scheduledTaskFailed: 'Tarea programada fallida',
+  taskCompleted: 'Tarea completada',
   availableModels: 'Modelos disponibles',
   noModelsReceived: 'No se recibieron modelos del servidor.',
   modelsLoadFailed: 'No se pueden cargar los modelos',

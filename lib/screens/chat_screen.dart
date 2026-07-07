@@ -11,6 +11,7 @@ import '../motion.dart';
 import '../nav.dart';
 import '../services/audio_service.dart';
 import '../services/rendezvous_service.dart';
+import '../services/relay_service.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
@@ -79,6 +80,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _connSub;
   StreamSubscription? _errSub;
   StreamSubscription? _newChatSub;
+  StreamSubscription? _cronNotificationSub;
   StreamSubscription? _configSub;
   StreamSubscription? _mcpConfirmSub;
   StreamSubscription? _busySub;
@@ -293,6 +295,8 @@ class _ChatScreenState extends State<ChatScreen> {
         ws.WebSocketService(
           ip: ip ?? StorageService.defaultHost,
           token: authToken,
+          resolveRelay: () =>
+              RelayService(storage: widget.storage).connectionConfig(authToken),
           resolveHost: () => RendezvousService().resolveHost(authToken),
         );
 
@@ -384,6 +388,9 @@ class _ChatScreenState extends State<ChatScreen> {
     // WOR-10: the PC can push a "new_chat" signal on its own stream (kept off
     // the sealed-message switch). Mirror it by resetting the chat locally.
     _newChatSub = _wsService.newChatStream.listen((_) => _onNewChat());
+    _cronNotificationSub = _wsService.cronNotificationStream.listen(
+      _onCronNotification,
+    );
 
     // WOR-44 Phase 5: write-tool confirmation requests (kept off the sealed
     // message switch). The server blocks the agent until we answer; the handler
@@ -515,6 +522,18 @@ class _ChatScreenState extends State<ChatScreen> {
           });
           _scrollToBottomAnimated();
         }
+      case ws.TurnAcceptedMessage(:final conversationId):
+        _cancelFirstTokenTimer();
+        setState(() {
+          if (conversationId.isNotEmpty &&
+              (_activeConversationId == null ||
+                  _activeConversationId == conversationId)) {
+            _activeConversationId ??= conversationId;
+          }
+          _awaitingResponse = true;
+          _thinking = true;
+          _noResponse = false;
+        });
       case ws.ConversationsMessage(:final conversations):
         setState(() => _conversations = conversations);
       case ws.ActiveConversationMessage(:final id, :final title):
@@ -802,6 +821,23 @@ class _ChatScreenState extends State<ChatScreen> {
   /// rendering never diverge and can't double-append. This performs the
   /// append/finalize the old `response_chunk` / `status`-done message cases did,
   /// now routed by conversation id.
+  void _onCronNotification(ws.CronNotificationMessage event) {
+    if (!mounted) return;
+    final strings = OsiaL10n.of(context);
+    final title = event.title.trim();
+    final label = event.failed
+        ? strings.scheduledTaskFailed
+        : strings.scheduledTaskCompleted;
+    final message = title.isEmpty ? label : '$label: $title';
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+    final convId = event.conversationId;
+    if (convId.isNotEmpty && convId == _activeConversationId) {
+      _requestConversationContent(convId);
+    }
+  }
+
   void _onConversationBusy(ws.ConversationBusyEvent event) {
     if (!mounted) return;
     if (event.conversationId != _activeConversationId) return;
@@ -1602,7 +1638,12 @@ class _ChatScreenState extends State<ChatScreen> {
         : (isImage
               ? strings.analyzeImagePrompt
               : strings.hereIsFile(filename ?? ''));
-    if (!_wsService.sendText(prompt, conversationId: sendingConv)) {
+    final clientRequestId = ws.WebSocketService.newClientRequestId();
+    if (!_wsService.sendText(
+      prompt,
+      conversationId: sendingConv,
+      clientRequestId: clientRequestId,
+    )) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('OSIA is still working in this conversation.'),
@@ -1637,6 +1678,7 @@ class _ChatScreenState extends State<ChatScreen> {
       filename: hasFile ? filename : null,
       fileBytes: hasFile ? bytes : null,
       isImage: isImage,
+      clientRequestId: clientRequestId,
     );
 
     _textCtrl.clear();
@@ -1767,7 +1809,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final turn = _pendingTurn;
     if (turn == null) return;
     final retryConv = _activeConversationId;
-    if (_activeConversationBusy) {
+    final sameRequest = _wsService.isSamePendingRequest(
+      retryConv,
+      turn.clientRequestId,
+    );
+    if (_activeConversationBusy && !sameRequest) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('OSIA is still working in this conversation.'),
@@ -1782,7 +1828,11 @@ class _ChatScreenState extends State<ChatScreen> {
         isImage: turn.isImage,
       );
     }
-    if (!_wsService.sendText(turn.prompt, conversationId: retryConv)) {
+    if (!_wsService.sendText(
+      turn.prompt,
+      conversationId: retryConv,
+      clientRequestId: turn.clientRequestId,
+    )) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('OSIA is still working in this conversation.'),
@@ -2181,6 +2231,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _connSub?.cancel();
     _errSub?.cancel();
     _newChatSub?.cancel();
+    _cronNotificationSub?.cancel();
     _configSub?.cancel();
     _mcpConfirmSub?.cancel();
     _busySub?.cancel();
@@ -2236,6 +2287,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _connSub?.cancel();
     _errSub?.cancel();
     _newChatSub?.cancel();
+    _cronNotificationSub?.cancel();
     _configSub?.cancel();
     _mcpConfirmSub?.cancel();
     _busySub?.cancel();
@@ -2841,12 +2893,14 @@ class _PendingTurn {
   final String? filename;
   final Uint8List? fileBytes;
   final bool isImage;
+  final String clientRequestId;
 
   const _PendingTurn({
     required this.prompt,
     this.filename,
     this.fileBytes,
     this.isImage = false,
+    required this.clientRequestId,
   });
 
   bool get hasFile => filename != null && fileBytes != null;

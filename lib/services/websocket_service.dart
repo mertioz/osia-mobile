@@ -66,6 +66,22 @@ class StatusMessage extends OsiaMessage {
   const StatusMessage(this.content);
 }
 
+class TurnAcceptedMessage extends OsiaMessage {
+  final String clientRequestId;
+  final String turnId;
+  final String conversationId;
+  final bool persisted;
+  final String status;
+
+  const TurnAcceptedMessage({
+    required this.clientRequestId,
+    required this.turnId,
+    required this.conversationId,
+    required this.persisted,
+    required this.status,
+  });
+}
+
 /// A single conversation entry as sent by the server.
 class Conversation {
   final String id;
@@ -763,6 +779,44 @@ class ConversationsListMessage {
   const ConversationsListMessage(this.conversations);
 }
 
+/// In-app fallback notification for a scheduled task completion/failure.
+/// Delivered on its own stream so the sealed chat message switch remains
+/// unchanged, like config/new_chat/conversations_list.
+class CronNotificationMessage {
+  final String id;
+  final String taskId;
+  final String title;
+  final String status;
+  final String conversationId;
+  final String createdAt;
+
+  const CronNotificationMessage({
+    required this.id,
+    required this.taskId,
+    required this.title,
+    required this.status,
+    required this.conversationId,
+    required this.createdAt,
+  });
+
+  bool get failed => status == 'failed';
+
+  factory CronNotificationMessage.fromJson(Map<String, dynamic> json) {
+    final rawStatus = (json['status'] ?? '').toString().trim().toLowerCase();
+    return CronNotificationMessage(
+      id: (json['id'] ?? '').toString(),
+      taskId: (json['task_id'] ?? json['taskId'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      status: rawStatus == 'failed' || rawStatus == 'error'
+          ? 'failed'
+          : 'completed',
+      conversationId: (json['conversation_id'] ?? json['conversationId'] ?? '')
+          .toString(),
+      createdAt: (json['created_at'] ?? json['createdAt'] ?? '').toString(),
+    );
+  }
+}
+
 /// One `autonomous_progress` frame broadcast by the PC while an autonomous run
 /// is active (WOR-45 Phase 5). Like [ConfigData], [ApiKeysMessage],
 /// [HeartbeatDataMessage], [NewChatMessage] and [ConversationsListMessage],
@@ -1111,6 +1165,9 @@ class WebSocketService {
   final StreamController<ConversationsListMessage> _conversationsListCtrl =
       StreamController<ConversationsListMessage>.broadcast();
 
+  final StreamController<CronNotificationMessage> _cronNotificationCtrl =
+      StreamController<CronNotificationMessage>.broadcast();
+
   final StreamController<AutonomousProgressMessage> _autonomousCtrl =
       StreamController<AutonomousProgressMessage>.broadcast();
 
@@ -1161,6 +1218,13 @@ class WebSocketService {
   /// and stream hydration, while busy gates new sends for the same conversation.
   final Set<String> _busyConvs = {};
 
+  /// Active client_request_id by conversation. This lets a retry of the SAME
+  /// request reattach while a genuinely new request stays blocked by busy.
+  final Map<String, String> _activeRequestByConv = {};
+  final Map<String, String> _activeConvByRequest = {};
+  final Set<String> _acceptedRequests = {};
+  final Set<String> _seenCronNotifications = {};
+
   /// Hard cap on retained per-conversation buffers (WOR-53) — a backstop for
   /// buffers the user never explicitly leaves or deletes (e.g. a server-streamed
   /// id absent from the local list). Live streams are never evicted.
@@ -1205,6 +1269,10 @@ class WebSocketService {
   /// off [messageStream] for the same reason as [configStream].
   Stream<ConversationsListMessage> get conversationsListStream =>
       _conversationsListCtrl.stream;
+
+  /// Stream of scheduled-task completion/failure notifications.
+  Stream<CronNotificationMessage> get cronNotificationStream =>
+      _cronNotificationCtrl.stream;
 
   /// Stream of autonomous-run progress frames (`autonomous_progress`, WOR-45
   /// Phase 5). Kept off [messageStream] for the same reason as [configStream].
@@ -1263,6 +1331,39 @@ class WebSocketService {
   /// (WOR-103).
   bool isConversationBusy(String id) => _busyConvs.contains(id);
 
+  static String newClientRequestId() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    return 'mobile-${DateTime.now().microsecondsSinceEpoch}-$hex';
+  }
+
+  bool isSamePendingRequest(String? conversationId, String clientRequestId) {
+    if (clientRequestId.isEmpty) return false;
+    final id = conversationId ?? '';
+    if (id.isNotEmpty && _activeRequestByConv[id] == clientRequestId) {
+      return true;
+    }
+    return _activeConvByRequest[clientRequestId] != null;
+  }
+
+  bool isRequestAccepted(String clientRequestId) =>
+      _acceptedRequests.contains(clientRequestId);
+
+  void _rememberRequest(String? conversationId, String clientRequestId) {
+    if (clientRequestId.isEmpty) return;
+    final id = conversationId ?? '';
+    if (id.isNotEmpty) {
+      _activeRequestByConv[id] = clientRequestId;
+      _activeConvByRequest[clientRequestId] = id;
+    }
+  }
+
+  void _forgetConversationRequest(String conversationId) {
+    final req = _activeRequestByConv.remove(conversationId);
+    if (req != null) _activeConvByRequest.remove(req);
+  }
+
   void _setConversationBusy(String id, bool busy, {String message = ''}) {
     if (id.isEmpty) return;
     if (busy) {
@@ -1284,12 +1385,59 @@ class WebSocketService {
       _setConversationBusy(id, true, message: message);
       return;
     }
-    _setConversationBusy(id, json['busy'] == true);
+    final busy = json['busy'] == true;
+    if (busy) {
+      _setConversationBusy(id, true);
+      return;
+    }
+    final hadTurnState =
+        _pendingConvs.contains(id) || (_streamBuffers[id]?.streaming ?? false);
+    if (hadTurnState) {
+      _finishConvStream(id, error: false);
+    } else {
+      _setConversationBusy(id, false);
+    }
+  }
+
+  void _handleTurnAcceptedFrame(Map<String, dynamic> json) {
+    final id = json['conversation_id']?.toString() ?? '';
+    final reqId = json['client_request_id']?.toString() ?? '';
+    final turnId = json['turn_id']?.toString() ?? '';
+    final status = json['status']?.toString() ?? 'accepted';
+    if (reqId.isNotEmpty) _acceptedRequests.add(reqId);
+    if (id.isNotEmpty) {
+      _rememberRequest(id, reqId);
+      if (status == 'done' || status == 'error') {
+        _finishConvStream(id, error: status == 'error');
+      } else {
+        _pendingConvs.add(id);
+        _setConversationBusy(id, true);
+      }
+    }
+    _emit(
+      TurnAcceptedMessage(
+        clientRequestId: reqId,
+        turnId: turnId,
+        conversationId: id,
+        persisted: json['persisted'] == true,
+        status: status,
+      ),
+    );
   }
 
   @visibleForTesting
   void handleConversationBusyFrameForTest(Map<String, dynamic> json) {
     _handleConversationBusyFrame(json);
+  }
+
+  @visibleForTesting
+  void handleIncomingFrameForTest(Map<String, dynamic> json) {
+    _onData(json);
+  }
+
+  @visibleForTesting
+  void handleRelayEnvelopeForTest(Map<String, dynamic> envelope) {
+    _onRelayData(jsonEncode(envelope));
   }
 
   /// Mark conversation [id]'s turn as in flight at SEND time (WOR-75/WOR-53/
@@ -1426,26 +1574,55 @@ class WebSocketService {
   }
 
   /// Send a text command. Returns false when the target conversation is busy.
-  bool sendText(String content, {String? conversationId}) {
+  bool sendText(
+    String content, {
+    String? conversationId,
+    String? clientRequestId,
+  }) {
     final id = conversationId ?? '';
-    if (id.isNotEmpty && isConversationBusy(id)) {
+    final requestId = clientRequestId ?? newClientRequestId();
+    if (id.isNotEmpty &&
+        isConversationBusy(id) &&
+        _activeRequestByConv[id] != requestId) {
       _setConversationBusy(id, true);
       return false;
     }
-    final sent = _send({'type': 'text', 'content': content});
-    if (sent && id.isNotEmpty) _setConversationBusy(id, true);
+    final sent = _send({
+      'type': 'text',
+      'content': content,
+      'client_request_id': requestId,
+    });
+    if (sent) {
+      _rememberRequest(id, requestId);
+      if (id.isNotEmpty) _setConversationBusy(id, true);
+    }
     return sent;
   }
 
   /// Send a base64-encoded WAV audio command.
-  bool sendAudio(String base64Data, {String? conversationId}) {
+  bool sendAudio(
+    String base64Data, {
+    String? conversationId,
+    String? clientRequestId,
+  }) {
     final id = conversationId ?? '';
-    if (id.isNotEmpty && isConversationBusy(id)) {
+    final requestId = clientRequestId ?? newClientRequestId();
+    if (id.isNotEmpty &&
+        isConversationBusy(id) &&
+        _activeRequestByConv[id] != requestId) {
       _setConversationBusy(id, true);
       return false;
     }
-    final sent = _send({'type': 'audio', 'format': 'wav', 'data': base64Data});
-    if (sent && id.isNotEmpty) _setConversationBusy(id, true);
+    final sent = _send({
+      'type': 'audio',
+      'format': 'wav',
+      'data': base64Data,
+      'client_request_id': requestId,
+    });
+    if (sent) {
+      _rememberRequest(id, requestId);
+      if (id.isNotEmpty) _setConversationBusy(id, true);
+    }
     return sent;
   }
 
@@ -1757,6 +1934,7 @@ class WebSocketService {
     _heartbeatCtrl.close();
     _newChatCtrl.close();
     _conversationsListCtrl.close();
+    _cronNotificationCtrl.close();
     _autonomousCtrl.close();
     _mcpStatusCtrl.close();
     _mcpConfirmCtrl.close();
@@ -1766,6 +1944,10 @@ class WebSocketService {
     _streamBuffers.clear();
     _pendingConvs.clear();
     _busyConvs.clear();
+    _activeRequestByConv.clear();
+    _activeConvByRequest.clear();
+    _acceptedRequests.clear();
+    _seenCronNotifications.clear();
   }
 
   /// Strip any scheme, path, or port the user may have pasted into the
@@ -1905,6 +2087,7 @@ class WebSocketService {
     final st = _streamBuffers[convId];
     if (st != null) st.streaming = false;
     _pendingConvs.remove(convId); // WOR-75/WOR-53/WOR-62: turn finished.
+    _forgetConversationRequest(convId);
     _setConversationBusy(convId, false);
     if (kOsiaDebugPlaceholder) {
       debugPrint(
@@ -2282,6 +2465,17 @@ class WebSocketService {
               _finishConvStream(convId, error: content == 'error');
             }
           }
+        case 'turn_accepted':
+        case 'turn_status':
+          _handleTurnAcceptedFrame(json);
+        case 'response_done':
+        case 'turn_complete':
+        case 'done':
+          _finishConvStream(convId, error: false);
+        case 'error':
+          if (convId != null && convId.isNotEmpty) {
+            _finishConvStream(convId, error: true);
+          }
         case 'conversations':
           final raw = json['items'] ?? json['conversations'];
           if (raw is List) {
@@ -2412,6 +2606,24 @@ class WebSocketService {
           debugPrint('[OSIA WS] conversations_list: ${convs.length} item(s)');
           if (!_conversationsListCtrl.isClosed) {
             _conversationsListCtrl.add(ConversationsListMessage(convs));
+          }
+        case 'cron_notification':
+          final note = CronNotificationMessage.fromJson(json);
+          final id = note.id;
+          if (id.isNotEmpty) {
+            if (_seenCronNotifications.contains(id)) break;
+            _seenCronNotifications.add(id);
+            if (_seenCronNotifications.length > 200) {
+              _seenCronNotifications.clear();
+              _seenCronNotifications.add(id);
+            }
+          }
+          debugPrint(
+            '[OSIA WS] cron_notification: status=${note.status} '
+            'title="${note.title}" conversation=${note.conversationId}',
+          );
+          if (!_cronNotificationCtrl.isClosed) {
+            _cronNotificationCtrl.add(note);
           }
         case 'autonomous_progress':
           // Live progress for an autonomous run (WOR-45 Phase 5). Delivered on
