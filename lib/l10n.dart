@@ -246,6 +246,8 @@ class OsiaStrings {
   final String cronDate;
   final String cronTime;
   final String cronInvalid;
+  final String cronModelDefault;
+  final String cronModelInvalid;
   final String cronEveryMinutesTemplate; // {n}
   final String cronEveryHoursTemplate; // {n}
   final String cronEveryDaysTemplate; // {n}
@@ -589,6 +591,8 @@ class OsiaStrings {
     required this.cronDate,
     required this.cronTime,
     required this.cronInvalid,
+    required this.cronModelDefault,
+    required this.cronModelInvalid,
     required this.cronEveryMinutesTemplate,
     required this.cronEveryHoursTemplate,
     required this.cronEveryDaysTemplate,
@@ -993,6 +997,8 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   cronDate: 'Date',
   cronTime: 'Time',
   cronInvalid: 'Enter a task and a valid schedule.',
+  cronModelDefault: 'Default/current model',
+  cronModelInvalid: 'Choose a valid model.',
   cronEveryMinutesTemplate: 'Every {n} min',
   cronEveryHoursTemplate: 'Every {n} h',
   cronEveryDaysTemplate: 'Every {n} d',
@@ -1348,6 +1354,8 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   cronDate: 'Date',
   cronTime: 'Heure',
   cronInvalid: 'Saisissez une tâche et un horaire valide.',
+  cronModelDefault: 'Modèle par défaut/actuel',
+  cronModelInvalid: 'Choisissez un modèle valide.',
   cronEveryMinutesTemplate: 'Toutes les {n} min',
   cronEveryHoursTemplate: 'Toutes les {n} h',
   cronEveryDaysTemplate: 'Tous les {n} j',
@@ -1692,6 +1700,8 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   cronDate: '日期',
   cronTime: '时间',
   cronInvalid: '请输入任务和有效的计划。',
+  cronModelDefault: '默认/当前模型',
+  cronModelInvalid: '请选择有效模型。',
   cronEveryMinutesTemplate: '每 {n} 分钟',
   cronEveryHoursTemplate: '每 {n} 小时',
   cronEveryDaysTemplate: '每 {n} 天',
@@ -2032,6 +2042,8 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   cronDate: '日付',
   cronTime: '時刻',
   cronInvalid: 'タスクと有効なスケジュールを入力してください。',
+  cronModelDefault: 'デフォルト/現在のモデル',
+  cronModelInvalid: '有効なモデルを選択してください。',
   cronEveryMinutesTemplate: '{n} 分ごと',
   cronEveryHoursTemplate: '{n} 時間ごと',
   cronEveryDaysTemplate: '{n} 日ごと',
@@ -2389,6 +2401,8 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   cronDate: 'Datum',
   cronTime: 'Uhrzeit',
   cronInvalid: 'Geben Sie eine Aufgabe und einen gültigen Zeitplan ein.',
+  cronModelDefault: 'Standard-/aktuelles Modell',
+  cronModelInvalid: 'Wählen Sie ein gültiges Modell.',
   cronEveryMinutesTemplate: 'Alle {n} Min',
   cronEveryHoursTemplate: 'Alle {n} Std',
   cronEveryDaysTemplate: 'Alle {n} Tage',
@@ -2747,6 +2761,8 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   cronDate: 'Fecha',
   cronTime: 'Hora',
   cronInvalid: 'Introduce una tarea y un horario válido.',
+  cronModelDefault: 'Modelo predeterminado/actual',
+  cronModelInvalid: 'Elige un modelo válido.',
   cronEveryMinutesTemplate: 'Cada {n} min',
   cronEveryHoursTemplate: 'Cada {n} h',
   cronEveryDaysTemplate: 'Cada {n} d',

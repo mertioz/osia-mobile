@@ -9,6 +9,7 @@ import '../motion.dart';
 import '../nav.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
+import '../widgets/model_selector_sheet.dart';
 
 /// Configure APIs & Providers — the mobile mirror of the PC's provider panels.
 ///
@@ -36,6 +37,7 @@ const Map<String, String> _kProviderNames = {
   'google': 'Google',
   'xai': 'xAI',
   'groq': 'Groq',
+  'mistral': 'Mistral',
   'ollama': 'Local (Ollama)',
 };
 
@@ -118,6 +120,9 @@ String _providerForModel(String modelId, List<ws.OsiaModel> models) {
   if (lower.contains('deepseek')) return 'deepseek';
   if (lower.contains('gemini')) return 'google';
   if (lower.contains('grok')) return 'xai';
+  if (lower.startsWith('mistral') || lower.startsWith('codestral')) {
+    return 'mistral';
+  }
   return 'ollama';
 }
 
@@ -675,6 +680,9 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
               wsService: widget.wsService,
               jobs: config.cronJobs,
               timeFormat: _timeFormat,
+              models: _models,
+              currentModel: (config.settings['selected_model'] ?? '')
+                  .toString(),
             ),
           ),
         ),
@@ -2562,10 +2570,14 @@ class _CronScreen extends StatefulWidget {
   // Current time format ('12h'/'24h'), resolved by the parent. Display-only:
   // the schedule strings saved to the PC stay canonical 24h.
   final String timeFormat;
+  final List<ws.OsiaModel> models;
+  final String? currentModel;
   const _CronScreen({
     required this.wsService,
     required this.jobs,
     required this.timeFormat,
+    required this.models,
+    required this.currentModel,
   });
 
   @override
@@ -2602,6 +2614,8 @@ class _CronScreenState extends State<_CronScreen> {
           initialJob: existing,
           timeFormat: widget.timeFormat,
           wsService: widget.wsService,
+          models: widget.models,
+          currentModel: widget.currentModel,
         ),
       ),
     );
@@ -2651,6 +2665,7 @@ class _CronScreenState extends State<_CronScreen> {
                     palette: palette,
                     strings: strings,
                     timeFormat: widget.timeFormat,
+                    models: widget.models,
                     onToggle: (v) => _toggle(i, v),
                     onDelete: () => _delete(i),
                     onTap: () => _edit(index: i),
@@ -2676,6 +2691,7 @@ class _CronRow extends StatelessWidget {
   final OsiaPalette palette;
   final OsiaStrings strings;
   final String timeFormat;
+  final List<ws.OsiaModel> models;
   final ValueChanged<bool> onToggle;
   final VoidCallback onDelete;
   final VoidCallback onTap;
@@ -2684,6 +2700,7 @@ class _CronRow extends StatelessWidget {
     required this.palette,
     required this.strings,
     required this.timeFormat,
+    required this.models,
     required this.onToggle,
     required this.onDelete,
     required this.onTap,
@@ -2693,6 +2710,11 @@ class _CronRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final task = (job['task'] ?? '').toString().trim();
     final schedule = (job['schedule'] ?? '').toString();
+    final modelLabel = cronModelDisplayLabel(
+      job['model'],
+      models,
+      strings.cronModelDefault,
+    );
     final enabled = job['enabled'] == true;
     return _OsiaCard(
       palette: palette,
@@ -2726,6 +2748,13 @@ class _CronRow extends StatelessWidget {
                       _cronSummary(schedule, strings, timeFormat),
                       style: TextStyle(fontSize: 12, color: palette.accent),
                     ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${strings.model}: $modelLabel',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: palette.textMuted),
+                    ),
                   ],
                 ),
               ),
@@ -2757,6 +2786,89 @@ class _CronRow extends StatelessWidget {
   }
 }
 
+Map<String, dynamic>? _cronModelFromRaw(Object? raw) {
+  if (raw is! Map) return null;
+  final id = (raw['id'] ?? raw['model'] ?? raw['model_id'] ?? '')
+      .toString()
+      .trim();
+  if (id.isEmpty) return null;
+  final provider = (raw['provider'] ?? raw['model_provider'] ?? '')
+      .toString()
+      .trim();
+  final label = (raw['label'] ?? raw['name'] ?? id).toString().trim();
+  return {'provider': provider, 'id': id, 'label': label.isEmpty ? id : label};
+}
+
+@visibleForTesting
+Map<String, dynamic>? cronModelMetadataForModelId(
+  String? modelId,
+  List<ws.OsiaModel> models,
+) {
+  final id = (modelId ?? '').trim();
+  if (id.isEmpty) return null;
+  for (final m in models) {
+    if (m.id == id) {
+      final provider = (m.provider ?? '').trim();
+      return {
+        'provider': provider.isEmpty ? _providerForModel(id, models) : provider,
+        'id': id,
+        'label': m.label.trim().isEmpty ? id : m.label,
+      };
+    }
+  }
+  return {'provider': _providerForModel(id, models), 'id': id, 'label': id};
+}
+
+@visibleForTesting
+String cronModelDisplayLabel(
+  Object? rawModel,
+  List<ws.OsiaModel> models,
+  String fallback,
+) {
+  final meta = _cronModelFromRaw(rawModel);
+  if (meta == null) return fallback;
+  final id = (meta['id'] ?? '').toString();
+  final storedProvider = (meta['provider'] ?? '').toString();
+  var provider = storedProvider;
+  var label = (meta['label'] ?? id).toString();
+  for (final m in models) {
+    if (m.id == id &&
+        (storedProvider.isEmpty || m.provider == storedProvider)) {
+      provider = (m.provider ?? provider).trim();
+      label = m.label.trim().isEmpty ? label : m.label;
+      break;
+    }
+  }
+  provider = provider.trim().isEmpty ? _providerForModel(id, models) : provider;
+  final providerLabel = _kProviderNames[provider] ?? provider;
+  return providerLabel.trim().isEmpty ? label : '$providerLabel · $label';
+}
+
+@visibleForTesting
+Map<String, dynamic> buildCronJobForSettingsSave({
+  Map<String, dynamic>? initialJob,
+  required String task,
+  required String schedule,
+  required bool enabled,
+  required String? conversationId,
+  required Map<String, dynamic>? model,
+}) {
+  final job = <String, dynamic>{
+    ...?initialJob,
+    'task': task,
+    'schedule': schedule,
+    'enabled': enabled,
+    'conversation_id': conversationId,
+  };
+  final cleanModel = _cronModelFromRaw(model);
+  if (cleanModel == null) {
+    job.remove('model');
+  } else {
+    job['model'] = cleanModel;
+  }
+  return job;
+}
+
 /// Add / edit form for a single cron job. Returns the job map via
 /// `Navigator.pop`, or null on cancel. Composes the canonical schedule
 /// string the PC's `osia.cron` parser expects.
@@ -2767,10 +2879,14 @@ class _CronEditScreen extends StatefulWidget {
   // Live connection — used to fetch the conversation list for the "linked
   // conversation" picker (WOR-24). Read-only here; no writes happen until save.
   final ws.WebSocketService wsService;
+  final List<ws.OsiaModel> models;
+  final String? currentModel;
   const _CronEditScreen({
     this.initialJob,
     required this.timeFormat,
     required this.wsService,
+    required this.models,
+    required this.currentModel,
   });
 
   @override
@@ -2787,6 +2903,11 @@ class _CronEditScreenState extends State<_CronEditScreen> {
   TimeOfDay? _onceTime;
   // Carried through unchanged (the row toggle owns the on/off state).
   bool _enabled = true;
+  late List<ws.OsiaModel> _models;
+  Map<String, dynamic>? _selectedModel;
+  ValueNotifier<ModelSelectorState>? _modelSelectorNotifier;
+  Timer? _modelLoadTimeout;
+  StreamSubscription<ws.OsiaMessage>? _modelSub;
 
   // ── Linked conversation (WOR-24) ──
   // Selected conversation id, or null for "new conversation". Pre-filled from
@@ -2799,10 +2920,12 @@ class _CronEditScreenState extends State<_CronEditScreen> {
   @override
   void initState() {
     super.initState();
+    _models = List<ws.OsiaModel>.from(widget.models);
     final job = widget.initialJob;
     if (job != null) {
       _taskCtrl.text = (job['task'] ?? '').toString();
       _enabled = job['enabled'] == true;
+      _selectedModel = _cronModelFromRaw(job['model']);
       // Pre-fill the linked conversation (null/empty → "new conversation").
       final cid = job['conversation_id'];
       if (cid is String && cid.isNotEmpty) _conversationId = cid;
@@ -2824,7 +2947,35 @@ class _CronEditScreenState extends State<_CronEditScreen> {
           _intervalCtrl.text = '${spec.interval}';
         }
       }
+    } else {
+      _selectedModel = cronModelMetadataForModelId(
+        widget.currentModel,
+        _models,
+      );
     }
+    _modelSub = widget.wsService.messageStream.listen((msg) {
+      if (msg is ws.ModelsListMessage && mounted) {
+        setState(() => _models = msg.models);
+        final notifier = _modelSelectorNotifier;
+        if (notifier != null) {
+          notifier.value = ModelSelectorState(
+            models: msg.models,
+            isLoading: false,
+          );
+        }
+        if (widget.initialJob == null &&
+            _selectedModel == null &&
+            (widget.currentModel ?? '').trim().isNotEmpty) {
+          setState(() {
+            _selectedModel = cronModelMetadataForModelId(
+              widget.currentModel,
+              msg.models,
+            );
+          });
+        }
+      }
+    });
+    if (_models.isEmpty) widget.wsService.sendGetModels();
     // Subscribe BEFORE requesting so the (broadcast, non-replaying) reply can't
     // slip through before we're listening, then pull the conversation list.
     _convSub = widget.wsService.conversationsListStream.listen((msg) {
@@ -2835,6 +2986,11 @@ class _CronEditScreenState extends State<_CronEditScreen> {
 
   @override
   void dispose() {
+    _modelLoadTimeout?.cancel();
+    final notifier = _modelSelectorNotifier;
+    _modelSelectorNotifier = null;
+    notifier?.dispose();
+    _modelSub?.cancel();
     _convSub?.cancel();
     _taskCtrl.dispose();
     _intervalCtrl.dispose();
@@ -2867,6 +3023,53 @@ class _CronEditScreenState extends State<_CronEditScreen> {
           _dailyTime = picked;
         }
       });
+    }
+  }
+
+  Future<void> _pickModel() async {
+    final strings = OsiaL10n.of(context);
+    final notifier = ValueNotifier<ModelSelectorState>(
+      ModelSelectorState(models: _models, isLoading: _models.isEmpty),
+    );
+    _modelSelectorNotifier = notifier;
+    _modelLoadTimeout?.cancel();
+    if (_models.isEmpty) {
+      widget.wsService.sendGetModels();
+      _modelLoadTimeout = Timer(const Duration(seconds: 5), () {
+        if (_modelSelectorNotifier != notifier) return;
+        if (notifier.value.models.isNotEmpty) return;
+        notifier.value = ModelSelectorState(
+          models: const [],
+          isLoading: false,
+          errorMessage: strings.modelsLoadFailed,
+        );
+      });
+    }
+    try {
+      final currentId = (_selectedModel?['id'] ?? '').toString();
+      final chosen = await showModelSelector(
+        context: context,
+        stateListenable: notifier,
+        currentModel: currentId.isEmpty ? null : currentId,
+        hierarchyActive: false,
+      );
+      if (chosen == null) return;
+      final meta = cronModelMetadataForModelId(chosen, _models);
+      if (meta == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(strings.cronModelInvalid)));
+        return;
+      }
+      if (mounted) setState(() => _selectedModel = meta);
+    } finally {
+      _modelLoadTimeout?.cancel();
+      _modelLoadTimeout = null;
+      if (_modelSelectorNotifier == notifier) {
+        _modelSelectorNotifier = null;
+        notifier.dispose();
+      }
     }
   }
 
@@ -2912,17 +3115,18 @@ class _CronEditScreenState extends State<_CronEditScreen> {
       ).showSnackBar(SnackBar(content: Text(strings.cronInvalid)));
       return;
     }
-    final job = <String, dynamic>{
+    final job = buildCronJobForSettingsSave(
       // Preserve any other server-side fields; conversation_id below overrides
       // the preserved value with the user's current selection (WOR-24).
-      ...?widget.initialJob,
-      'task': task,
-      'schedule': schedule,
-      'enabled': _enabled,
+      initialJob: widget.initialJob,
+      task: task,
+      schedule: schedule,
+      enabled: _enabled,
       // null when "Aucune (nouvelle conversation)" is chosen — matches the PC's
       // `{..., "conversation_id": null}` job shape.
-      'conversation_id': _conversationId,
-    };
+      conversationId: _conversationId,
+      model: _selectedModel,
+    );
     Navigator.of(context).pop(job);
   }
 
@@ -2968,6 +3172,8 @@ class _CronEditScreenState extends State<_CronEditScreen> {
                 ..._buildRepeat(palette, strings)
               else
                 ..._buildOnce(palette, strings),
+              const SizedBox(height: 24),
+              _buildModelField(palette, strings),
               const SizedBox(height: 24),
               _buildConversationField(palette, strings),
               const SizedBox(height: 28),
@@ -3118,6 +3324,27 @@ class _CronEditScreenState extends State<_CronEditScreen> {
     _RepeatUnit.daysAt => s.cronUnitDays,
     _RepeatUnit.daily => s.cronModeDaily,
   };
+
+  Widget _buildModelField(OsiaPalette palette, OsiaStrings strings) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _FieldLabel(strings.model, palette),
+        const SizedBox(height: 8),
+        _PickerButton(
+          icon: Icons.tune_rounded,
+          label: strings.model,
+          value: cronModelDisplayLabel(
+            _selectedModel,
+            _models,
+            strings.cronModelDefault,
+          ),
+          palette: palette,
+          onTap: _pickModel,
+        ),
+      ],
+    );
+  }
 
   /// "Linked conversation" picker (WOR-24): a loader until the PC's list lands,
   /// then a dropdown of "None (new conversation)" + every conversation by title.

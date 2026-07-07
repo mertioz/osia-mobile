@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:osia_mobile/screens/providers_screen.dart';
 import 'package:osia_mobile/services/websocket_service.dart';
 
 void main() {
@@ -202,6 +203,108 @@ void main() {
       (config.cronJobs.single['model'] as Map<String, dynamic>)['id'],
       'claude-opus-4-8',
     );
+  });
+
+  test(
+    'scheduled task settings payload preserves model and server metadata',
+    () {
+      final initial = <String, dynamic>{
+        'id': 'cron_abc',
+        'title': 'Daily check',
+        'task': 'Old task',
+        'schedule': 'at 15:06',
+        'enabled': true,
+        'conversation_id': 'conv-a',
+        'next_run_at': '2026-07-07T15:06',
+        'model': {
+          'provider': 'anthropic',
+          'id': 'claude-opus-4-8',
+          'label': 'Claude Opus 4.8',
+        },
+      };
+
+      final saved = buildCronJobForSettingsSave(
+        initialJob: initial,
+        task: 'Updated task',
+        schedule: 'every 2 hours',
+        enabled: false,
+        conversationId: 'conv-a',
+        model: initial['model'] as Map<String, dynamic>,
+      );
+
+      expect(saved['task'], 'Updated task');
+      expect(saved['schedule'], 'every 2 hours');
+      expect(saved['enabled'], isFalse);
+      expect(saved['conversation_id'], 'conv-a');
+      expect(saved['next_run_at'], '2026-07-07T15:06');
+      expect((saved['model'] as Map<String, dynamic>)['id'], 'claude-opus-4-8');
+    },
+  );
+
+  test('scheduled task settings payload updates model metadata', () {
+    final nextModel = cronModelMetadataForModelId('gpt-5.5', const [
+      OsiaModel(id: 'gpt-5.5', label: 'GPT-5.5', provider: 'openai'),
+    ]);
+
+    final saved = buildCronJobForSettingsSave(
+      initialJob: {
+        'id': 'cron_abc',
+        'task': 'Do it',
+        'schedule': 'at 15:06',
+        'conversation_id': 'conv-a',
+        'next_run_at': '2026-07-07T15:06',
+        'model': {
+          'provider': 'anthropic',
+          'id': 'claude-opus-4-8',
+          'label': 'Claude Opus 4.8',
+        },
+      },
+      task: 'Do it',
+      schedule: 'at 15:06',
+      enabled: true,
+      conversationId: 'conv-a',
+      model: nextModel,
+    );
+
+    expect((saved['model'] as Map<String, dynamic>)['provider'], 'openai');
+    expect((saved['model'] as Map<String, dynamic>)['id'], 'gpt-5.5');
+    expect(saved['conversation_id'], 'conv-a');
+    expect(saved['next_run_at'], '2026-07-07T15:06');
+  });
+
+  test('scheduled task settings payload keeps legacy no-model task valid', () {
+    final saved = buildCronJobForSettingsSave(
+      initialJob: {
+        'id': 'cron_legacy',
+        'task': 'Legacy',
+        'schedule': 'every 1 days',
+        'next_run_at': '2026-07-08T12:00',
+      },
+      task: 'Legacy',
+      schedule: 'every 1 days',
+      enabled: true,
+      conversationId: null,
+      model: null,
+    );
+
+    expect(saved.containsKey('model'), isFalse);
+    expect(saved['conversation_id'], isNull);
+    expect(saved['next_run_at'], '2026-07-08T12:00');
+  });
+
+  test('scheduled task model metadata defaults from active model id', () {
+    final meta = cronModelMetadataForModelId('claude-opus-4-8', const [
+      OsiaModel(
+        id: 'claude-opus-4-8',
+        label: 'Claude Opus 4.8',
+        provider: 'anthropic',
+      ),
+    ]);
+
+    expect(meta, isNotNull);
+    expect(meta!['provider'], 'anthropic');
+    expect(meta['id'], 'claude-opus-4-8');
+    expect(meta['label'], 'Claude Opus 4.8');
   });
 
   test('relay batch processes response content before final frame', () async {
