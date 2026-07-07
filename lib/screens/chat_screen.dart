@@ -24,6 +24,8 @@ import '../widgets/thinking_indicator.dart';
 import 'autonomous_screen.dart';
 import 'settings_screen.dart';
 
+enum _TurnPhase { idle, pendingNotAccepted, acceptedWorking, streaming }
+
 /// Main chat screen: conversation history, floating glass input,
 /// thinking indicator, model selector and connection badge.
 class ChatScreen extends StatefulWidget {
@@ -205,11 +207,13 @@ class _ChatScreenState extends State<ChatScreen> {
   // [_noResponse] flips and an inline "no response" + Réessayer tile replaces
   // the thinking dots.
   static const Duration _firstTokenTimeout = Duration(seconds: 12);
-  static const Duration _acceptedTurnSilenceTimeout = Duration(seconds: 90);
+  static const Duration _acceptedTurnSilenceTimeout = Duration(minutes: 5);
   Timer? _firstTokenTimer;
   Timer? _acceptedTurnTimer;
   String? _watchdogClientRequestId;
   String? _watchdogTurnId;
+  _TurnPhase _turnPhase = _TurnPhase.idle;
+  DateTime? _lastTurnActivityAt;
   // True once the watchdog fired with no first token — drives the retry tile.
   // Mutually exclusive with [_thinking] (arming the error clears thinking).
   bool _noResponse = false;
@@ -679,10 +683,33 @@ class _ChatScreenState extends State<ChatScreen> {
         // The content we were waiting on has arrived — stand down the retry.
         _convLoadRetry?.cancel();
         _pendingConvLoadId = null;
-        // The view is being reset to this conversation's persisted state (also
-        // reached via the reconnect re-request), so a first-token watchdog for
-        // a possibly-lost in-flight turn must not linger.
-        _cancelFirstTokenTimer();
+        // Polish: capture whether this conversation's turn is still in flight
+        // BEFORE the apply path below may clear its pending flag, so a hydrated
+        // pending conversation with no reply yet can keep the accepted-working
+        // state instead of briefly showing a false Retry tile.
+        final bool wasPending =
+            effectiveConvId != null &&
+            effectiveConvId.isNotEmpty &&
+            _wsService.isPending(effectiveConvId);
+        final historyCompletesTurn = historyHasReply || !wasPending;
+        if (historyCompletesTurn) {
+          // The view is being reset to a settled persisted state (also reached
+          // via the reconnect re-request), so a first-token watchdog for a
+          // possibly-lost in-flight turn must not linger.
+          _cancelFirstTokenTimer();
+        } else {
+          final pending = _pendingTurn;
+          final acceptedOrWorking =
+              pending != null &&
+              (_turnPhase == _TurnPhase.acceptedWorking ||
+                  _wsService.isRequestAccepted(pending.clientRequestId));
+          if (pending != null && acceptedOrWorking) {
+            _noteTurnActivity(
+              clientRequestId: pending.clientRequestId,
+              turnId: _watchdogTurnId ?? '',
+            );
+          }
+        }
         // Feature 2: this view is being rebuilt from persisted history — drop any
         // in-flight typewriter reveal so it can't keep writing into a stale slot.
         _stopTypewriter();
@@ -693,14 +720,6 @@ class _ChatScreenState extends State<ChatScreen> {
             'renders persisted history',
           );
         }
-        // Polish: capture whether this conversation's turn is still in flight
-        // BEFORE the apply path below clears its pending flag, so a hydrated
-        // pending conversation with no reply yet can re-show the thinking
-        // indicator (applied at the end of this setState).
-        final bool wasPending =
-            effectiveConvId != null &&
-            effectiveConvId.isNotEmpty &&
-            _wsService.isPending(effectiveConvId);
         setState(() {
           _entries
             ..clear()
@@ -772,7 +791,7 @@ class _ChatScreenState extends State<ChatScreen> {
           // also makes the in-flight re-attach reconcile below a no-op: with no
           // buffer, [liveText] is empty and [streaming] is false, so we render
           // the recovered history cleanly instead of a stale partial bubble.
-          if (convId != null) {
+          if (convId != null && historyCompletesTurn) {
             _wsService.clearConvBuffer(convId);
             // WOR-75: clearConvBuffer no longer clears the pending flag, so do it
             // explicitly here — this recovered history IS the finished reply, so
@@ -984,11 +1003,8 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // Any frame for the active turn is a sign of life — stand the no-response
-    // watchdog down (moved here from the old streaming message cases).
-    _cancelFirstTokenTimer();
-
     if (event.done || event.error) {
+      _cancelFirstTokenTimer();
       // Terminal frame for the active conversation — finalize the streaming
       // bubble (the streaming-finalize the old StatusMessage done/error did).
       final hadBubble = _streamingIndex != null;
@@ -1033,6 +1049,14 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       return;
     }
+
+    // Any content frame for the active turn is a sign of life. A chunk or full
+    // response means the turn has moved past accepted-working into streaming,
+    // so the accepted-silence watchdog is no longer the right failure mode.
+    _noteTurnStreaming(
+      clientRequestId: event.clientRequestId,
+      turnId: event.turnId,
+    );
 
     // A token landed. The conversation's accumulated buffer text is the single
     // source of truth (so the live bubble always matches a hydration on switch).
@@ -1809,6 +1833,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final reqId = _pendingTurn?.clientRequestId ?? '';
     _watchdogClientRequestId = reqId;
     _watchdogTurnId = null;
+    _turnPhase = _TurnPhase.pendingNotAccepted;
+    _lastTurnActivityAt = null;
     _firstTokenTimer = Timer(
       _firstTokenTimeout,
       () => _onFirstTokenTimeout(reqId),
@@ -1845,6 +1871,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _firstTokenTimer = null;
     _watchdogClientRequestId = clientRequestId;
     if (turnId.isNotEmpty) _watchdogTurnId = turnId;
+    _turnPhase = _TurnPhase.acceptedWorking;
+    _lastTurnActivityAt = DateTime.now();
     _acceptedTurnTimer?.cancel();
     final expectedReqId = clientRequestId;
     final expectedTurnId = _watchdogTurnId ?? '';
@@ -1855,6 +1883,30 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted && _noResponse) {
       setState(() {
         _thinking = true;
+        _noResponse = false;
+      });
+    }
+  }
+
+  void _noteTurnStreaming({
+    required String clientRequestId,
+    required String turnId,
+  }) {
+    if (clientRequestId.isNotEmpty &&
+        !_isCurrentWatchdogTurn(clientRequestId, turnId)) {
+      return;
+    }
+    _firstTokenTimer?.cancel();
+    _firstTokenTimer = null;
+    _acceptedTurnTimer?.cancel();
+    _acceptedTurnTimer = null;
+    if (clientRequestId.isNotEmpty) _watchdogClientRequestId = clientRequestId;
+    if (turnId.isNotEmpty) _watchdogTurnId = turnId;
+    _turnPhase = _TurnPhase.streaming;
+    _lastTurnActivityAt = DateTime.now();
+    if (mounted && _noResponse) {
+      setState(() {
+        _thinking = false;
         _noResponse = false;
       });
     }
@@ -1873,6 +1925,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _acceptedTurnTimer = null;
     _watchdogClientRequestId = null;
     _watchdogTurnId = null;
+    _turnPhase = _TurnPhase.idle;
+    _lastTurnActivityAt = null;
   }
 
   /// WOR-75/WOR-53/WOR-62 recovery poll. Start (or restart) the periodic
@@ -1933,6 +1987,11 @@ class _ChatScreenState extends State<ChatScreen> {
     _firstTokenTimer = null;
     if (!mounted) return;
     if (!_isCurrentWatchdogTurn(clientRequestId, '')) return;
+    if (_wsService.isRequestAccepted(clientRequestId)) {
+      _noteTurnActivity(clientRequestId: clientRequestId, turnId: '');
+      return;
+    }
+    if (_turnPhase != _TurnPhase.pendingNotAccepted) return;
     // Resolved already: turn done, streaming started, or the user moved off it.
     if (!_awaitingResponse) return;
     if (_streamingIndex != null) return;
@@ -1952,6 +2011,18 @@ class _ChatScreenState extends State<ChatScreen> {
     _acceptedTurnTimer = null;
     if (!mounted) return;
     if (!_isCurrentWatchdogTurn(clientRequestId, turnId)) return;
+    if (_turnPhase != _TurnPhase.acceptedWorking) return;
+    final lastActivity = _lastTurnActivityAt;
+    if (lastActivity != null) {
+      final elapsed = DateTime.now().difference(lastActivity);
+      if (elapsed < _acceptedTurnSilenceTimeout) {
+        _acceptedTurnTimer = Timer(
+          _acceptedTurnSilenceTimeout - elapsed,
+          () => _onAcceptedTurnSilenceTimeout(clientRequestId, turnId),
+        );
+        return;
+      }
+    }
     if (!_awaitingResponse) return;
     if (_streamingIndex != null) return;
     if (_wsService.state != ws.ConnectionState.connected) {

@@ -395,6 +395,79 @@ void main() {
   );
 
   test(
+    'progress and delayed full response stay correlated until terminal done',
+    () async {
+      final service = WebSocketService(
+        ip: '127.0.0.1',
+        token: 'token',
+        autoReconnect: false,
+      );
+      addTearDown(service.dispose);
+
+      final messages = <OsiaMessage>[];
+      final streamEvents = <ConvStreamEvent>[];
+      final msgSub = service.messageStream.listen(messages.add);
+      final convSub = service.convStreamStream.listen(streamEvents.add);
+      addTearDown(msgSub.cancel);
+      addTearDown(convSub.cancel);
+
+      service.handleIncomingFrameForTest({
+        'type': 'turn_accepted',
+        'conversation_id': 'conv-long',
+        'client_request_id': 'req-long',
+        'turn_id': 'turn-long',
+        'persisted': true,
+      });
+      service.handleIncomingFrameForTest({
+        'type': 'turn_status',
+        'conversation_id': 'conv-long',
+        'client_request_id': 'req-long',
+        'turn_id': 'turn-long',
+        'status': 'working',
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(service.isConversationBusy('conv-long'), isTrue);
+      expect(service.isPending('conv-long'), isTrue);
+      expect(messages.whereType<TurnAcceptedMessage>().map((m) => m.status), [
+        'accepted',
+        'working',
+      ]);
+
+      service.handleIncomingFrameForTest({
+        'type': 'response',
+        'conversation_id': 'conv-long',
+        'client_request_id': 'req-long',
+        'turn_id': 'turn-long',
+        'content': 'final report',
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(service.bufferedText('conv-long'), 'final report');
+      expect(service.isConversationBusy('conv-long'), isTrue);
+      expect(service.isPending('conv-long'), isTrue);
+      expect(streamEvents.last.clientRequestId, 'req-long');
+      expect(streamEvents.last.turnId, 'turn-long');
+      expect(streamEvents.last.delta, 'final report');
+
+      service.handleIncomingFrameForTest({
+        'type': 'status',
+        'conversation_id': 'conv-long',
+        'client_request_id': 'req-long',
+        'turn_id': 'turn-long',
+        'content': 'done',
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(service.isConversationBusy('conv-long'), isFalse);
+      expect(service.isPending('conv-long'), isFalse);
+      expect(streamEvents.last.done, isTrue);
+      expect(streamEvents.last.clientRequestId, 'req-long');
+      expect(streamEvents.last.turnId, 'turn-long');
+    },
+  );
+
+  test(
     'stale request frames do not finish or corrupt current request',
     () async {
       final service = WebSocketService(
