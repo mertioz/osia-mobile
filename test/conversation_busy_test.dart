@@ -507,4 +507,58 @@ void main() {
     expect(service.isPending('conv-safe'), isTrue);
     expect(events.where((e) => e.done || e.error), isEmpty);
   });
+
+  test('late progress frames do not revive a finished request', () async {
+    final service = WebSocketService(
+      ip: '127.0.0.1',
+      token: 'token',
+      autoReconnect: false,
+    );
+    addTearDown(service.dispose);
+
+    final messages = <OsiaMessage>[];
+    final sub = service.messageStream.listen(messages.add);
+    addTearDown(sub.cancel);
+
+    service.handleIncomingFrameForTest({
+      'type': 'turn_accepted',
+      'conversation_id': 'conv-done-safe',
+      'client_request_id': 'req-current',
+      'turn_id': 'turn-current',
+    });
+    service.handleIncomingFrameForTest({
+      'type': 'status',
+      'conversation_id': 'conv-done-safe',
+      'client_request_id': 'req-current',
+      'turn_id': 'turn-current',
+      'content': 'done',
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(service.isConversationBusy('conv-done-safe'), isFalse);
+    expect(service.isPending('conv-done-safe'), isFalse);
+
+    service.handleIncomingFrameForTest({
+      'type': 'turn_status',
+      'conversation_id': 'conv-done-safe',
+      'client_request_id': 'req-old',
+      'turn_id': 'turn-old',
+      'status': 'working',
+    });
+    service.handleIncomingFrameForTest({
+      'type': 'conversation_busy_changed',
+      'conversation_id': 'conv-done-safe',
+      'client_request_id': 'req-old',
+      'turn_id': 'turn-old',
+      'busy': true,
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(service.isConversationBusy('conv-done-safe'), isFalse);
+    expect(service.isPending('conv-done-safe'), isFalse);
+    expect(
+      messages.whereType<TurnAcceptedMessage>().map((m) => m.clientRequestId),
+      ['req-current'],
+    );
+  });
 }

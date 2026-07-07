@@ -205,7 +205,11 @@ class _ChatScreenState extends State<ChatScreen> {
   // [_noResponse] flips and an inline "no response" + Réessayer tile replaces
   // the thinking dots.
   static const Duration _firstTokenTimeout = Duration(seconds: 12);
+  static const Duration _acceptedTurnSilenceTimeout = Duration(seconds: 90);
   Timer? _firstTokenTimer;
+  Timer? _acceptedTurnTimer;
+  String? _watchdogClientRequestId;
+  String? _watchdogTurnId;
   // True once the watchdog fired with no first token — drives the retry tile.
   // Mutually exclusive with [_thinking] (arming the error clears thinking).
   bool _noResponse = false;
@@ -495,11 +499,13 @@ class _ChatScreenState extends State<ChatScreen> {
         :final content,
         :final conversationId,
         :final clientRequestId,
+        :final turnId,
       ):
+        final terminal = content == 'done' || content == 'error';
         if (!_isFrameForCurrentTurn(
           conversationId: conversationId,
           clientRequestId: clientRequestId,
-          terminal: content == 'done' || content == 'error',
+          terminal: terminal,
         )) {
           break;
         }
@@ -508,7 +514,11 @@ class _ChatScreenState extends State<ChatScreen> {
         // this turn, so it stands the no-response watchdog down. On a long
         // multi-step task these arrive well before the final reply's first
         // token; without this the 12s timer would trip a false error mid-task.
-        _cancelFirstTokenTimer();
+        if (terminal) {
+          _cancelFirstTokenTimer();
+        } else {
+          _noteTurnActivity(clientRequestId: clientRequestId, turnId: turnId);
+        }
         // WOR-75: a `status` frame is conversation-agnostic (no conversation_id),
         // so it deliberately does NOT touch the recovery poll. That poll is gated
         // purely on the DISPLAYED conversation's own pending + empty-buffer state
@@ -524,6 +534,7 @@ class _ChatScreenState extends State<ChatScreen> {
           setState(() {
             _awaitingResponse = false;
             _thinking = false;
+            _noResponse = false;
           });
         } else if (content == 'thinking') {
           // Server confirms it's working — clear any stale no-response tile.
@@ -536,14 +547,27 @@ class _ChatScreenState extends State<ChatScreen> {
       case ws.TurnAcceptedMessage(
         :final conversationId,
         :final clientRequestId,
+        :final turnId,
+        :final status,
       ):
+        final terminal = status == 'done' || status == 'error';
         if (!_isFrameForCurrentTurn(
           conversationId: conversationId,
           clientRequestId: clientRequestId,
+          terminal: terminal,
         )) {
           break;
         }
-        _cancelFirstTokenTimer();
+        if (terminal) {
+          _cancelFirstTokenTimer();
+          setState(() {
+            _awaitingResponse = false;
+            _thinking = false;
+            _noResponse = false;
+          });
+          break;
+        }
+        _noteTurnActivity(clientRequestId: clientRequestId, turnId: turnId);
         setState(() {
           if (conversationId.isNotEmpty &&
               (_activeConversationId == null ||
@@ -872,6 +896,13 @@ class _ChatScreenState extends State<ChatScreen> {
     if (rejected) {
       _cancelFirstTokenTimer();
       _pendingTurn = null;
+    } else if (event.busy) {
+      _noteTurnActivity(
+        clientRequestId: event.clientRequestId,
+        turnId: event.turnId,
+      );
+    } else {
+      _cancelFirstTokenTimer();
     }
     setState(() {
       if (rejected && _entries.isNotEmpty && _entries.last.isUser) {
@@ -968,6 +999,7 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _awaitingResponse = false;
         _thinking = false;
+        _noResponse = false;
         final idx = _streamingIndex;
         if (idx != null) {
           final full = _typeTarget.isNotEmpty
@@ -1773,7 +1805,59 @@ class _ChatScreenState extends State<ChatScreen> {
   /// the first response_chunk / full response — see [_onMessage]).
   void _armFirstTokenTimer() {
     _firstTokenTimer?.cancel();
-    _firstTokenTimer = Timer(_firstTokenTimeout, _onFirstTokenTimeout);
+    _acceptedTurnTimer?.cancel();
+    final reqId = _pendingTurn?.clientRequestId ?? '';
+    _watchdogClientRequestId = reqId;
+    _watchdogTurnId = null;
+    _firstTokenTimer = Timer(
+      _firstTokenTimeout,
+      () => _onFirstTokenTimeout(reqId),
+    );
+  }
+
+  bool _isCurrentWatchdogTurn(String clientRequestId, String turnId) {
+    final pending = _pendingTurn;
+    if (pending == null) return false;
+    if (clientRequestId.isEmpty) return false;
+    if (clientRequestId != pending.clientRequestId) return false;
+    final currentReqId = _watchdogClientRequestId;
+    if (currentReqId != null &&
+        currentReqId.isNotEmpty &&
+        clientRequestId != currentReqId) {
+      return false;
+    }
+    final currentTurnId = _watchdogTurnId;
+    if (currentTurnId != null &&
+        currentTurnId.isNotEmpty &&
+        turnId.isNotEmpty &&
+        turnId != currentTurnId) {
+      return false;
+    }
+    return true;
+  }
+
+  void _noteTurnActivity({
+    required String clientRequestId,
+    required String turnId,
+  }) {
+    if (!_isCurrentWatchdogTurn(clientRequestId, turnId)) return;
+    _firstTokenTimer?.cancel();
+    _firstTokenTimer = null;
+    _watchdogClientRequestId = clientRequestId;
+    if (turnId.isNotEmpty) _watchdogTurnId = turnId;
+    _acceptedTurnTimer?.cancel();
+    final expectedReqId = clientRequestId;
+    final expectedTurnId = _watchdogTurnId ?? '';
+    _acceptedTurnTimer = Timer(
+      _acceptedTurnSilenceTimeout,
+      () => _onAcceptedTurnSilenceTimeout(expectedReqId, expectedTurnId),
+    );
+    if (mounted && _noResponse) {
+      setState(() {
+        _thinking = true;
+        _noResponse = false;
+      });
+    }
   }
 
   /// Cancel the no-response watchdog. Idempotent — safe to call when no timer
@@ -1785,6 +1869,10 @@ class _ChatScreenState extends State<ChatScreen> {
   void _cancelFirstTokenTimer() {
     _firstTokenTimer?.cancel();
     _firstTokenTimer = null;
+    _acceptedTurnTimer?.cancel();
+    _acceptedTurnTimer = null;
+    _watchdogClientRequestId = null;
+    _watchdogTurnId = null;
   }
 
   /// WOR-75/WOR-53/WOR-62 recovery poll. Start (or restart) the periodic
@@ -1841,13 +1929,31 @@ class _ChatScreenState extends State<ChatScreen> {
   /// waiting over a healthy socket. A dropped connection is left to the
   /// connection banner (don't show a misleading "no response" error when it's
   /// actually a disconnect).
-  void _onFirstTokenTimeout() {
+  void _onFirstTokenTimeout(String clientRequestId) {
     _firstTokenTimer = null;
     if (!mounted) return;
+    if (!_isCurrentWatchdogTurn(clientRequestId, '')) return;
     // Resolved already: turn done, streaming started, or the user moved off it.
     if (!_awaitingResponse) return;
     if (_streamingIndex != null) return;
     // Connection-state handling takes precedence over the no-response error.
+    if (_wsService.state != ws.ConnectionState.connected) {
+      setState(() => _thinking = false);
+      return;
+    }
+    setState(() {
+      _thinking = false;
+      _noResponse = true;
+    });
+    _scrollToBottomAnimated();
+  }
+
+  void _onAcceptedTurnSilenceTimeout(String clientRequestId, String turnId) {
+    _acceptedTurnTimer = null;
+    if (!mounted) return;
+    if (!_isCurrentWatchdogTurn(clientRequestId, turnId)) return;
+    if (!_awaitingResponse) return;
+    if (_streamingIndex != null) return;
     if (_wsService.state != ws.ConnectionState.connected) {
       setState(() => _thinking = false);
       return;
@@ -2337,6 +2443,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _modelLoadTimeout?.cancel();
     _convLoadRetry?.cancel();
     _firstTokenTimer?.cancel();
+    _acceptedTurnTimer?.cancel();
     _recoveryPoll?.cancel();
     _typewriterTimer?.cancel(); // Feature 2: no leaked reveal timer.
     _modelSelectorNotifier?.dispose();

@@ -1491,6 +1491,14 @@ class WebSocketService {
     }
     final busy = json['busy'] == true;
     if (busy) {
+      if (reqId.isNotEmpty &&
+          _shouldIgnoreConversationFrame(
+            id,
+            clientRequestId: reqId,
+            frameType: 'conversation_busy_changed',
+          )) {
+        return;
+      }
       _setConversationBusy(id, true, clientRequestId: reqId, turnId: turnId);
       return;
     }
@@ -1521,6 +1529,9 @@ class WebSocketService {
     final reqId = json['client_request_id']?.toString() ?? '';
     final turnId = json['turn_id']?.toString() ?? '';
     final status = json['status']?.toString() ?? 'accepted';
+    final frameType = (json['type'] ?? '').toString() == 'turn_status'
+        ? 'turn_status'
+        : 'turn_accepted';
     if (id.isNotEmpty) {
       if (status == 'done' || status == 'error') {
         if (_shouldIgnoreConversationFrame(
@@ -1542,7 +1553,7 @@ class WebSocketService {
         if (_shouldIgnoreConversationFrame(
           id,
           clientRequestId: reqId,
-          frameType: 'turn_accepted',
+          frameType: frameType,
         )) {
           return;
         }
