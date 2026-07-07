@@ -491,7 +491,18 @@ class _ChatScreenState extends State<ChatScreen> {
         );
         if (!_autoTts) break;
         _audioService.playMp3(data);
-      case ws.StatusMessage(:final content):
+      case ws.StatusMessage(
+        :final content,
+        :final conversationId,
+        :final clientRequestId,
+      ):
+        if (!_isFrameForCurrentTurn(
+          conversationId: conversationId,
+          clientRequestId: clientRequestId,
+          terminal: content == 'done' || content == 'error',
+        )) {
+          break;
+        }
         // ANY status frame — "thinking", a tool-execution/status update, or the
         // terminal "done"/"error" — proves the server is alive and working on
         // this turn, so it stands the no-response watchdog down. On a long
@@ -522,7 +533,16 @@ class _ChatScreenState extends State<ChatScreen> {
           });
           _scrollToBottomAnimated();
         }
-      case ws.TurnAcceptedMessage(:final conversationId):
+      case ws.TurnAcceptedMessage(
+        :final conversationId,
+        :final clientRequestId,
+      ):
+        if (!_isFrameForCurrentTurn(
+          conversationId: conversationId,
+          clientRequestId: clientRequestId,
+        )) {
+          break;
+        }
         _cancelFirstTokenTimer();
         setState(() {
           if (conversationId.isNotEmpty &&
@@ -841,6 +861,13 @@ class _ChatScreenState extends State<ChatScreen> {
   void _onConversationBusy(ws.ConversationBusyEvent event) {
     if (!mounted) return;
     if (event.conversationId != _activeConversationId) return;
+    if (!_isFrameForCurrentTurn(
+      conversationId: event.conversationId,
+      clientRequestId: event.clientRequestId,
+      terminal: !event.busy,
+    )) {
+      return;
+    }
     final rejected = event.busy && event.message.isNotEmpty;
     if (rejected) {
       _cancelFirstTokenTimer();
@@ -866,6 +893,34 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  bool _isFrameForCurrentTurn({
+    required String conversationId,
+    required String clientRequestId,
+    bool terminal = false,
+  }) {
+    final active = _activeConversationId ?? '';
+    if (conversationId.isNotEmpty &&
+        active.isNotEmpty &&
+        conversationId != active) {
+      return false;
+    }
+    if (terminal && conversationId.isEmpty && clientRequestId.isEmpty) {
+      debugPrint('[OSIA Chat] ignored uncorrelated terminal frame');
+      return false;
+    }
+    final pending = _pendingTurn;
+    if (pending != null &&
+        clientRequestId.isNotEmpty &&
+        clientRequestId != pending.clientRequestId) {
+      debugPrint(
+        '[OSIA Chat] ignored stale frame client_request_id=$clientRequestId '
+        'pending_client_request_id=${pending.clientRequestId}',
+      );
+      return false;
+    }
+    return true;
+  }
+
   void _onConvStream(ws.ConvStreamEvent event) {
     if (!mounted) return;
     if (ws.kOsiaDebugPlaceholder && (event.done || event.error)) {
@@ -877,13 +932,16 @@ class _ChatScreenState extends State<ChatScreen> {
         'forActive=${event.conversationId == _activeConversationId}',
       );
     }
-    // WOR-75: an UNTAGGED terminal (done/error with no conversation_id) applies
-    // to the conversation on screen — the only turn we could be watching. Clear
-    // that conversation's pending so an untagged terminal can't leave it stuck
-    // true (and a recovery poll running on its empty buffer), then fall through
-    // to finalize the active turn exactly as a tagged terminal for it would.
-    // (Untagged events are only ever terminal, so the token-rendering path below
-    // is never reached for one.)
+    if (!_isFrameForCurrentTurn(
+      conversationId: event.conversationId,
+      clientRequestId: event.clientRequestId,
+      terminal: event.done || event.error,
+    )) {
+      return;
+    }
+    // Legacy untagged terminals are accepted only if they survived the
+    // correlation guard above. Current PC turn frames are tagged with
+    // conversation_id + client_request_id, so normal chat never needs to guess.
     final bool untaggedTerminal = event.untagged && (event.done || event.error);
     if (untaggedTerminal) {
       final active = _activeConversationId;

@@ -63,7 +63,15 @@ class AudioMessage extends OsiaMessage {
 class StatusMessage extends OsiaMessage {
   /// One of: "thinking", "done", "error".
   final String content;
-  const StatusMessage(this.content);
+  final String conversationId;
+  final String clientRequestId;
+  final String turnId;
+  const StatusMessage(
+    this.content, {
+    this.conversationId = '',
+    this.clientRequestId = '',
+    this.turnId = '',
+  });
 }
 
 class TurnAcceptedMessage extends OsiaMessage {
@@ -924,18 +932,21 @@ class AutonomousProgressMessage {
 /// [done] / [error] mark the turn's end (status `done` / `error`).
 class ConvStreamEvent {
   final String conversationId;
+  final String clientRequestId;
+  final String turnId;
   final String? delta;
   final bool done;
   final bool error;
 
-  /// WOR-75: a terminal (done/error) frame that arrived WITHOUT a
-  /// conversation_id. The service can't route it to a specific buffer/pending
-  /// flag, so it broadcasts the terminal untagged and the chat screen applies it
-  /// to whatever conversation is currently active (the only turn it could be
-  /// watching). [conversationId] is empty for an untagged event.
+  /// Legacy marker for a terminal (done/error) frame that arrived WITHOUT a
+  /// conversation_id. Current correlation rules ignore those ambiguous frames
+  /// before they can clear pending state; [conversationId] is empty if one ever
+  /// reaches listeners.
   final bool untagged;
   const ConvStreamEvent(
     this.conversationId, {
+    this.clientRequestId = '',
+    this.turnId = '',
     this.delta,
     this.done = false,
     this.error = false,
@@ -949,11 +960,15 @@ class ConversationBusyEvent {
   final String conversationId;
   final bool busy;
   final String message;
+  final String clientRequestId;
+  final String turnId;
 
   const ConversationBusyEvent({
     required this.conversationId,
     required this.busy,
     this.message = '',
+    this.clientRequestId = '',
+    this.turnId = '',
   });
 }
 
@@ -1364,7 +1379,82 @@ class WebSocketService {
     if (req != null) _activeConvByRequest.remove(req);
   }
 
-  void _setConversationBusy(String id, bool busy, {String message = ''}) {
+  bool _hasLiveConversationTurn(String id) =>
+      _pendingConvs.contains(id) ||
+      (_streamBuffers[id]?.streaming ?? false) ||
+      _busyConvs.contains(id);
+
+  bool _shouldIgnoreConversationFrame(
+    String? conversationId, {
+    required String clientRequestId,
+    required String frameType,
+    bool terminal = false,
+  }) {
+    final id = conversationId ?? '';
+    if (id.isEmpty) {
+      if (terminal) {
+        debugPrint(
+          '[OSIA WS] ignored uncorrelated terminal frame type=$frameType '
+          'client_request_id=$clientRequestId',
+        );
+        return true;
+      }
+      return false;
+    }
+
+    final activeReq = _activeRequestByConv[id];
+    if (activeReq != null && clientRequestId.isNotEmpty) {
+      if (activeReq != clientRequestId) {
+        debugPrint(
+          '[OSIA WS] ignored stale frame type=$frameType '
+          'conversation_id=$id client_request_id=$clientRequestId '
+          'active_client_request_id=$activeReq',
+        );
+        return true;
+      }
+      return false;
+    }
+
+    if (terminal && activeReq != null && clientRequestId.isEmpty) {
+      debugPrint(
+        '[OSIA WS] ignored ambiguous terminal frame type=$frameType '
+        'conversation_id=$id active_client_request_id=$activeReq',
+      );
+      return true;
+    }
+
+    if (terminal &&
+        clientRequestId.isNotEmpty &&
+        !_hasLiveConversationTurn(id)) {
+      debugPrint(
+        '[OSIA WS] ignored late terminal frame type=$frameType '
+        'conversation_id=$id client_request_id=$clientRequestId',
+      );
+      return true;
+    }
+
+    if (!terminal &&
+        frameType != 'turn_accepted' &&
+        clientRequestId.isNotEmpty &&
+        activeReq == null &&
+        !_hasLiveConversationTurn(id)) {
+      debugPrint(
+        '[OSIA WS] ignored late content frame type=$frameType '
+        'conversation_id=$id client_request_id=$clientRequestId',
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  void _setConversationBusy(
+    String id,
+    bool busy, {
+    String message = '',
+    String clientRequestId = '',
+    String turnId = '',
+  }) {
     if (id.isEmpty) return;
     if (busy) {
       _busyConvs.add(id);
@@ -1373,29 +1463,56 @@ class WebSocketService {
     }
     if (!_conversationBusyCtrl.isClosed) {
       _conversationBusyCtrl.add(
-        ConversationBusyEvent(conversationId: id, busy: busy, message: message),
+        ConversationBusyEvent(
+          conversationId: id,
+          busy: busy,
+          message: message,
+          clientRequestId: clientRequestId,
+          turnId: turnId,
+        ),
       );
     }
   }
 
   void _handleConversationBusyFrame(Map<String, dynamic> json) {
     final id = json['conversation_id']?.toString() ?? '';
+    final reqId = json['client_request_id']?.toString() ?? '';
+    final turnId = json['turn_id']?.toString() ?? '';
     if ((json['type'] ?? '').toString() == 'conversation_busy') {
       final message = json['message']?.toString() ?? '';
-      _setConversationBusy(id, true, message: message);
+      _setConversationBusy(
+        id,
+        true,
+        message: message,
+        clientRequestId: reqId,
+        turnId: turnId,
+      );
       return;
     }
     final busy = json['busy'] == true;
     if (busy) {
-      _setConversationBusy(id, true);
+      _setConversationBusy(id, true, clientRequestId: reqId, turnId: turnId);
+      return;
+    }
+    if (_shouldIgnoreConversationFrame(
+      id,
+      clientRequestId: reqId,
+      frameType: 'conversation_busy_changed',
+      terminal: true,
+    )) {
       return;
     }
     final hadTurnState =
         _pendingConvs.contains(id) || (_streamBuffers[id]?.streaming ?? false);
     if (hadTurnState) {
-      _finishConvStream(id, error: false);
+      _finishConvStream(
+        id,
+        error: false,
+        clientRequestId: reqId,
+        turnId: turnId,
+      );
     } else {
-      _setConversationBusy(id, false);
+      _setConversationBusy(id, false, clientRequestId: reqId, turnId: turnId);
     }
   }
 
@@ -1404,15 +1521,38 @@ class WebSocketService {
     final reqId = json['client_request_id']?.toString() ?? '';
     final turnId = json['turn_id']?.toString() ?? '';
     final status = json['status']?.toString() ?? 'accepted';
-    if (reqId.isNotEmpty) _acceptedRequests.add(reqId);
     if (id.isNotEmpty) {
-      _rememberRequest(id, reqId);
       if (status == 'done' || status == 'error') {
-        _finishConvStream(id, error: status == 'error');
+        if (_shouldIgnoreConversationFrame(
+          id,
+          clientRequestId: reqId,
+          frameType: 'turn_status',
+          terminal: true,
+        )) {
+          return;
+        }
+        if (reqId.isNotEmpty) _acceptedRequests.add(reqId);
+        _finishConvStream(
+          id,
+          error: status == 'error',
+          clientRequestId: reqId,
+          turnId: turnId,
+        );
       } else {
+        if (_shouldIgnoreConversationFrame(
+          id,
+          clientRequestId: reqId,
+          frameType: 'turn_accepted',
+        )) {
+          return;
+        }
+        if (reqId.isNotEmpty) _acceptedRequests.add(reqId);
+        _rememberRequest(id, reqId);
         _pendingConvs.add(id);
-        _setConversationBusy(id, true);
+        _setConversationBusy(id, true, clientRequestId: reqId, turnId: turnId);
       }
+    } else if (reqId.isNotEmpty) {
+      _acceptedRequests.add(reqId);
     }
     _emit(
       TurnAcceptedMessage(
@@ -2012,8 +2152,20 @@ class WebSocketService {
   /// streaming) starts fresh so replies don't accrete across turns. The
   /// space-aware joining mirrors the chat screen's chunk handling so hydrated
   /// text reads the same as live text.
-  void _appendConvDelta(String? convId, String delta) {
+  void _appendConvDelta(
+    String? convId,
+    String delta, {
+    String clientRequestId = '',
+    String turnId = '',
+  }) {
     if (convId == null || convId.isEmpty || _convStreamCtrl.isClosed) return;
+    if (_shouldIgnoreConversationFrame(
+      convId,
+      clientRequestId: clientRequestId,
+      frameType: 'response_chunk',
+    )) {
+      return;
+    }
     final st = _streamBuffers.putIfAbsent(convId, () => _ConvStreamState());
     final wasStreaming = st.streaming;
     // First chunk of a fresh turn: drop the previous turn's text.
@@ -2035,15 +2187,34 @@ class WebSocketService {
       );
     }
     _capConvBuffers();
-    _convStreamCtrl.add(ConvStreamEvent(convId, delta: delta));
+    _convStreamCtrl.add(
+      ConvStreamEvent(
+        convId,
+        clientRequestId: clientRequestId,
+        turnId: turnId,
+        delta: delta,
+      ),
+    );
   }
 
   /// Replace conversation [convId]'s buffer with the canonical full reply
   /// [text] (the `response` frame) and broadcast it. Keeps the buffer's
   /// hydration text in sync with the assembled reply rather than the
   /// chunk-concatenation.
-  void _replaceConvText(String? convId, String text) {
+  void _replaceConvText(
+    String? convId,
+    String text, {
+    String clientRequestId = '',
+    String turnId = '',
+  }) {
     if (convId == null || convId.isEmpty || _convStreamCtrl.isClosed) return;
+    if (_shouldIgnoreConversationFrame(
+      convId,
+      clientRequestId: clientRequestId,
+      frameType: 'response',
+    )) {
+      return;
+    }
     final st = _streamBuffers.putIfAbsent(convId, () => _ConvStreamState());
     st.text
       ..clear()
@@ -2057,15 +2228,36 @@ class WebSocketService {
       );
     }
     _capConvBuffers();
-    _convStreamCtrl.add(ConvStreamEvent(convId, delta: text));
+    _convStreamCtrl.add(
+      ConvStreamEvent(
+        convId,
+        clientRequestId: clientRequestId,
+        turnId: turnId,
+        delta: text,
+      ),
+    );
   }
 
   /// Mark conversation [convId]'s turn finished (terminal `status`) and
   /// broadcast a terminal [ConvStreamEvent]. The buffered text is kept (for
   /// hydration on return) until the next turn resets it or [clearConvBuffer]
   /// drops it.
-  void _finishConvStream(String? convId, {required bool error}) {
+  void _finishConvStream(
+    String? convId, {
+    required bool error,
+    String clientRequestId = '',
+    String turnId = '',
+    String frameType = 'terminal',
+  }) {
     if (_convStreamCtrl.isClosed) return;
+    if (_shouldIgnoreConversationFrame(
+      convId,
+      clientRequestId: clientRequestId,
+      frameType: frameType,
+      terminal: true,
+    )) {
+      return;
+    }
     if (convId == null || convId.isEmpty) {
       // WOR-75: an UNTAGGED terminal — the server didn't tell us which
       // conversation finished, so we can't clear a specific buffer/pending flag
@@ -2080,7 +2272,14 @@ class WebSocketService {
         );
       }
       _convStreamCtrl.add(
-        ConvStreamEvent('', done: !error, error: error, untagged: true),
+        ConvStreamEvent(
+          '',
+          clientRequestId: clientRequestId,
+          turnId: turnId,
+          done: !error,
+          error: error,
+          untagged: true,
+        ),
       );
       return;
     }
@@ -2088,14 +2287,27 @@ class WebSocketService {
     if (st != null) st.streaming = false;
     _pendingConvs.remove(convId); // WOR-75/WOR-53/WOR-62: turn finished.
     _forgetConversationRequest(convId);
-    _setConversationBusy(convId, false);
+    _setConversationBusy(
+      convId,
+      false,
+      clientRequestId: clientRequestId,
+      turnId: turnId,
+    );
     if (kOsiaDebugPlaceholder) {
       debugPrint(
         '[OSIA WOR-75] _finishConvStream(id="$convId", error=$error) '
         '→ pending=$_pendingConvs',
       );
     }
-    _convStreamCtrl.add(ConvStreamEvent(convId, done: !error, error: error));
+    _convStreamCtrl.add(
+      ConvStreamEvent(
+        convId,
+        clientRequestId: clientRequestId,
+        turnId: turnId,
+        done: !error,
+        error: error,
+      ),
+    );
   }
 
   /// Evict the oldest FINISHED buffer when the map exceeds [_maxConvBuffers].
@@ -2419,6 +2631,8 @@ class WebSocketService {
       // conversation_id with an id fallback. Only the streaming cases below use
       // it — it routes a backgrounded stream to its conversation buffer.
       final convId = (json['conversation_id'] ?? json['id'])?.toString();
+      final clientRequestId = json['client_request_id']?.toString() ?? '';
+      final turnId = json['turn_id']?.toString() ?? '';
 
       switch (type) {
         case 'transcript':
@@ -2430,14 +2644,24 @@ class WebSocketService {
             _emit(ResponseMessage(content));
             // WOR-53: also replace this conversation's buffer with the
             // canonical full reply (parallel sink — no change to pacing).
-            _replaceConvText(convId, content);
+            _replaceConvText(
+              convId,
+              content,
+              clientRequestId: clientRequestId,
+              turnId: turnId,
+            );
           }
         case 'response_chunk':
           if (content != null && content.isNotEmpty) {
             _emit(ResponseChunkMessage(content));
             // WOR-53: also accrue the delta into this conversation's buffer so
             // its reply survives a screen switch and hydrates on return.
-            _appendConvDelta(convId, content);
+            _appendConvDelta(
+              convId,
+              content,
+              clientRequestId: clientRequestId,
+              turnId: turnId,
+            );
           }
         case 'audio':
           if (data != null) {
@@ -2450,7 +2674,14 @@ class WebSocketService {
           }
         case 'status':
           if (content != null) {
-            _emit(StatusMessage(content));
+            _emit(
+              StatusMessage(
+                content,
+                conversationId: convId ?? '',
+                clientRequestId: clientRequestId,
+                turnId: turnId,
+              ),
+            );
             // WOR-53: a terminal turn status finalizes the conversation's
             // background stream (marks it not-streaming + terminal event).
             // Early error frames without a conversation_id are ignored by
@@ -2462,7 +2693,13 @@ class WebSocketService {
                   '${convId == null ? "null (UNTAGGED!)" : "id=$convId"}',
                 );
               }
-              _finishConvStream(convId, error: content == 'error');
+              _finishConvStream(
+                convId,
+                error: content == 'error',
+                clientRequestId: clientRequestId,
+                turnId: turnId,
+                frameType: 'status',
+              );
             }
           }
         case 'turn_accepted':
@@ -2471,10 +2708,22 @@ class WebSocketService {
         case 'response_done':
         case 'turn_complete':
         case 'done':
-          _finishConvStream(convId, error: false);
+          _finishConvStream(
+            convId,
+            error: false,
+            clientRequestId: clientRequestId,
+            turnId: turnId,
+            frameType: type ?? 'done',
+          );
         case 'error':
           if (convId != null && convId.isNotEmpty) {
-            _finishConvStream(convId, error: true);
+            _finishConvStream(
+              convId,
+              error: true,
+              clientRequestId: clientRequestId,
+              turnId: turnId,
+              frameType: 'error',
+            );
           }
         case 'conversations':
           final raw = json['items'] ?? json['conversations'];

@@ -393,4 +393,118 @@ void main() {
       expect(service.isSamePendingRequest('conv-ack', 'req-ack'), isFalse);
     },
   );
+
+  test(
+    'stale request frames do not finish or corrupt current request',
+    () async {
+      final service = WebSocketService(
+        ip: '127.0.0.1',
+        token: 'token',
+        autoReconnect: false,
+      );
+      addTearDown(service.dispose);
+
+      final events = <ConvStreamEvent>[];
+      final sub = service.convStreamStream.listen(events.add);
+      addTearDown(sub.cancel);
+
+      service.handleIncomingFrameForTest({
+        'type': 'turn_accepted',
+        'conversation_id': 'conv-current',
+        'client_request_id': 'req-current',
+        'turn_id': 'turn-current',
+        'persisted': true,
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(service.isConversationBusy('conv-current'), isTrue);
+      expect(service.isPending('conv-current'), isTrue);
+
+      service.handleIncomingFrameForTest({
+        'type': 'response_chunk',
+        'conversation_id': 'conv-current',
+        'client_request_id': 'req-old',
+        'turn_id': 'turn-old',
+        'content': 'old text',
+      });
+      service.handleIncomingFrameForTest({
+        'type': 'status',
+        'conversation_id': 'conv-current',
+        'client_request_id': 'req-old',
+        'turn_id': 'turn-old',
+        'content': 'error',
+      });
+      service.handleIncomingFrameForTest({
+        'type': 'response_done',
+        'conversation_id': 'conv-current',
+        'client_request_id': 'req-old',
+        'turn_id': 'turn-old',
+      });
+      service.handleIncomingFrameForTest({
+        'type': 'conversation_busy_changed',
+        'conversation_id': 'conv-current',
+        'client_request_id': 'req-old',
+        'turn_id': 'turn-old',
+        'busy': false,
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(service.bufferedText('conv-current'), isEmpty);
+      expect(service.isConversationBusy('conv-current'), isTrue);
+      expect(service.isPending('conv-current'), isTrue);
+      expect(events.where((e) => e.error || e.done), isEmpty);
+
+      service.handleIncomingFrameForTest({
+        'type': 'response_chunk',
+        'conversation_id': 'conv-current',
+        'client_request_id': 'req-current',
+        'turn_id': 'turn-current',
+        'content': 'fresh text',
+      });
+      service.handleIncomingFrameForTest({
+        'type': 'status',
+        'conversation_id': 'conv-current',
+        'client_request_id': 'req-current',
+        'turn_id': 'turn-current',
+        'content': 'done',
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(service.bufferedText('conv-current'), 'fresh text');
+      expect(service.isConversationBusy('conv-current'), isFalse);
+      expect(service.isPending('conv-current'), isFalse);
+      expect(events.last.done, isTrue);
+      expect(events.last.clientRequestId, 'req-current');
+      expect(events.last.turnId, 'turn-current');
+    },
+  );
+
+  test('uncorrelated terminal frame does not clear current request', () async {
+    final service = WebSocketService(
+      ip: '127.0.0.1',
+      token: 'token',
+      autoReconnect: false,
+    );
+    addTearDown(service.dispose);
+
+    final events = <ConvStreamEvent>[];
+    final sub = service.convStreamStream.listen(events.add);
+    addTearDown(sub.cancel);
+
+    service.handleIncomingFrameForTest({
+      'type': 'turn_accepted',
+      'conversation_id': 'conv-safe',
+      'client_request_id': 'req-safe',
+      'turn_id': 'turn-safe',
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    service.handleIncomingFrameForTest({'type': 'status', 'content': 'done'});
+    service.handleIncomingFrameForTest({'type': 'error'});
+    await Future<void>.delayed(Duration.zero);
+
+    expect(service.isConversationBusy('conv-safe'), isTrue);
+    expect(service.isPending('conv-safe'), isTrue);
+    expect(events.where((e) => e.done || e.error), isEmpty);
+  });
 }
