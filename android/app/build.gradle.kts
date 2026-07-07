@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.osia.osia_mobile"
+    namespace = "space.osia.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -15,7 +15,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.osia.osia_mobile"
+        applicationId = "space.osia.app"
         // minSdk 23 required by the `record` package (AudioRecorder).
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion

@@ -1,4 +1,4 @@
-package com.osia.osia_mobile
+package space.osia.app
 
 import io.flutter.embedding.android.FlutterActivity
 
