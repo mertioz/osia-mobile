@@ -297,6 +297,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
 
+              const SizedBox(height: 18),
+              SystemSettingsSection(wsService: widget.wsService),
+
               // ── Voice ────────────────────────────────────────────────
               _SectionHeader(
                 label: strings.voiceSection,

@@ -10,17 +10,15 @@ import '../nav.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 
-/// Configure APIs & Providers — the mobile mirror of the PC's settings.
+/// Configure APIs & Providers — the mobile mirror of the PC's provider panels.
 ///
 /// Reachable from the settings screen (i.e. after a successful connection).
 /// On open it pulls the full config snapshot from the PC (`get_config`) and
-/// the model list (`get_models`) so every section is pre-filled with what is
-/// actually configured. Seven categories:
+/// the model list (`get_models`) so provider sections are pre-filled with what
+/// is actually configured:
 ///   - voice-to-voice (Live API), AI providers, voice providers (TTS),
 ///     Whisper providers (STT) — API-key editors (with a "configured" badge
-///     reflecting `api_keys_set`);
-///   - Scheduled Tasks (cron), AI Hierarchy, Personality & Skills — full
-///     mirrors of the desktop GUI's panels.
+///     reflecting `api_keys_set`).
 ///
 /// All writes go to the PC over the live WebSocket (`set_api_key`,
 /// `set_setting`, `set_personality`, `set_skill`, `create_skill`,
@@ -407,10 +405,6 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
   /// editors). Pulled right after each config snapshot lands.
   Map<String, String> _apiKeys = const {};
 
-  /// Optimistic time-format selection ("12h"/"24h"); falls back to the value
-  /// in [_config] until the user picks one.
-  String? _timeFormatOverride;
-
   StreamSubscription<ws.ConfigData>? _configSub;
   StreamSubscription<ws.ApiKeysMessage>? _apiKeysSub;
   StreamSubscription<ws.OsiaMessage>? _msgSub;
@@ -445,18 +439,6 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
     _apiKeysSub?.cancel();
     _msgSub?.cancel();
     super.dispose();
-  }
-
-  /// Current time format, preferring the user's just-made choice over the
-  /// (possibly slightly stale) config snapshot. Defaults to 24h.
-  String get _timeFormat =>
-      _timeFormatOverride ??
-      (_config?.settings['time_format']?.toString()) ??
-      '24h';
-
-  void _setTimeFormat(String value) {
-    setState(() => _timeFormatOverride = value);
-    widget.wsService.sendSetSetting('time_format', value);
   }
 
   void _open(Widget screen) {
@@ -514,41 +496,6 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // ── General (time format) ──
-                    _SectionLabel(
-                      label: strings.sectionGeneral,
-                      palette: palette,
-                    ),
-                    _OsiaCard(
-                      palette: palette,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              strings.timeFormatLabel,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: palette.textPrimary,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          SizedBox(
-                            width: 150,
-                            child: _SegmentedToggle(
-                              labels: const ['24 h', '12 h'],
-                              index: _timeFormat == '12h' ? 1 : 0,
-                              palette: palette,
-                              onChanged: (i) =>
-                                  _setTimeFormat(i == 1 ? '12h' : '24h'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
                     // ── The four API-key categories ──
                     for (final category in ProviderCategory.values) ...[
                       _CategoryTile(
@@ -599,87 +546,187 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                       ),
                       const SizedBox(height: 12),
                     ],
-
-                    // ── Scheduled tasks (cron) ──
-                    _CategoryTile(
-                      icon: Icons.schedule_rounded,
-                      title: strings.catScheduledTasks,
-                      subtitle: strings.catScheduledTasksSub,
-                      palette: palette,
-                      onTap: () => _open(
-                        _CronScreen(
-                          wsService: widget.wsService,
-                          jobs: config.cronJobs,
-                          timeFormat: _timeFormat,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // ── AI hierarchy ──
-                    _CategoryTile(
-                      icon: Icons.account_tree_rounded,
-                      title: strings.catAiHierarchy,
-                      subtitle: strings.catAiHierarchySub,
-                      palette: palette,
-                      onTap: () => _open(
-                        _HierarchyScreen(
-                          wsService: widget.wsService,
-                          config: config,
-                          models: _models,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // ── Personality & skills ──
-                    _CategoryTile(
-                      icon: Icons.auto_awesome_rounded,
-                      title: strings.catPersonalitySkills,
-                      subtitle: strings.catPersonalitySkillsSub,
-                      palette: palette,
-                      onTap: () => _open(
-                        _PersonalityScreen(
-                          wsService: widget.wsService,
-                          config: config,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // ── System status (heartbeat) — 8th tile ──
-                    _CategoryTile(
-                      icon: Icons.monitor_heart_rounded,
-                      title: strings.catSystemStatus,
-                      subtitle: strings.catSystemStatusSub,
-                      palette: palette,
-                      onTap: () => _open(
-                        _HeartbeatScreen(
-                          wsService: widget.wsService,
-                          config: config,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // ── MCP / Connectors (WOR-44 Phase 4) — 9th tile ──
-                    _CategoryTile(
-                      icon: Icons.hub_rounded,
-                      title: strings.catConnectors,
-                      subtitle: strings.catConnectorsSub,
-                      palette: palette,
-                      onTap: () => _open(
-                        _McpScreen(
-                          wsService: widget.wsService,
-                          config: config,
-                          apiKeys: _apiKeys,
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),
       ),
+    );
+  }
+}
+
+/// General/system settings embedded in the base Settings screen.
+///
+/// These panels still live in this library so they can reuse the existing
+/// private screen classes and card widgets without changing their design.
+class SystemSettingsSection extends StatefulWidget {
+  final ws.WebSocketService wsService;
+
+  const SystemSettingsSection({super.key, required this.wsService});
+
+  @override
+  State<SystemSettingsSection> createState() => _SystemSettingsSectionState();
+}
+
+class _SystemSettingsSectionState extends State<SystemSettingsSection> {
+  ws.ConfigData? _config;
+  List<ws.OsiaModel> _models = const [];
+  Map<String, String> _apiKeys = const {};
+  String? _timeFormatOverride;
+
+  StreamSubscription<ws.ConfigData>? _configSub;
+  StreamSubscription<ws.ApiKeysMessage>? _apiKeysSub;
+  StreamSubscription<ws.OsiaMessage>? _msgSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _configSub = widget.wsService.configStream.listen((data) {
+      if (mounted) setState(() => _config = data);
+      widget.wsService.sendGetApiKeys();
+    });
+    _apiKeysSub = widget.wsService.apiKeysStream.listen((msg) {
+      if (mounted) setState(() => _apiKeys = msg.keys);
+    });
+    _msgSub = widget.wsService.messageStream.listen((msg) {
+      if (msg is ws.ModelsListMessage && mounted) {
+        setState(() => _models = msg.models);
+      }
+    });
+    widget.wsService.sendGetConfig();
+    widget.wsService.sendGetModels();
+  }
+
+  @override
+  void dispose() {
+    _configSub?.cancel();
+    _apiKeysSub?.cancel();
+    _msgSub?.cancel();
+    super.dispose();
+  }
+
+  String get _timeFormat =>
+      _timeFormatOverride ??
+      (_config?.settings['time_format']?.toString()) ??
+      '24h';
+
+  void _setTimeFormat(String value) {
+    setState(() => _timeFormatOverride = value);
+    widget.wsService.sendSetSetting('time_format', value);
+  }
+
+  void _open(Widget screen) {
+    Navigator.of(context).push(slideFadeRoute(screen)).then((_) {
+      if (mounted) widget.wsService.sendGetConfig();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final config = _config;
+
+    if (config == null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 20),
+        child: _LoadingBody(palette: palette, label: strings.loading),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionLabel(label: strings.sectionGeneral, palette: palette),
+        _OsiaCard(
+          palette: palette,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  strings.timeFormatLabel,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: palette.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 150,
+                child: _SegmentedToggle(
+                  labels: const ['24 h', '12 h'],
+                  index: _timeFormat == '12h' ? 1 : 0,
+                  palette: palette,
+                  onChanged: (i) => _setTimeFormat(i == 1 ? '12h' : '24h'),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        _CategoryTile(
+          icon: Icons.schedule_rounded,
+          title: strings.catScheduledTasks,
+          subtitle: strings.catScheduledTasksSub,
+          palette: palette,
+          onTap: () => _open(
+            _CronScreen(
+              wsService: widget.wsService,
+              jobs: config.cronJobs,
+              timeFormat: _timeFormat,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _CategoryTile(
+          icon: Icons.account_tree_rounded,
+          title: strings.catAiHierarchy,
+          subtitle: strings.catAiHierarchySub,
+          palette: palette,
+          onTap: () => _open(
+            _HierarchyScreen(
+              wsService: widget.wsService,
+              config: config,
+              models: _models,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _CategoryTile(
+          icon: Icons.auto_awesome_rounded,
+          title: strings.catPersonalitySkills,
+          subtitle: strings.catPersonalitySkillsSub,
+          palette: palette,
+          onTap: () => _open(
+            _PersonalityScreen(wsService: widget.wsService, config: config),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _CategoryTile(
+          icon: Icons.monitor_heart_rounded,
+          title: strings.catSystemStatus,
+          subtitle: strings.catSystemStatusSub,
+          palette: palette,
+          onTap: () => _open(
+            _HeartbeatScreen(wsService: widget.wsService, config: config),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _CategoryTile(
+          icon: Icons.hub_rounded,
+          title: strings.catConnectors,
+          subtitle: strings.catConnectorsSub,
+          palette: palette,
+          onTap: () => _open(
+            _McpScreen(
+              wsService: widget.wsService,
+              config: config,
+              apiKeys: _apiKeys,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
