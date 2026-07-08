@@ -86,6 +86,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
         widget.wsService.requestMemory();
       }
     });
+    unawaited(widget.wsService.ensureConnected(reason: 'memory_open'));
     if (_connected) widget.wsService.requestMemory();
   }
 

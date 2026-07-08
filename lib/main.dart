@@ -4,6 +4,7 @@ import 'l10n.dart';
 import 'nav.dart';
 import 'screens/chat_screen.dart';
 import 'screens/connection_screen.dart';
+import 'services/connection_lifecycle_service.dart';
 import 'services/storage_service.dart';
 import 'theme.dart';
 
@@ -11,11 +12,14 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   // Sweep any stale temp files left behind by previous picker sessions so
   // the plugin's internal cache stays in a clean state.
-  FilePicker.platform.clearTemporaryFiles().then((cleared) {
-    debugPrint('[OSIA] FilePicker.clearTemporaryFiles -> $cleared');
-  }).catchError((Object e) {
-    debugPrint('[OSIA] FilePicker.clearTemporaryFiles failed: $e');
-  });
+  FilePicker.platform
+      .clearTemporaryFiles()
+      .then((cleared) {
+        debugPrint('[OSIA] FilePicker.clearTemporaryFiles -> $cleared');
+      })
+      .catchError((Object e) {
+        debugPrint('[OSIA] FilePicker.clearTemporaryFiles failed: $e');
+      });
   runApp(const OsiaApp());
 }
 
@@ -30,6 +34,8 @@ class _OsiaAppState extends State<OsiaApp> {
   final StorageService _storage = StorageService();
   final ThemeController _themeController = ThemeController();
   final LanguageController _languageController = LanguageController();
+  final ConnectionLifecycleService _connectionLifecycle =
+      ConnectionLifecycleService();
 
   bool? _configured;
   bool _loading = true;
@@ -37,7 +43,14 @@ class _OsiaAppState extends State<OsiaApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(_connectionLifecycle);
     _bootstrap();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(_connectionLifecycle);
+    super.dispose();
   }
 
   Future<void> _bootstrap() async {
@@ -69,9 +82,9 @@ class _OsiaAppState extends State<OsiaApp> {
 
     var configured = false;
     try {
-      configured = await _storage
-          .isConfigured()
-          .timeout(const Duration(seconds: 3));
+      configured = await _storage.isConfigured().timeout(
+        const Duration(seconds: 3),
+      );
     } catch (_) {
       configured = false;
     }
@@ -123,15 +136,13 @@ class _OsiaAppState extends State<OsiaApp> {
   Route<dynamic>? _generateRoute(RouteSettings settings) {
     switch (settings.name) {
       case '/connection':
-        return slideFadeRoute(
-          ConnectionScreen(storage: _storage),
-          settings,
-        );
+        return slideFadeRoute(ConnectionScreen(storage: _storage), settings);
       case '/chat':
         // The connection screen passes its live, validated connection here so
         // the chat screen reuses it instead of opening a new one.
-        final handoff =
-            settings.arguments is ChatHandoff ? settings.arguments as ChatHandoff : null;
+        final handoff = settings.arguments is ChatHandoff
+            ? settings.arguments as ChatHandoff
+            : null;
         return slideFadeRoute(_buildChatScreen(handoff: handoff), settings);
     }
     return null;
@@ -142,6 +153,7 @@ class _OsiaAppState extends State<OsiaApp> {
       storage: _storage,
       themeController: _themeController,
       languageController: _languageController,
+      connectionLifecycle: _connectionLifecycle,
       handoff: handoff,
     );
   }
@@ -150,9 +162,7 @@ class _OsiaAppState extends State<OsiaApp> {
     if (_loading) {
       return Scaffold(
         backgroundColor: palette.background,
-        body: Center(
-          child: CircularProgressIndicator(color: palette.accent),
-        ),
+        body: Center(child: CircularProgressIndicator(color: palette.accent)),
       );
     }
     if (_configured == true) {

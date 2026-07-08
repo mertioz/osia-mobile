@@ -10,6 +10,7 @@ import '../l10n.dart';
 import '../motion.dart';
 import '../nav.dart';
 import '../services/audio_service.dart';
+import '../services/connection_lifecycle_service.dart';
 import '../services/rendezvous_service.dart';
 import '../services/relay_service.dart';
 import '../services/storage_service.dart';
@@ -32,6 +33,7 @@ class ChatScreen extends StatefulWidget {
   final StorageService storage;
   final ThemeController themeController;
   final LanguageController languageController;
+  final ConnectionLifecycleService connectionLifecycle;
 
   /// A live, already-authenticated connection handed over by the connection
   /// screen on first launch. When present it is reused as-is instead of
@@ -44,6 +46,7 @@ class ChatScreen extends StatefulWidget {
     required this.storage,
     required this.themeController,
     required this.languageController,
+    required this.connectionLifecycle,
     this.handoff,
   });
 
@@ -307,6 +310,7 @@ class _ChatScreenState extends State<ChatScreen> {
               RelayService(storage: widget.storage).connectionConfig(authToken),
           resolveHost: () => RendezvousService().resolveHost(authToken),
         );
+    widget.connectionLifecycle.attach(_wsService);
 
     _connSub = _wsService.connectionStream.listen((state) {
       if (mounted) {
@@ -2483,6 +2487,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // in-memory optimistic copies; the re-fetched history restores everything.
     _optimisticUser.clear();
     _optimisticUserNoId = null;
+    widget.connectionLifecycle.detach(_wsService);
     _wsService.dispose();
     setState(() {
       _initialized = false;
@@ -2527,6 +2532,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _configSub?.cancel();
     _mcpConfirmSub?.cancel();
     _busySub?.cancel();
+    widget.connectionLifecycle.detach(_wsService);
     _wsService.dispose();
     _audioService.dispose();
     _textCtrl.dispose();

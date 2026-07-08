@@ -76,7 +76,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _connSub = widget.wsService.connectionStream.listen((state) {
       if (!mounted) return;
       setState(() => _connState = state);
+      if (state == ws.ConnectionState.connected) {
+        _refreshServerState();
+      }
     });
+    _recoverConnection();
   }
 
   @override
@@ -113,6 +117,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.storage.setLiveApiEnabled(enabled);
     // Push the choice to the PC; it disables STT/TTS while Live API is on.
     widget.wsService.sendSetSetting('liveapi_enabled', enabled);
+  }
+
+  void _recoverConnection() {
+    unawaited(widget.wsService.ensureConnected(reason: 'settings_open'));
+    if (widget.wsService.state == ws.ConnectionState.connected) {
+      _refreshServerState();
+    }
+  }
+
+  void _refreshServerState() {
+    widget.wsService.sendGetConfig();
+    widget.wsService.sendGetModels();
+    widget.wsService.sendMcpStatus();
   }
 
   void _openProviders() {

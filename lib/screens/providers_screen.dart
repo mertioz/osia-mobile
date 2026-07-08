@@ -413,6 +413,7 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
   StreamSubscription<ws.ConfigData>? _configSub;
   StreamSubscription<ws.ApiKeysMessage>? _apiKeysSub;
   StreamSubscription<ws.OsiaMessage>? _msgSub;
+  StreamSubscription<ws.ConnectionState>? _connSub;
 
   @override
   void initState() {
@@ -434,8 +435,12 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
         setState(() => _models = msg.models);
       }
     });
-    widget.wsService.sendGetConfig();
-    widget.wsService.sendGetModels();
+    _connSub = widget.wsService.connectionStream.listen((state) {
+      if (state == ws.ConnectionState.connected) {
+        _refreshServerState();
+      }
+    });
+    _recoverConnection();
   }
 
   @override
@@ -443,7 +448,20 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
     _configSub?.cancel();
     _apiKeysSub?.cancel();
     _msgSub?.cancel();
+    _connSub?.cancel();
     super.dispose();
+  }
+
+  void _recoverConnection() {
+    unawaited(widget.wsService.ensureConnected(reason: 'providers_open'));
+    if (widget.wsService.state == ws.ConnectionState.connected) {
+      _refreshServerState();
+    }
+  }
+
+  void _refreshServerState() {
+    widget.wsService.sendGetConfig();
+    widget.wsService.sendGetModels();
   }
 
   void _open(Widget screen) {
@@ -581,6 +599,7 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
   StreamSubscription<ws.ConfigData>? _configSub;
   StreamSubscription<ws.ApiKeysMessage>? _apiKeysSub;
   StreamSubscription<ws.OsiaMessage>? _msgSub;
+  StreamSubscription<ws.ConnectionState>? _connSub;
 
   @override
   void initState() {
@@ -597,8 +616,12 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
         setState(() => _models = msg.models);
       }
     });
-    widget.wsService.sendGetConfig();
-    widget.wsService.sendGetModels();
+    _connSub = widget.wsService.connectionStream.listen((state) {
+      if (state == ws.ConnectionState.connected) {
+        _refreshServerState();
+      }
+    });
+    _recoverConnection();
   }
 
   @override
@@ -606,6 +629,7 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
     _configSub?.cancel();
     _apiKeysSub?.cancel();
     _msgSub?.cancel();
+    _connSub?.cancel();
     super.dispose();
   }
 
@@ -617,6 +641,18 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
   void _setTimeFormat(String value) {
     setState(() => _timeFormatOverride = value);
     widget.wsService.sendSetSetting('time_format', value);
+  }
+
+  void _recoverConnection() {
+    unawaited(widget.wsService.ensureConnected(reason: 'system_settings_open'));
+    if (widget.wsService.state == ws.ConnectionState.connected) {
+      _refreshServerState();
+    }
+  }
+
+  void _refreshServerState() {
+    widget.wsService.sendGetConfig();
+    widget.wsService.sendGetModels();
   }
 
   void _open(Widget screen) {
@@ -2586,15 +2622,47 @@ class _CronScreen extends StatefulWidget {
 
 class _CronScreenState extends State<_CronScreen> {
   late List<Map<String, dynamic>> _jobs;
+  StreamSubscription<ws.ConfigData>? _configSub;
+  StreamSubscription<ws.ConnectionState>? _connSub;
 
   @override
   void initState() {
     super.initState();
     // Deep-ish copy so edits don't mutate the parent's snapshot in place.
     _jobs = widget.jobs.map((j) => Map<String, dynamic>.from(j)).toList();
+    _configSub = widget.wsService.configStream.listen((cfg) {
+      if (!mounted) return;
+      setState(() {
+        _jobs = cfg.cronJobs.map((j) => Map<String, dynamic>.from(j)).toList();
+      });
+    });
+    _connSub = widget.wsService.connectionStream.listen((state) {
+      if (state == ws.ConnectionState.connected) {
+        _refreshServerState();
+      }
+    });
+    _recoverConnection();
+  }
+
+  @override
+  void dispose() {
+    _configSub?.cancel();
+    _connSub?.cancel();
+    super.dispose();
   }
 
   void _persist() => widget.wsService.sendSetSetting('cron_jobs', _jobs);
+
+  void _recoverConnection() {
+    unawaited(widget.wsService.ensureConnected(reason: 'cron_open'));
+    if (widget.wsService.state == ws.ConnectionState.connected) {
+      _refreshServerState();
+    }
+  }
+
+  void _refreshServerState() {
+    widget.wsService.sendGetConfig();
+  }
 
   void _toggle(int index, bool value) {
     setState(() => _jobs[index]['enabled'] = value);
@@ -2916,6 +2984,7 @@ class _CronEditScreenState extends State<_CronEditScreen> {
   // The list fetched from the PC; null while still loading (drives the loader).
   List<ws.ConversationItem>? _conversations;
   StreamSubscription<ws.ConversationsListMessage>? _convSub;
+  StreamSubscription<ws.ConnectionState>? _connSub;
 
   @override
   void initState() {
@@ -2975,13 +3044,17 @@ class _CronEditScreenState extends State<_CronEditScreen> {
         }
       }
     });
-    if (_models.isEmpty) widget.wsService.sendGetModels();
     // Subscribe BEFORE requesting so the (broadcast, non-replaying) reply can't
     // slip through before we're listening, then pull the conversation list.
     _convSub = widget.wsService.conversationsListStream.listen((msg) {
       if (mounted) setState(() => _conversations = msg.conversations);
     });
-    widget.wsService.sendGetConversations();
+    _connSub = widget.wsService.connectionStream.listen((state) {
+      if (state == ws.ConnectionState.connected) {
+        _refreshServerState();
+      }
+    });
+    _recoverConnection();
   }
 
   @override
@@ -2992,9 +3065,22 @@ class _CronEditScreenState extends State<_CronEditScreen> {
     notifier?.dispose();
     _modelSub?.cancel();
     _convSub?.cancel();
+    _connSub?.cancel();
     _taskCtrl.dispose();
     _intervalCtrl.dispose();
     super.dispose();
+  }
+
+  void _recoverConnection() {
+    unawaited(widget.wsService.ensureConnected(reason: 'cron_edit_open'));
+    if (widget.wsService.state == ws.ConnectionState.connected) {
+      _refreshServerState();
+    }
+  }
+
+  void _refreshServerState() {
+    widget.wsService.sendGetModels();
+    widget.wsService.sendGetConversations();
   }
 
   Future<void> _pickDate() async {
@@ -5658,6 +5744,7 @@ class _McpScreenState extends State<_McpScreen> {
   StreamSubscription<ws.ApiKeysMessage>? _apiKeysSub;
   StreamSubscription<ws.McpStatusMessage>? _statusSub;
   StreamSubscription<ws.McpOauthUrl>? _oauthSub;
+  StreamSubscription<ws.ConnectionState>? _connSub;
 
   /// The OAuth connector the user just tapped Connect on (WOR-96 PART 2b) — so
   /// the arriving `mcp_oauth_url` (which carries the same id) opens the browser
@@ -5752,8 +5839,12 @@ class _McpScreenState extends State<_McpScreen> {
       _openOauthUrl(evt.url);
     });
 
-    // Pull live status for every server so the pills reflect reality on open.
-    widget.wsService.sendMcpStatus();
+    _connSub = widget.wsService.connectionStream.listen((state) {
+      if (state == ws.ConnectionState.connected) {
+        _refreshServerState();
+      }
+    });
+    _recoverConnection();
   }
 
   @override
@@ -5762,6 +5853,7 @@ class _McpScreenState extends State<_McpScreen> {
     _apiKeysSub?.cancel();
     _statusSub?.cancel();
     _oauthSub?.cancel();
+    _connSub?.cancel();
     for (final c in _tokenCtrls.values) {
       c.dispose();
     }
@@ -5774,6 +5866,19 @@ class _McpScreenState extends State<_McpScreen> {
   }
 
   // ── Reads ──
+
+  void _recoverConnection() {
+    unawaited(widget.wsService.ensureConnected(reason: 'mcp_open'));
+    if (widget.wsService.state == ws.ConnectionState.connected) {
+      _refreshServerState();
+    }
+  }
+
+  void _refreshServerState() {
+    widget.wsService.sendGetConfig();
+    widget.wsService.sendGetApiKeys();
+    widget.wsService.sendMcpStatus();
+  }
 
   List<Map<String, dynamic>> _readServers(ws.ConfigData cfg) {
     final raw = cfg.settings['mcp_servers'];

@@ -1140,9 +1140,14 @@ class WebSocketService {
 
   WebSocketChannel? _channel;
   Timer? _reconnectTimer;
+  Future<void>? _connectFuture;
   int _reconnectAttempt = 0;
+  int _connectGeneration = 0;
+  int _socketGeneration = 0;
   bool _intentionalClose = false;
   bool _suppressReconnectOnce = false;
+  bool _disposed = false;
+  int _debugConnectAttemptCount = 0;
 
   static const int _baseReconnectMs = 500;
   static const Duration _connectTimeout = Duration(seconds: 10);
@@ -1698,21 +1703,66 @@ class WebSocketService {
     this.resolveRelay,
   });
 
+  @visibleForTesting
+  int get debugConnectAttemptCount => _debugConnectAttemptCount;
+
   // ── Public API ───────────────────────────────────────────────────────
 
   /// Open the WebSocket connection. Safe to call multiple times.
   void connect() {
-    if (_state == ConnectionState.connecting ||
-        _state == ConnectionState.connected) {
-      return;
+    unawaited(ensureConnected(reason: 'connect'));
+  }
+
+  /// Open, or reopen, the WebSocket connection using a single shared attempt.
+  ///
+  /// Multiple callers (app resume, settings, chat retry, reconnect timer) all
+  /// await the same in-flight connection instead of racing separate sockets.
+  /// [forceReconnect] is used on app resume after backgrounding, where the OS
+  /// can leave a stale socket looking connected until the next write.
+  Future<void> ensureConnected({
+    String reason = 'unspecified',
+    bool forceReconnect = false,
+  }) {
+    if (_disposed) return Future<void>.value();
+
+    final alreadyConnected =
+        _state == ConnectionState.connected && _channel != null;
+    if (alreadyConnected && !forceReconnect) {
+      return Future<void>.value();
     }
+
+    final inFlight = _connectFuture;
+    if (inFlight != null) return inFlight;
+
     _intentionalClose = false;
-    _doConnect();
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+
+    if (forceReconnect && _channel != null) {
+      _closeCurrentChannel(
+        reason: 'force reconnect: $reason',
+        emitDisconnected: true,
+      );
+    } else if (_state == ConnectionState.connected && _channel == null) {
+      _setState(ConnectionState.disconnected);
+    }
+
+    late final Future<void> future;
+    future = _doConnect(reason: reason).whenComplete(() {
+      if (identical(_connectFuture, future)) {
+        _connectFuture = null;
+      }
+    });
+    _connectFuture = future;
+    return future;
   }
 
   /// Close the connection and stop reconnection attempts.
   void disconnect() {
     _intentionalClose = true;
+    _connectGeneration++;
+    _socketGeneration++;
+    _connectFuture = null;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _reconnectAttempt = 0;
@@ -2071,7 +2121,9 @@ class WebSocketService {
 
   /// Free all resources.
   void dispose() {
+    if (_disposed) return;
     disconnect();
+    _disposed = true;
     _drainTimer?.cancel();
     _drainTimer = null;
     _outQueue.clear();
@@ -2115,7 +2167,62 @@ class WebSocketService {
 
   // ── Internals ────────────────────────────────────────────────────────
 
+  bool _isCurrentConnect(int generation) =>
+      !_disposed && !_intentionalClose && generation == _connectGeneration;
+
+  bool _isCurrentSocket(int generation) =>
+      !_disposed && !_intentionalClose && generation == _socketGeneration;
+
+  void _attachChannel(
+    WebSocketChannel channel, {
+    required bool relay,
+    required void Function(dynamic raw) onData,
+  }) {
+    final generation = ++_socketGeneration;
+    _channel = channel;
+    _connectedViaRelay = relay;
+    channel.stream.listen(
+      (raw) {
+        if (_isCurrentSocket(generation)) onData(raw);
+      },
+      onError: (error) {
+        if (_isCurrentSocket(generation)) _onError(error);
+      },
+      onDone: () {
+        if (_isCurrentSocket(generation)) {
+          _onDone();
+        } else {
+          debugPrint('[OSIA WS] Ignored stale socket close.');
+        }
+      },
+      cancelOnError: false,
+    );
+  }
+
+  void _closeCurrentChannel({
+    required String reason,
+    required bool emitDisconnected,
+  }) {
+    final channel = _channel;
+    _socketGeneration++;
+    _channel = null;
+    _connectedViaRelay = false;
+    _relayConfig = null;
+    _completeRelayReady(false);
+    _relayReadyCompleter = null;
+    if (channel != null) {
+      debugPrint('[OSIA WS] Closing current socket ($reason).');
+      try {
+        channel.sink.close();
+      } catch (e) {
+        debugPrint('[OSIA WS] Socket close failed during reconnect: $e');
+      }
+    }
+    if (emitDisconnected) _setState(ConnectionState.disconnected);
+  }
+
   void _setState(ConnectionState newState) {
+    if (_disposed || _connectionCtrl.isClosed) return;
     if (_state == newState) return;
     _state = newState;
     _connectionCtrl.add(newState);
@@ -2367,7 +2474,10 @@ class WebSocketService {
     _setConversationBusy(id, false);
   }
 
-  Future<bool> _tryRelayConnect(RelayConnectionConfig config) async {
+  Future<bool> _tryRelayConnect(
+    RelayConnectionConfig config,
+    int connectGeneration,
+  ) async {
     final uri = _relayUri(config);
     debugPrint(
       '[OSIA Relay] Connecting to $uri '
@@ -2378,17 +2488,17 @@ class WebSocketService {
       final socket = await WebSocket.connect(
         uri.toString(),
       ).timeout(_connectTimeout);
-      _channel = IOWebSocketChannel(socket);
-      _connectedViaRelay = true;
+      if (!_isCurrentConnect(connectGeneration)) {
+        unawaited(socket.close());
+        return false;
+      }
       _relayConfig = config;
       _relaySeq = 0;
       _relayReadyCompleter = Completer<bool>();
-
-      _channel!.stream.listen(
-        _onRelayData,
-        onError: _onError,
-        onDone: _onDone,
-        cancelOnError: false,
+      _attachChannel(
+        IOWebSocketChannel(socket),
+        relay: true,
+        onData: _onRelayData,
       );
 
       _sendRelayEnvelope('PAIR_START', {'secret': config.secret});
@@ -2398,21 +2508,21 @@ class WebSocketService {
         _relayReadyTimeout,
         onTimeout: () => false,
       );
+      if (!_isCurrentConnect(connectGeneration)) return false;
       if (ready) return true;
 
-      _suppressReconnectOnce = true;
-      _channel?.sink.close();
-      _channel = null;
-      _connectedViaRelay = false;
-      _relayConfig = null;
-      _relayReadyCompleter = null;
-      _setState(ConnectionState.disconnected);
+      _closeCurrentChannel(
+        reason: 'relay not ready; falling back',
+        emitDisconnected: false,
+      );
       return false;
     } catch (e) {
-      _channel = null;
-      _connectedViaRelay = false;
-      _relayConfig = null;
-      _relayReadyCompleter = null;
+      if (_isCurrentConnect(connectGeneration)) {
+        _channel = null;
+        _connectedViaRelay = false;
+        _relayConfig = null;
+        _relayReadyCompleter = null;
+      }
       debugPrint('[OSIA Relay] connect failed: $e');
       return false;
     }
@@ -2522,18 +2632,27 @@ class WebSocketService {
     }
   }
 
-  Future<void> _doConnect() async {
+  Future<void> _doConnect({required String reason}) async {
+    final connectGeneration = ++_connectGeneration;
+    _debugConnectAttemptCount++;
+    debugPrint('[OSIA WS] ensureConnected($reason)');
     _setState(ConnectionState.connecting);
 
     if (resolveRelay != null) {
       try {
         final relayConfig = await resolveRelay!();
-        final relayReady = await _tryRelayConnect(relayConfig);
+        if (!_isCurrentConnect(connectGeneration)) return;
+        final relayReady = await _tryRelayConnect(
+          relayConfig,
+          connectGeneration,
+        );
+        if (!_isCurrentConnect(connectGeneration)) return;
         if (relayReady) return;
         debugPrint(
           '[OSIA Relay] Relay unavailable, falling back to rendezvous',
         );
       } catch (e) {
+        if (!_isCurrentConnect(connectGeneration)) return;
         debugPrint('[OSIA Relay] Relay setup failed, falling back: $e');
       }
     }
@@ -2549,7 +2668,9 @@ class WebSocketService {
     if (resolveHost != null) {
       try {
         host = _sanitizeHost(await resolveHost!());
+        if (!_isCurrentConnect(connectGeneration)) return;
       } catch (e) {
+        if (!_isCurrentConnect(connectGeneration)) return;
         debugPrint('[OSIA WS] Host resolution failed: $e');
         _errorCtrl.add('$e');
         _setState(ConnectionState.disconnected);
@@ -2570,10 +2691,14 @@ class WebSocketService {
 
     try {
       final socket = await WebSocket.connect(url).timeout(_connectTimeout);
+      if (!_isCurrentConnect(connectGeneration)) {
+        unawaited(socket.close());
+        return;
+      }
 
       // Socket is open — we're connected. Don't wait for any server message
       // to flip state, or the badge stays on "Connexion…" forever.
-      _channel = IOWebSocketChannel(socket);
+      _attachChannel(IOWebSocketChannel(socket), relay: false, onData: _onData);
       _markConnected();
       // The socket is open and healthy: kill any reconnect timer left pending
       // from an earlier failed attempt. Otherwise that stale timer fires while
@@ -2592,14 +2717,8 @@ class WebSocketService {
 
       // Auth is the first message after the socket opens.
       _send({'type': 'auth', 'token': token});
-
-      _channel!.stream.listen(
-        _onData,
-        onError: _onError,
-        onDone: _onDone,
-        cancelOnError: false,
-      );
     } on TimeoutException {
+      if (!_isCurrentConnect(connectGeneration)) return;
       final msg =
           'Connexion expirée après ${_connectTimeout.inSeconds}s ($url)';
       debugPrint('[OSIA WS] $msg');
@@ -2607,18 +2726,21 @@ class WebSocketService {
       _setState(ConnectionState.disconnected);
       _scheduleReconnect();
     } on SocketException catch (e) {
+      if (!_isCurrentConnect(connectGeneration)) return;
       final msg = 'Réseau injoignable: ${e.message} ($url)';
       debugPrint('[OSIA WS] $msg');
       _errorCtrl.add(msg);
       _setState(ConnectionState.disconnected);
       _scheduleReconnect();
     } on WebSocketException catch (e) {
+      if (!_isCurrentConnect(connectGeneration)) return;
       final msg = 'WebSocket refusé: ${e.message} ($url)';
       debugPrint('[OSIA WS] $msg');
       _errorCtrl.add(msg);
       _setState(ConnectionState.disconnected);
       _scheduleReconnect();
     } catch (e) {
+      if (!_isCurrentConnect(connectGeneration)) return;
       final msg = 'Échec de connexion: $e ($url)';
       debugPrint('[OSIA WS] $msg');
       _errorCtrl.add(msg);
@@ -2992,7 +3114,7 @@ class WebSocketService {
       // scheduled and firing; reconnecting then would open a duplicate socket
       // and restart the open→close loop.
       if (!_intentionalClose && _state == ConnectionState.disconnected) {
-        _doConnect();
+        unawaited(ensureConnected(reason: 'reconnect_timer'));
       }
     });
   }
