@@ -4,6 +4,7 @@ import 'l10n.dart';
 import 'nav.dart';
 import 'screens/chat_screen.dart';
 import 'screens/connection_screen.dart';
+import 'services/background_connection_service.dart';
 import 'services/connection_lifecycle_service.dart';
 import 'services/storage_service.dart';
 import 'theme.dart';
@@ -34,8 +35,8 @@ class _OsiaAppState extends State<OsiaApp> {
   final StorageService _storage = StorageService();
   final ThemeController _themeController = ThemeController();
   final LanguageController _languageController = LanguageController();
-  final ConnectionLifecycleService _connectionLifecycle =
-      ConnectionLifecycleService();
+  late final BackgroundConnectionService _backgroundConnection;
+  late final ConnectionLifecycleService _connectionLifecycle;
 
   bool? _configured;
   bool _loading = true;
@@ -43,6 +44,10 @@ class _OsiaAppState extends State<OsiaApp> {
   @override
   void initState() {
     super.initState();
+    _backgroundConnection = BackgroundConnectionService(storage: _storage);
+    _connectionLifecycle = ConnectionLifecycleService(
+      backgroundConnectionService: _backgroundConnection,
+    );
     WidgetsBinding.instance.addObserver(_connectionLifecycle);
     _bootstrap();
   }
@@ -154,6 +159,7 @@ class _OsiaAppState extends State<OsiaApp> {
       themeController: _themeController,
       languageController: _languageController,
       connectionLifecycle: _connectionLifecycle,
+      backgroundConnectionService: _backgroundConnection,
       handoff: handoff,
     );
   }

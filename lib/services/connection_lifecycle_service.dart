@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 
+import 'background_connection_service.dart';
 import 'websocket_service.dart' as ws;
 
 /// App-level owner for WebSocket lifecycle nudges.
@@ -11,9 +12,11 @@ import 'websocket_service.dart' as ws;
 class ConnectionLifecycleService with WidgetsBindingObserver {
   ConnectionLifecycleService({
     this.resumeThrottle = const Duration(seconds: 2),
+    this.backgroundConnectionService,
   });
 
   final Duration resumeThrottle;
+  final BackgroundConnectionService? backgroundConnectionService;
 
   ws.WebSocketService? _service;
   bool _wasBackgrounded = false;
@@ -25,18 +28,28 @@ class ConnectionLifecycleService with WidgetsBindingObserver {
   void attach(ws.WebSocketService service) {
     if (identical(_service, service)) return;
     _service = service;
+    backgroundConnectionService?.attachWebSocketService(service);
   }
 
   void detach(ws.WebSocketService service) {
     if (identical(_service, service)) {
       _service = null;
     }
+    backgroundConnectionService?.detachWebSocketService(service);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _ensureAfterResume(forceReconnect: _wasBackgrounded);
+      final background = backgroundConnectionService;
+      if (background != null) {
+        unawaited(
+          background
+              .syncBackgroundConnectionSetting(reason: 'app_lifecycle_resumed')
+              .then<void>((_) {}),
+        );
+      }
       _wasBackgrounded = false;
       return;
     }

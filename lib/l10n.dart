@@ -171,6 +171,9 @@ class OsiaStrings {
   final String osiaNotifications;
   final String osiaNotificationsSubtitle;
   final String notificationPermissionDenied;
+  final String backgroundConnection;
+  final String backgroundConnectionSubtitle;
+  final String backgroundConnectionUnavailable;
   final String catVoiceToVoice;
   final String catVoiceToVoiceSub;
   final String catAiProviders;
@@ -541,6 +544,9 @@ class OsiaStrings {
     required this.osiaNotifications,
     required this.osiaNotificationsSubtitle,
     required this.notificationPermissionDenied,
+    required this.backgroundConnection,
+    required this.backgroundConnectionSubtitle,
+    required this.backgroundConnectionUnavailable,
     required this.catVoiceToVoice,
     required this.catVoiceToVoiceSub,
     required this.catAiProviders,
@@ -952,6 +958,11 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
       'Get safe alerts when scheduled tasks finish or fail.',
   notificationPermissionDenied:
       'Notifications are blocked. You can enable them in system settings.',
+  backgroundConnection: 'Keep OSIA connected in background',
+  backgroundConnectionSubtitle:
+      'Shows a persistent notification and keeps the mobile link active.',
+  backgroundConnectionUnavailable:
+      'Background connection could not start. Check notification permission and battery settings.',
   catVoiceToVoice: 'Voice-to-voice (Live API)',
   catVoiceToVoiceSub: 'Real-time spoken conversation with OSIA',
   catAiProviders: 'AI Providers',
@@ -1321,6 +1332,11 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
       'Recevez des alertes sûres quand une tâche se termine ou échoue.',
   notificationPermissionDenied:
       'Les notifications sont bloquées. Vous pouvez les autoriser dans les réglages système.',
+  backgroundConnection: 'Garder OSIA connecté en arrière-plan',
+  backgroundConnectionSubtitle:
+      'Affiche une notification persistante et maintient le lien mobile actif.',
+  backgroundConnectionUnavailable:
+      'La connexion en arrière-plan n’a pas pu démarrer. Vérifiez les notifications et la batterie.',
   catVoiceToVoice: 'Voix à voix (API Live)',
   catVoiceToVoiceSub: 'Conversation vocale en temps réel avec OSIA',
   catAiProviders: 'Fournisseurs IA',
@@ -1685,6 +1701,9 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   osiaNotifications: 'OSIA 通知',
   osiaNotificationsSubtitle: '计划任务完成或失败时接收安全提醒。',
   notificationPermissionDenied: '通知已被阻止。你可以在系统设置中启用。',
+  backgroundConnection: '在后台保持 OSIA 连接',
+  backgroundConnectionSubtitle: '显示常驻通知，并保持移动连接处于活动状态。',
+  backgroundConnectionUnavailable: '后台连接无法启动。请检查通知权限和电池设置。',
   catVoiceToVoice: '语音对话（实时 API）',
   catVoiceToVoiceSub: '与 OSIA 进行实时语音对话',
   catAiProviders: 'AI 提供商',
@@ -2033,6 +2052,10 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   osiaNotifications: 'OSIA 通知',
   osiaNotificationsSubtitle: 'スケジュールタスクの完了や失敗を安全に通知します。',
   notificationPermissionDenied: '通知がブロックされています。システム設定で有効にできます。',
+  backgroundConnection: 'バックグラウンドで OSIA の接続を維持',
+  backgroundConnectionSubtitle: '常設通知を表示し、モバイル接続を維持します。',
+  backgroundConnectionUnavailable:
+      'バックグラウンド接続を開始できませんでした。通知権限とバッテリー設定を確認してください。',
   catVoiceToVoice: '音声対音声（ライブ API）',
   catVoiceToVoiceSub: 'OSIA とのリアルタイム音声会話',
   catAiProviders: 'AI プロバイダー',
@@ -2403,6 +2426,11 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
       'Erhalte sichere Hinweise, wenn geplante Aufgaben enden oder fehlschlagen.',
   notificationPermissionDenied:
       'Benachrichtigungen sind blockiert. Du kannst sie in den Systemeinstellungen aktivieren.',
+  backgroundConnection: 'OSIA im Hintergrund verbunden halten',
+  backgroundConnectionSubtitle:
+      'Zeigt eine dauerhafte Benachrichtigung und hält die mobile Verbindung aktiv.',
+  backgroundConnectionUnavailable:
+      'Die Hintergrundverbindung konnte nicht gestartet werden. Prüfe Benachrichtigungen und Akku-Einstellungen.',
   catVoiceToVoice: 'Sprache-zu-Sprache (Live-API)',
   catVoiceToVoiceSub: 'Gesprochener Echtzeit-Dialog mit OSIA',
   catAiProviders: 'KI-Anbieter',
@@ -2778,6 +2806,11 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
       'Recibe avisos seguros cuando una tarea programada termine o falle.',
   notificationPermissionDenied:
       'Las notificaciones están bloqueadas. Puedes activarlas en los ajustes del sistema.',
+  backgroundConnection: 'Mantener OSIA conectado en segundo plano',
+  backgroundConnectionSubtitle:
+      'Muestra una notificación permanente y mantiene activo el enlace móvil.',
+  backgroundConnectionUnavailable:
+      'No se pudo iniciar la conexión en segundo plano. Revisa los permisos de notificación y batería.',
   catVoiceToVoice: 'Voz a voz (API Live)',
   catVoiceToVoiceSub: 'Conversación hablada en tiempo real con OSIA',
   catAiProviders: 'Proveedores de IA',

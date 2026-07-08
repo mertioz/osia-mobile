@@ -10,6 +10,7 @@ import '../l10n.dart';
 import '../motion.dart';
 import '../nav.dart';
 import '../services/audio_service.dart';
+import '../services/background_connection_service.dart';
 import '../services/connection_lifecycle_service.dart';
 import '../services/notification_service.dart';
 import '../services/rendezvous_service.dart';
@@ -35,6 +36,7 @@ class ChatScreen extends StatefulWidget {
   final ThemeController themeController;
   final LanguageController languageController;
   final ConnectionLifecycleService connectionLifecycle;
+  final BackgroundConnectionService backgroundConnectionService;
 
   /// A live, already-authenticated connection handed over by the connection
   /// screen on first launch. When present it is reused as-is instead of
@@ -48,6 +50,7 @@ class ChatScreen extends StatefulWidget {
     required this.themeController,
     required this.languageController,
     required this.connectionLifecycle,
+    required this.backgroundConnectionService,
     this.handoff,
   });
 
@@ -2470,6 +2473,7 @@ class _ChatScreenState extends State<ChatScreen> {
           themeController: widget.themeController,
           languageController: widget.languageController,
           wsService: _wsService,
+          backgroundConnectionService: widget.backgroundConnectionService,
         ),
       ),
     );

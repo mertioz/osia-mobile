@@ -24,6 +24,8 @@ class StorageService {
   static const _keyLiveApi = 'osia_liveapi_enabled';
   static const _keyRelayDeviceId = 'osia_relay_device_id';
   static const _keyNotificationsEnabled = 'osia_notifications_enabled';
+  static const _keyBackgroundConnectionEnabled =
+      'osia_background_connection_enabled';
   static const _keyShownNotificationIds = 'osia_shown_notification_ids';
 
   /// Default/fallback server host. Normal connections resolve the current
@@ -180,6 +182,20 @@ class StorageService {
 
   Future<bool> getNotificationsEnabled() async {
     final raw = await _safeRead(_keyNotificationsEnabled);
+    return raw == 'true';
+  }
+
+  /// Local-only preference for the Android foreground-service mode that keeps
+  /// the mobile WebSocket alive while OSIA is backgrounded. Defaults off.
+  Future<void> setBackgroundConnectionEnabled(bool enabled) async {
+    await _storage.write(
+      key: _keyBackgroundConnectionEnabled,
+      value: enabled ? 'true' : 'false',
+    );
+  }
+
+  Future<bool> getBackgroundConnectionEnabled() async {
+    final raw = await _safeRead(_keyBackgroundConnectionEnabled);
     return raw == 'true';
   }
 

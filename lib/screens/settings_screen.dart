@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../l10n.dart';
 import '../motion.dart';
 import '../nav.dart';
+import '../services/background_connection_service.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
@@ -30,6 +31,7 @@ class SettingsScreen extends StatefulWidget {
   final ThemeController themeController;
   final LanguageController languageController;
   final OsiaNotificationService? notificationService;
+  final BackgroundConnectionService? backgroundConnectionService;
 
   /// Live connection to the OSIA server, owned by the chat screen.
   /// Used to send the restart command and watch the reconnection.
@@ -42,6 +44,7 @@ class SettingsScreen extends StatefulWidget {
     required this.languageController,
     required this.wsService,
     this.notificationService,
+    this.backgroundConnectionService,
   });
 
   @override
@@ -63,8 +66,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Whether the voice-to-voice Live API is enabled (OFF by default).
   bool _liveApi = false;
   late final OsiaNotificationService _notificationService;
+  late final BackgroundConnectionService _backgroundConnectionService;
   bool _notificationsEnabled = false;
   bool _notificationsBusy = false;
+  bool _backgroundConnectionEnabled = false;
+  bool _backgroundConnectionBusy = false;
 
   @override
   void initState() {
@@ -72,6 +78,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _notificationService =
         widget.notificationService ??
         OsiaNotificationService(storage: widget.storage);
+    _backgroundConnectionService =
+        widget.backgroundConnectionService ??
+        BackgroundConnectionService(storage: widget.storage);
+    _backgroundConnectionService.attachWebSocketService(widget.wsService);
     widget.storage.getAutoTts().then((enabled) {
       if (mounted) setState(() => _autoTts = enabled);
     });
@@ -80,6 +90,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
     widget.storage.getNotificationsEnabled().then((enabled) {
       if (mounted) setState(() => _notificationsEnabled = enabled);
+    });
+    widget.storage.getBackgroundConnectionEnabled().then((enabled) {
+      if (mounted) setState(() => _backgroundConnectionEnabled = enabled);
     });
     _connState = widget.wsService.state;
     // Track connection state only to enable/disable the restart tile; the
@@ -97,6 +110,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    _backgroundConnectionService.detachWebSocketService(widget.wsService);
     _connSub?.cancel();
     _restartStatusSub?.cancel();
     _restartTimeout?.cancel();
@@ -145,6 +159,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(OsiaL10n.of(context).notificationPermissionDenied),
+        ),
+      );
+    }
+  }
+
+  Future<void> _onToggleBackgroundConnection(bool enabled) async {
+    if (_backgroundConnectionBusy) return;
+    setState(() => _backgroundConnectionBusy = true);
+    final active = await _backgroundConnectionService
+        .setBackgroundConnectionEnabledFromSettings(enabled);
+    if (!mounted) return;
+    setState(() {
+      _backgroundConnectionEnabled = active;
+      _backgroundConnectionBusy = false;
+    });
+    if (enabled && !active) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(OsiaL10n.of(context).backgroundConnectionUnavailable),
         ),
       );
     }
@@ -256,6 +289,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (confirmed != true) return;
 
+    await _backgroundConnectionService
+        .setBackgroundConnectionEnabledFromSettings(false);
     await widget.storage.clearCredentials();
     if (!mounted) return;
     // Back to the connection page, clearing the whole navigation stack
@@ -334,6 +369,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       onChanged: _notificationsBusy
                           ? null
                           : _onToggleNotifications,
+                      palette: palette,
+                    ),
+                    Divider(
+                      height: 1,
+                      color: palette.border.withValues(alpha: 0.5),
+                      indent: 56,
+                    ),
+                    _ToggleTile(
+                      icon: Icons.sync_rounded,
+                      title: strings.backgroundConnection,
+                      subtitle: strings.backgroundConnectionSubtitle,
+                      value: _backgroundConnectionEnabled,
+                      onChanged: _backgroundConnectionBusy
+                          ? null
+                          : _onToggleBackgroundConnection,
                       palette: palette,
                     ),
                     Divider(

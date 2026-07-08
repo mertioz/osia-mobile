@@ -685,34 +685,6 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
       children: [
         if (widget.showHeader)
           _SectionLabel(label: strings.sectionGeneral, palette: palette),
-        _OsiaCard(
-          palette: palette,
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  strings.timeFormatLabel,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: palette.textPrimary,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              SizedBox(
-                width: 150,
-                child: _SegmentedToggle(
-                  labels: const ['24 h', '12 h'],
-                  index: _timeFormat == '12h' ? 1 : 0,
-                  palette: palette,
-                  onChanged: (i) => _setTimeFormat(i == 1 ? '12h' : '24h'),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
         _CategoryTile(
           icon: Icons.schedule_rounded,
           title: strings.catScheduledTasks,
@@ -775,6 +747,34 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
               config: config,
               apiKeys: _apiKeys,
             ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _OsiaCard(
+          palette: palette,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  strings.timeFormatLabel,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: palette.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 150,
+                child: _SegmentedToggle(
+                  labels: const ['24 h', '12 h'],
+                  index: _timeFormat == '12h' ? 1 : 0,
+                  palette: palette,
+                  onChanged: (i) => _setTimeFormat(i == 1 ? '12h' : '24h'),
+                ),
+              ),
+            ],
           ),
         ),
       ],
