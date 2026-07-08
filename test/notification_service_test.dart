@@ -21,16 +21,26 @@ class _ShownNotification {
 class _FakeNotificationClient implements OsiaNotificationClient {
   bool requestResult = true;
   bool allowed = true;
+  bool throwOnRequest = false;
+  int requestCount = 0;
+  int allowedCheckCount = 0;
   final List<_ShownNotification> shown = [];
 
   @override
   Future<void> initialize() async {}
 
   @override
-  Future<bool> requestPermission() async => requestResult;
+  Future<bool> requestPermission() async {
+    requestCount++;
+    if (throwOnRequest) throw StateError('permission failed');
+    return requestResult;
+  }
 
   @override
-  Future<bool> notificationsAllowed() async => allowed;
+  Future<bool> notificationsAllowed() async {
+    allowedCheckCount++;
+    return allowed;
+  }
 
   @override
   Future<void> show({
@@ -105,6 +115,7 @@ void main() {
 
       expect(result, OsiaNotificationResult.disabled);
       expect(client.shown, isEmpty);
+      expect(client.allowedCheckCount, 0);
       expect(await storage.getShownNotificationIds(), contains('note-1'));
     },
   );
@@ -168,6 +179,32 @@ void main() {
     expect(await service.setNotificationsEnabledFromSettings(false), isFalse);
     expect(await storage.getNotificationsEnabled(), isFalse);
   });
+
+  test('settings disabled path does not request platform permission', () async {
+    final storage = StorageService();
+    await storage.setNotificationsEnabled(true);
+    final client = _FakeNotificationClient();
+    final service = OsiaNotificationService(storage: storage, client: client);
+
+    expect(await service.setNotificationsEnabledFromSettings(false), isFalse);
+
+    expect(client.requestCount, 0);
+    expect(await storage.getNotificationsEnabled(), isFalse);
+  });
+
+  test(
+    'settings permission failure does not crash and persists disabled',
+    () async {
+      final storage = StorageService();
+      final client = _FakeNotificationClient()..throwOnRequest = true;
+      final service = OsiaNotificationService(storage: storage, client: client);
+
+      expect(await service.setNotificationsEnabledFromSettings(true), isFalse);
+
+      expect(client.requestCount, 1);
+      expect(await storage.getNotificationsEnabled(), isFalse);
+    },
+  );
 
   test('failed and reminder bodies stay short and avoid unsafe titles', () {
     expect(

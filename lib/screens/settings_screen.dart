@@ -29,6 +29,7 @@ class SettingsScreen extends StatefulWidget {
   final StorageService storage;
   final ThemeController themeController;
   final LanguageController languageController;
+  final OsiaNotificationService? notificationService;
 
   /// Live connection to the OSIA server, owned by the chat screen.
   /// Used to send the restart command and watch the reconnection.
@@ -40,6 +41,7 @@ class SettingsScreen extends StatefulWidget {
     required this.themeController,
     required this.languageController,
     required this.wsService,
+    this.notificationService,
   });
 
   @override
@@ -67,7 +69,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _notificationService = OsiaNotificationService(storage: widget.storage);
+    _notificationService =
+        widget.notificationService ??
+        OsiaNotificationService(storage: widget.storage);
     widget.storage.getAutoTts().then((enabled) {
       if (mounted) setState(() => _autoTts = enabled);
     });
@@ -300,32 +304,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // ── Appearance ───────────────────────────────────────────
-              _SectionHeader(
-                label: strings.appearance,
-                subtitle: strings.appearanceSub,
-                palette: palette,
-              ),
-              _SectionCard(
-                palette: palette,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      strings.colorTheme,
-                      style: TextStyle(fontSize: 13, color: palette.textMuted),
-                    ),
-                    const SizedBox(height: 14),
-                    _ThemeSwatchRow(
-                      currentKey: widget.themeController.palette.key,
-                      onTap: _onPickTheme,
-                      palette: palette,
-                      strings: strings,
-                    ),
-                  ],
-                ),
-              ),
-
               // ── Language ─────────────────────────────────────────────
               _SectionHeader(
                 label: strings.language,
@@ -341,43 +319,60 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
 
-              const SizedBox(height: 18),
-              SystemSettingsSection(wsService: widget.wsService),
-
-              const SizedBox(height: 18),
-              _SectionHeader(
-                label: strings.notificationsSection,
-                subtitle: strings.notificationsSectionSub,
-                palette: palette,
-              ),
+              // ── General ──────────────────────────────────────────────
+              _SectionHeader(label: strings.sectionGeneral, palette: palette),
               _SectionCard(
                 palette: palette,
                 padding: EdgeInsets.zero,
-                child: _ToggleTile(
-                  icon: Icons.notifications_active_rounded,
-                  title: strings.osiaNotifications,
-                  subtitle: strings.osiaNotificationsSubtitle,
-                  value: _notificationsEnabled,
-                  onChanged: _notificationsBusy ? null : _onToggleNotifications,
-                  palette: palette,
+                child: Column(
+                  children: [
+                    _ToggleTile(
+                      icon: Icons.notifications_active_rounded,
+                      title: strings.osiaNotifications,
+                      subtitle: strings.osiaNotificationsSubtitle,
+                      value: _notificationsEnabled,
+                      onChanged: _notificationsBusy
+                          ? null
+                          : _onToggleNotifications,
+                      palette: palette,
+                    ),
+                    Divider(
+                      height: 1,
+                      color: palette.border.withValues(alpha: 0.5),
+                      indent: 56,
+                    ),
+                    _ToggleTile(
+                      icon: Icons.volume_up_rounded,
+                      title: strings.autoReadResponses,
+                      subtitle: strings.autoReadResponsesSubtitle,
+                      value: _autoTts,
+                      onChanged: _onToggleAutoTts,
+                      palette: palette,
+                    ),
+                  ],
                 ),
               ),
 
-              // ── Voice ────────────────────────────────────────────────
+              const SizedBox(height: 18),
+              SystemSettingsSection(
+                wsService: widget.wsService,
+                showHeader: false,
+              ),
+
+              // ── Memory ───────────────────────────────────────────────
+              const SizedBox(height: 18),
               _SectionHeader(
-                label: strings.voiceSection,
-                subtitle: strings.voiceSectionSub,
+                label: strings.memoryTitle,
+                subtitle: strings.localMemories,
                 palette: palette,
               ),
               _SectionCard(
                 palette: palette,
                 padding: EdgeInsets.zero,
-                child: _ToggleTile(
-                  icon: Icons.volume_up_rounded,
-                  title: strings.autoReadResponses,
-                  subtitle: strings.autoReadResponsesSubtitle,
-                  value: _autoTts,
-                  onChanged: _onToggleAutoTts,
+                child: _NavTile(
+                  icon: Icons.psychology_alt_rounded,
+                  title: strings.memoryTitle,
+                  onTap: _openMemory,
                   palette: palette,
                 ),
               ),
@@ -417,20 +412,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
 
-              // ── Memory ───────────────────────────────────────────────
+              // ── Colors ───────────────────────────────────────────────
               _SectionHeader(
-                label: strings.memoryTitle,
-                subtitle: strings.localMemories,
+                label: strings.colorTheme,
+                subtitle: strings.appearanceSub,
                 palette: palette,
               ),
               _SectionCard(
                 palette: palette,
-                padding: EdgeInsets.zero,
-                child: _NavTile(
-                  icon: Icons.psychology_alt_rounded,
-                  title: strings.memoryTitle,
-                  onTap: _openMemory,
-                  palette: palette,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      strings.colorTheme,
+                      style: TextStyle(fontSize: 13, color: palette.textMuted),
+                    ),
+                    const SizedBox(height: 14),
+                    _ThemeSwatchRow(
+                      currentKey: widget.themeController.palette.key,
+                      onTap: _onPickTheme,
+                      palette: palette,
+                      strings: strings,
+                    ),
+                  ],
                 ),
               ),
 

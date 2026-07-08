@@ -584,8 +584,13 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
 /// private screen classes and card widgets without changing their design.
 class SystemSettingsSection extends StatefulWidget {
   final ws.WebSocketService wsService;
+  final bool showHeader;
 
-  const SystemSettingsSection({super.key, required this.wsService});
+  const SystemSettingsSection({
+    super.key,
+    required this.wsService,
+    this.showHeader = true,
+  });
 
   @override
   State<SystemSettingsSection> createState() => _SystemSettingsSectionState();
@@ -678,7 +683,8 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _SectionLabel(label: strings.sectionGeneral, palette: palette),
+        if (widget.showHeader)
+          _SectionLabel(label: strings.sectionGeneral, palette: palette),
         _OsiaCard(
           palette: palette,
           child: Row(
