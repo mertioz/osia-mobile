@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Required for WebSocket communication -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Required for Android 13+ system notifications -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Required for voice commands -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <!-- File attachment: legacy storage permission (pre-Android 13) -->

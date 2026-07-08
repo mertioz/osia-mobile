@@ -11,6 +11,7 @@ import '../motion.dart';
 import '../nav.dart';
 import '../services/audio_service.dart';
 import '../services/connection_lifecycle_service.dart';
+import '../services/notification_service.dart';
 import '../services/rendezvous_service.dart';
 import '../services/relay_service.dart';
 import '../services/storage_service.dart';
@@ -60,6 +61,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // round-trip (see _openSettings → _initConnection).
   late ws.WebSocketService _wsService;
   final AudioService _audioService = AudioService();
+  late final OsiaNotificationService _notificationService;
 
   // State
   final TextEditingController _textCtrl = TextEditingController();
@@ -239,6 +241,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _notificationService = OsiaNotificationService(storage: widget.storage);
     _pendingHandoff = widget.handoff;
     _initConnection();
     // WOR-78 Fix A (refined): launch-leak guard. On first mount a soft keyboard
@@ -899,6 +902,14 @@ class _ChatScreenState extends State<ChatScreen> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+    unawaited(
+      _notificationService.showCronNotification(
+        event,
+        completedLabel: strings.scheduledTaskCompleted,
+        failedLabel: strings.scheduledTaskFailed,
+        reminderLabel: strings.reminderNotification,
+      ),
+    );
     final convId = event.conversationId;
     if (convId.isNotEmpty && convId == _activeConversationId) {
       _requestConversationContent(convId);

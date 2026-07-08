@@ -81,6 +81,7 @@ class OsiaStrings {
   final String osiaWorkingBackground;
   final String scheduledTaskCompleted;
   final String scheduledTaskFailed;
+  final String reminderNotification;
   final String taskCompleted;
 
   // ── Model selector ──
@@ -165,6 +166,11 @@ class OsiaStrings {
   final String liveApi;
   final String liveApiNotice;
   final String comingSoon;
+  final String notificationsSection;
+  final String notificationsSectionSub;
+  final String osiaNotifications;
+  final String osiaNotificationsSubtitle;
+  final String notificationPermissionDenied;
   final String catVoiceToVoice;
   final String catVoiceToVoiceSub;
   final String catAiProviders;
@@ -457,6 +463,7 @@ class OsiaStrings {
     required this.osiaWorkingBackground,
     required this.scheduledTaskCompleted,
     required this.scheduledTaskFailed,
+    required this.reminderNotification,
     required this.taskCompleted,
     required this.availableModels,
     required this.noModelsReceived,
@@ -529,6 +536,11 @@ class OsiaStrings {
     required this.liveApi,
     required this.liveApiNotice,
     required this.comingSoon,
+    required this.notificationsSection,
+    required this.notificationsSectionSub,
+    required this.osiaNotifications,
+    required this.osiaNotificationsSubtitle,
+    required this.notificationPermissionDenied,
     required this.catVoiceToVoice,
     required this.catVoiceToVoiceSub,
     required this.catAiProviders,
@@ -856,6 +868,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   osiaWorkingBackground: 'OSIA is working in the background',
   scheduledTaskCompleted: 'Scheduled task completed',
   scheduledTaskFailed: 'Scheduled task failed',
+  reminderNotification: 'OSIA reminder',
   taskCompleted: 'Task completed',
   availableModels: 'Available models',
   noModelsReceived: 'No models received from the server.',
@@ -932,6 +945,13 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   liveApi: 'Live API',
   liveApiNotice: 'When enabled, STT and TTS are automatically disabled.',
   comingSoon: 'Coming soon',
+  notificationsSection: 'Notifications',
+  notificationsSectionSub: 'Scheduled tasks and reminders',
+  osiaNotifications: 'OSIA notifications',
+  osiaNotificationsSubtitle:
+      'Get safe alerts when scheduled tasks finish or fail.',
+  notificationPermissionDenied:
+      'Notifications are blocked. You can enable them in system settings.',
   catVoiceToVoice: 'Voice-to-voice (Live API)',
   catVoiceToVoiceSub: 'Real-time spoken conversation with OSIA',
   catAiProviders: 'AI Providers',
@@ -1216,6 +1236,7 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   osiaWorkingBackground: 'OSIA travaille en arrière-plan',
   scheduledTaskCompleted: 'Tâche planifiée terminée',
   scheduledTaskFailed: 'Tâche planifiée échouée',
+  reminderNotification: 'Rappel OSIA',
   taskCompleted: 'Tâche terminée',
   availableModels: 'Modèles disponibles',
   noModelsReceived: 'Aucun modèle reçu du serveur.',
@@ -1293,6 +1314,13 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   liveApiNotice:
       'Une fois activé, la transcription (STT) et la synthèse vocale (TTS) sont automatiquement désactivées.',
   comingSoon: 'Bientôt disponible',
+  notificationsSection: 'Notifications',
+  notificationsSectionSub: 'Tâches planifiées et rappels',
+  osiaNotifications: 'Notifications OSIA',
+  osiaNotificationsSubtitle:
+      'Recevez des alertes sûres quand une tâche se termine ou échoue.',
+  notificationPermissionDenied:
+      'Les notifications sont bloquées. Vous pouvez les autoriser dans les réglages système.',
   catVoiceToVoice: 'Voix à voix (API Live)',
   catVoiceToVoiceSub: 'Conversation vocale en temps réel avec OSIA',
   catAiProviders: 'Fournisseurs IA',
@@ -1579,6 +1607,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   osiaWorkingBackground: 'OSIA 正在后台工作',
   scheduledTaskCompleted: '定时任务已完成',
   scheduledTaskFailed: '定时任务失败',
+  reminderNotification: 'OSIA 提醒',
   taskCompleted: '任务完成',
   availableModels: '可用模型',
   noModelsReceived: '未从服务器收到任何模型。',
@@ -1651,6 +1680,11 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   liveApi: '实时 API',
   liveApiNotice: '启用后，语音转文字 (STT) 和文字转语音 (TTS) 将自动停用。',
   comingSoon: '即将推出',
+  notificationsSection: '通知',
+  notificationsSectionSub: '定时任务和提醒',
+  osiaNotifications: 'OSIA 通知',
+  osiaNotificationsSubtitle: '计划任务完成或失败时接收安全提醒。',
+  notificationPermissionDenied: '通知已被阻止。你可以在系统设置中启用。',
   catVoiceToVoice: '语音对话（实时 API）',
   catVoiceToVoiceSub: '与 OSIA 进行实时语音对话',
   catAiProviders: 'AI 提供商',
@@ -1921,6 +1955,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   osiaWorkingBackground: 'OSIA はバックグラウンドで作業中',
   scheduledTaskCompleted: 'スケジュールタスク完了',
   scheduledTaskFailed: 'スケジュールタスク失敗',
+  reminderNotification: 'OSIA リマインダー',
   taskCompleted: 'タスク完了',
   availableModels: '利用可能なモデル',
   noModelsReceived: 'サーバーからモデルを受信していません。',
@@ -1993,6 +2028,11 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   liveApi: 'ライブ API',
   liveApiNotice: '有効にすると、音声認識 (STT) と音声合成 (TTS) は自動的に無効になります。',
   comingSoon: '近日公開',
+  notificationsSection: '通知',
+  notificationsSectionSub: 'スケジュールタスクとリマインダー',
+  osiaNotifications: 'OSIA 通知',
+  osiaNotificationsSubtitle: 'スケジュールタスクの完了や失敗を安全に通知します。',
+  notificationPermissionDenied: '通知がブロックされています。システム設定で有効にできます。',
   catVoiceToVoice: '音声対音声（ライブ API）',
   catVoiceToVoiceSub: 'OSIA とのリアルタイム音声会話',
   catAiProviders: 'AI プロバイダー',
@@ -2276,6 +2316,7 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   osiaWorkingBackground: 'OSIA arbeitet im Hintergrund',
   scheduledTaskCompleted: 'Geplante Aufgabe abgeschlossen',
   scheduledTaskFailed: 'Geplante Aufgabe fehlgeschlagen',
+  reminderNotification: 'OSIA-Erinnerung',
   taskCompleted: 'Aufgabe abgeschlossen',
   availableModels: 'Verfügbare Modelle',
   noModelsReceived: 'Keine Modelle vom Server erhalten.',
@@ -2355,6 +2396,13 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   liveApi: 'Live-API',
   liveApiNotice: 'Wenn aktiviert, werden STT und TTS automatisch deaktiviert.',
   comingSoon: 'Bald verfügbar',
+  notificationsSection: 'Benachrichtigungen',
+  notificationsSectionSub: 'Geplante Aufgaben und Erinnerungen',
+  osiaNotifications: 'OSIA-Benachrichtigungen',
+  osiaNotificationsSubtitle:
+      'Erhalte sichere Hinweise, wenn geplante Aufgaben enden oder fehlschlagen.',
+  notificationPermissionDenied:
+      'Benachrichtigungen sind blockiert. Du kannst sie in den Systemeinstellungen aktivieren.',
   catVoiceToVoice: 'Sprache-zu-Sprache (Live-API)',
   catVoiceToVoiceSub: 'Gesprochener Echtzeit-Dialog mit OSIA',
   catAiProviders: 'KI-Anbieter',
@@ -2645,6 +2693,7 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   osiaWorkingBackground: 'OSIA está trabajando en segundo plano',
   scheduledTaskCompleted: 'Tarea programada completada',
   scheduledTaskFailed: 'Tarea programada fallida',
+  reminderNotification: 'Recordatorio OSIA',
   taskCompleted: 'Tarea completada',
   availableModels: 'Modelos disponibles',
   noModelsReceived: 'No se recibieron modelos del servidor.',
@@ -2722,6 +2771,13 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   liveApiNotice:
       'Cuando está activado, STT y TTS se desactivan automáticamente.',
   comingSoon: 'Próximamente',
+  notificationsSection: 'Notificaciones',
+  notificationsSectionSub: 'Tareas programadas y recordatorios',
+  osiaNotifications: 'Notificaciones de OSIA',
+  osiaNotificationsSubtitle:
+      'Recibe avisos seguros cuando una tarea programada termine o falle.',
+  notificationPermissionDenied:
+      'Las notificaciones están bloqueadas. Puedes activarlas en los ajustes del sistema.',
   catVoiceToVoice: 'Voz a voz (API Live)',
   catVoiceToVoiceSub: 'Conversación hablada en tiempo real con OSIA',
   catAiProviders: 'Proveedores de IA',

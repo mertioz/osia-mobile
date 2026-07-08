@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -22,6 +23,8 @@ class StorageService {
   static const _keyAutoTts = 'osia_auto_tts';
   static const _keyLiveApi = 'osia_liveapi_enabled';
   static const _keyRelayDeviceId = 'osia_relay_device_id';
+  static const _keyNotificationsEnabled = 'osia_notifications_enabled';
+  static const _keyShownNotificationIds = 'osia_shown_notification_ids';
 
   /// Default/fallback server host. Normal connections resolve the current
   /// quick-tunnel host through rendezvous; only the token is asked for.
@@ -164,6 +167,54 @@ class StorageService {
   Future<bool> getLiveApiEnabled() async {
     final raw = await _safeRead(_keyLiveApi);
     return raw == 'true';
+  }
+
+  /// Local-only mobile notification preference. Defaults to off until the user
+  /// explicitly enables it from Settings and grants the platform permission.
+  Future<void> setNotificationsEnabled(bool enabled) async {
+    await _storage.write(
+      key: _keyNotificationsEnabled,
+      value: enabled ? 'true' : 'false',
+    );
+  }
+
+  Future<bool> getNotificationsEnabled() async {
+    final raw = await _safeRead(_keyNotificationsEnabled);
+    return raw == 'true';
+  }
+
+  Future<List<String>> getShownNotificationIds() async {
+    final raw = await _safeRead(_keyShownNotificationIds);
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded
+          .map((value) => value.toString().trim())
+          .where((value) => value.isNotEmpty)
+          .toList(growable: false);
+    } catch (e) {
+      debugPrint(
+        '[OSIA Storage] notification id cache unreadable: $e - dropping it',
+      );
+      try {
+        await _storage.delete(key: _keyShownNotificationIds);
+      } catch (_) {
+        // Best-effort cleanup; ignore if the delete itself fails.
+      }
+      return const [];
+    }
+  }
+
+  Future<void> setShownNotificationIds(Iterable<String> ids) async {
+    final clean = ids
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toList(growable: false);
+    await _storage.write(
+      key: _keyShownNotificationIds,
+      value: jsonEncode(clean),
+    );
   }
 
   // ── Selected model ───────────────────────────────────────────────────

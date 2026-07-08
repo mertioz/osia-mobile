@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../l10n.dart';
 import '../motion.dart';
 import '../nav.dart';
+import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
@@ -59,15 +60,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// Whether the voice-to-voice Live API is enabled (OFF by default).
   bool _liveApi = false;
+  late final OsiaNotificationService _notificationService;
+  bool _notificationsEnabled = false;
+  bool _notificationsBusy = false;
 
   @override
   void initState() {
     super.initState();
+    _notificationService = OsiaNotificationService(storage: widget.storage);
     widget.storage.getAutoTts().then((enabled) {
       if (mounted) setState(() => _autoTts = enabled);
     });
     widget.storage.getLiveApiEnabled().then((enabled) {
       if (mounted) setState(() => _liveApi = _liveApiAvailable && enabled);
+    });
+    widget.storage.getNotificationsEnabled().then((enabled) {
+      if (mounted) setState(() => _notificationsEnabled = enabled);
     });
     _connState = widget.wsService.state;
     // Track connection state only to enable/disable the restart tile; the
@@ -117,6 +125,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.storage.setLiveApiEnabled(enabled);
     // Push the choice to the PC; it disables STT/TTS while Live API is on.
     widget.wsService.sendSetSetting('liveapi_enabled', enabled);
+  }
+
+  Future<void> _onToggleNotifications(bool enabled) async {
+    if (_notificationsBusy) return;
+    setState(() => _notificationsBusy = true);
+    final allowed = await _notificationService
+        .setNotificationsEnabledFromSettings(enabled);
+    if (!mounted) return;
+    setState(() {
+      _notificationsEnabled = allowed;
+      _notificationsBusy = false;
+    });
+    if (enabled && !allowed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(OsiaL10n.of(context).notificationPermissionDenied),
+        ),
+      );
+    }
   }
 
   void _recoverConnection() {
@@ -316,6 +343,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 18),
               SystemSettingsSection(wsService: widget.wsService),
+
+              const SizedBox(height: 18),
+              _SectionHeader(
+                label: strings.notificationsSection,
+                subtitle: strings.notificationsSectionSub,
+                palette: palette,
+              ),
+              _SectionCard(
+                palette: palette,
+                padding: EdgeInsets.zero,
+                child: _ToggleTile(
+                  icon: Icons.notifications_active_rounded,
+                  title: strings.osiaNotifications,
+                  subtitle: strings.osiaNotificationsSubtitle,
+                  value: _notificationsEnabled,
+                  onChanged: _notificationsBusy ? null : _onToggleNotifications,
+                  palette: palette,
+                ),
+              ),
 
               // ── Voice ────────────────────────────────────────────────
               _SectionHeader(
