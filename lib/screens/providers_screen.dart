@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../heartbeat_settings.dart';
 import '../l10n.dart';
 import '../motion.dart';
 import '../nav.dart';
@@ -4794,10 +4795,10 @@ String _skillDisplay(String name) => name.toLowerCase().endsWith('.md')
 // System status (heartbeat)
 // ══════════════════════════════════════════════════════════════════════════
 
-/// Live system-metrics dashboard plus the two heartbeat settings. The toggle
-/// and interval are pre-filled from `config.settings` and written back via
-/// `set_setting heartbeat_enabled|heartbeat_interval_seconds`; the metrics
-/// refresh in real time from `heartbeat_data` pushes on [heartbeatStream].
+/// Live system-metrics dashboard plus heartbeat alert settings. The toggle,
+/// interval and per-metric checks are pre-filled from `config.settings` and
+/// written back via `set_setting`; the metrics refresh in real time from
+/// `heartbeat_data` pushes on [heartbeatStream].
 class _HeartbeatScreen extends StatefulWidget {
   final ws.WebSocketService wsService;
   final ws.ConfigData config;
@@ -4808,61 +4809,158 @@ class _HeartbeatScreen extends StatefulWidget {
 }
 
 class _HeartbeatScreenState extends State<_HeartbeatScreen> {
-  static const int _minInterval = 10;
-  static const int _maxInterval = 300;
-  static const int _defaultInterval = 30;
-
-  late bool _enabled;
+  late HeartbeatSettings _heartbeat;
   late final TextEditingController _intervalCtrl;
   late final FocusNode _intervalFocus;
+  late final Map<String, TextEditingController> _thresholdCtrls;
+  late final Map<String, FocusNode> _thresholdFocus;
   ws.HeartbeatDataMessage? _latest;
+  StreamSubscription<ws.ConfigData>? _configSub;
   StreamSubscription<ws.HeartbeatDataMessage>? _hbSub;
 
   @override
   void initState() {
     super.initState();
-    final s = widget.config.settings;
-    _enabled = s['heartbeat_enabled'] == true;
-    _intervalCtrl = TextEditingController(text: '${_readInterval(s)}');
+    _heartbeat = HeartbeatSettings.fromSettings(widget.config.settings);
+    _intervalCtrl = TextEditingController(
+      text: '${_heartbeat.intervalSeconds}',
+    );
     _intervalFocus = FocusNode();
     // Persist a clamped interval when the field loses focus — covers the case
     // where the user edits then navigates away without pressing "done".
     _intervalFocus.addListener(() {
       if (!_intervalFocus.hasFocus) _persistInterval();
     });
+    _thresholdCtrls = {
+      for (final metric in heartbeatThresholdMetricIds)
+        metric: TextEditingController(
+          text: '${_heartbeat.checks[metric]?.threshold}',
+        ),
+    };
+    _thresholdFocus = {
+      for (final metric in heartbeatThresholdMetricIds) metric: FocusNode(),
+    };
+    for (final metric in heartbeatThresholdMetricIds) {
+      _thresholdFocus[metric]!.addListener(() {
+        if (!_thresholdFocus[metric]!.hasFocus) _persistThreshold(metric);
+      });
+    }
+    _configSub = widget.wsService.configStream.listen((cfg) {
+      _applyConfigSettings(cfg.settings);
+    });
     _hbSub = widget.wsService.heartbeatStream.listen((msg) {
       if (mounted) setState(() => _latest = msg);
     });
   }
 
-  int _readInterval(Map<String, dynamic> s) {
-    final raw = s['heartbeat_interval_seconds'];
-    final n = raw is num ? raw.toInt() : int.tryParse('${raw ?? ''}');
-    return (n ?? _defaultInterval).clamp(_minInterval, _maxInterval).toInt();
+  void _applyConfigSettings(Map<String, dynamic> settings) {
+    final next = HeartbeatSettings.fromSettings(settings);
+    if (!mounted) return;
+    setState(() {
+      _heartbeat = next;
+      _syncFieldText(next, overwriteFocused: false);
+    });
+  }
+
+  void _syncFieldText(
+    HeartbeatSettings settings, {
+    required bool overwriteFocused,
+  }) {
+    if (overwriteFocused || !_intervalFocus.hasFocus) {
+      _setControllerText(_intervalCtrl, '${settings.intervalSeconds}');
+    }
+    for (final metric in heartbeatThresholdMetricIds) {
+      final focus = _thresholdFocus[metric];
+      if (overwriteFocused || focus?.hasFocus != true) {
+        final value =
+            settings.checks[metric]?.threshold ??
+            HeartbeatSettings.defaultThresholds[metric]!;
+        _setControllerText(_thresholdCtrls[metric]!, '$value');
+      }
+    }
+  }
+
+  void _setControllerText(TextEditingController controller, String text) {
+    if (controller.text == text) return;
+    controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
   }
 
   @override
   void dispose() {
+    _configSub?.cancel();
     _hbSub?.cancel();
     _intervalFocus.dispose();
     _intervalCtrl.dispose();
+    for (final focus in _thresholdFocus.values) {
+      focus.dispose();
+    }
+    for (final controller in _thresholdCtrls.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
   void _toggle(bool v) {
-    setState(() => _enabled = v);
-    widget.wsService.sendSetSetting('heartbeat_enabled', v);
+    setState(() => _heartbeat = _heartbeat.copyWith(enabled: v));
+    widget.wsService.sendSetSetting(heartbeatEnabledSettingKey, v);
   }
 
   void _persistInterval() {
-    final parsed = int.tryParse(_intervalCtrl.text.trim());
-    final int clamped = (parsed ?? _defaultInterval)
-        .clamp(_minInterval, _maxInterval)
-        .toInt();
+    final clamped = HeartbeatSettings.sanitizeInterval(_intervalCtrl.text);
     // Reflect the clamped value back so the user sees what was actually saved.
-    final text = '$clamped';
-    if (_intervalCtrl.text != text) _intervalCtrl.text = text;
-    widget.wsService.sendSetSetting('heartbeat_interval_seconds', clamped);
+    setState(() {
+      _heartbeat = _heartbeat.copyWith(intervalSeconds: clamped);
+      _setControllerText(_intervalCtrl, '$clamped');
+    });
+    widget.wsService.sendSetSetting(heartbeatIntervalSettingKey, clamped);
+  }
+
+  void _toggleMetric(String metric, bool enabled) {
+    final next = _heartbeat.withMetricEnabled(metric, enabled);
+    setState(() => _heartbeat = next);
+    _persistHeartbeatChecks(next);
+  }
+
+  void _persistThreshold(String metric) {
+    final controller = _thresholdCtrls[metric];
+    if (controller == null) return;
+    final next = _heartbeat.withThreshold(metric, controller.text);
+    final value =
+        next.checks[metric]?.threshold ??
+        HeartbeatSettings.defaultThresholds[metric]!;
+    setState(() {
+      _heartbeat = next;
+      _setControllerText(controller, '$value');
+    });
+    _persistHeartbeatChecks(next);
+  }
+
+  void _persistHeartbeatChecks(HeartbeatSettings settings) {
+    widget.wsService.sendSetSetting(
+      heartbeatChecksSettingKey,
+      settings.checksForSettings(),
+    );
+  }
+
+  String _metricLabel(String metric, OsiaStrings strings) {
+    return switch (metric) {
+      'cpu' => strings.metricCpu,
+      'ram' => strings.metricRam,
+      'disk' => strings.metricDisk,
+      'network' => strings.metricNetwork,
+      _ => metric,
+    };
+  }
+
+  String _metricHint(String metric, OsiaStrings strings) {
+    return switch (metric) {
+      'disk' => strings.heartbeatDiskThresholdHint,
+      'network' => strings.heartbeatNetworkHint,
+      _ => strings.heartbeatUsageThresholdHint,
+    };
   }
 
   @override
@@ -4912,7 +5010,7 @@ class _HeartbeatScreenState extends State<_HeartbeatScreen> {
                       ),
                     ),
                     Switch(
-                      value: _enabled,
+                      value: _heartbeat.enabled,
                       onChanged: _toggle,
                       activeTrackColor: palette.accent,
                       activeThumbColor: palette.isDark
@@ -4933,6 +5031,7 @@ class _HeartbeatScreenState extends State<_HeartbeatScreen> {
                   SizedBox(
                     width: 120,
                     child: TextField(
+                      key: const ValueKey('heartbeat_interval_seconds'),
                       controller: _intervalCtrl,
                       focusNode: _intervalFocus,
                       keyboardType: TextInputType.number,
@@ -4982,6 +5081,26 @@ class _HeartbeatScreenState extends State<_HeartbeatScreen> {
                 ],
               ),
               const SizedBox(height: 24),
+              _SectionLabel(
+                label: strings.heartbeatChecksHeader,
+                palette: palette,
+              ),
+              const SizedBox(height: 4),
+              for (final metric in heartbeatMetricIds) ...[
+                _HeartbeatCheckRow(
+                  metric: metric,
+                  label: _metricLabel(metric, strings),
+                  hint: _metricHint(metric, strings),
+                  enabled: _heartbeat.checks[metric]?.enabled ?? false,
+                  thresholdController: _thresholdCtrls[metric],
+                  thresholdFocus: _thresholdFocus[metric],
+                  palette: palette,
+                  onEnabledChanged: (v) => _toggleMetric(metric, v),
+                  onThresholdSubmitted: () => _persistThreshold(metric),
+                ),
+                const SizedBox(height: 10),
+              ],
+              const SizedBox(height: 14),
               // ── Live metrics dashboard ──
               _SectionLabel(
                 label: strings.systemMetricsHeader,
@@ -5034,6 +5153,133 @@ class _HeartbeatScreenState extends State<_HeartbeatScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// One desktop heartbeat alert check mirrored onto mobile.
+class _HeartbeatCheckRow extends StatelessWidget {
+  final String metric;
+  final String label;
+  final String hint;
+  final bool enabled;
+  final TextEditingController? thresholdController;
+  final FocusNode? thresholdFocus;
+  final OsiaPalette palette;
+  final ValueChanged<bool> onEnabledChanged;
+  final VoidCallback onThresholdSubmitted;
+
+  const _HeartbeatCheckRow({
+    required this.metric,
+    required this.label,
+    required this.hint,
+    required this.enabled,
+    required this.thresholdController,
+    required this.thresholdFocus,
+    required this.palette,
+    required this.onEnabledChanged,
+    required this.onThresholdSubmitted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = thresholdController;
+    return _OsiaCard(
+      palette: palette,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Switch(
+                key: ValueKey('heartbeat_${metric}_enabled'),
+                value: enabled,
+                onChanged: onEnabledChanged,
+                activeTrackColor: palette.accent,
+                activeThumbColor: palette.isDark
+                    ? palette.background
+                    : Colors.white,
+                inactiveTrackColor: palette.border.withValues(alpha: 0.5),
+                inactiveThumbColor: palette.textMuted,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: palette.textPrimary,
+                  ),
+                ),
+              ),
+              if (controller != null) ...[
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 76,
+                  child: TextField(
+                    key: ValueKey('heartbeat_${metric}_threshold'),
+                    controller: controller,
+                    focusNode: thresholdFocus,
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.done,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    onSubmitted: (_) => onThresholdSubmitted(),
+                    textAlign: TextAlign.center,
+                    cursorColor: palette.accent,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: palette.surface,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 11,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: palette.border),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: palette.border),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: palette.accent,
+                          width: 1.4,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '%',
+                  style: TextStyle(fontSize: 13, color: palette.textMuted),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.only(left: 66),
+            child: Text(
+              hint,
+              style: TextStyle(
+                fontSize: 12.2,
+                height: 1.35,
+                color: palette.textMuted,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
