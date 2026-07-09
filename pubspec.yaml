@@ -12,6 +12,7 @@ dependencies:
 
   cupertino_icons: ^1.0.8
   crypto: ^3.0.0
+  cryptography: ^2.7.0
   web_socket_channel: ^3.0.2
   just_audio: ^0.9.43
   record: ^6.2.1
