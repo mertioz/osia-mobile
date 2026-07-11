@@ -1,23 +1,25 @@
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
+import 'relay_crypto_service.dart';
 import 'storage_service.dart';
 
 class RelayConnectionConfig {
   final Uri endpoint;
   final String pairId;
   final String secret;
-  final String deviceId;
-  final String sessionId;
+  final List<int> e2ePrivateKey;
+  final List<int> e2ePublicKey;
+  final List<int> e2eNonceBase;
 
   const RelayConnectionConfig({
     required this.endpoint,
     required this.pairId,
     required this.secret,
-    required this.deviceId,
-    required this.sessionId,
+    required this.e2ePrivateKey,
+    required this.e2ePublicKey,
+    required this.e2eNonceBase,
   });
 }
 
@@ -48,19 +50,31 @@ class RelayService {
 
   Future<RelayConnectionConfig> connectionConfig(String token) async {
     final creds = derivePairCredentials(token);
-    final deviceId = await storage.getOrCreateRelayDeviceId();
+    final e2ePrivateKey = generateX25519PrivateKey();
+    final e2ePublicKey = await x25519PublicKey(e2ePrivateKey);
     return RelayConnectionConfig(
-      endpoint: endpoint,
+      endpoint: buildEndpoint(endpoint, creds.pairId),
       pairId: creds.pairId,
       secret: creds.secret,
-      deviceId: deviceId,
-      sessionId: 'mobile-${_randomHex(16)}',
+      e2ePrivateKey: e2ePrivateKey,
+      e2ePublicKey: e2ePublicKey,
+      e2eNonceBase: generateNonceBase(),
     );
   }
 
-  static String _randomHex(int bytes) {
-    final random = Random.secure();
-    final values = List<int>.generate(bytes, (_) => random.nextInt(256));
-    return values.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  static Uri buildEndpoint(Uri base, String pairId) {
+    if ((base.scheme != 'ws' && base.scheme != 'wss') ||
+        !base.hasAuthority ||
+        base.host.isEmpty ||
+        base.userInfo.isNotEmpty ||
+        base.hasQuery ||
+        base.hasFragment ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(pairId) ||
+        (base.path.isNotEmpty && base.path != '/' && base.path != '/ws')) {
+      throw const FormatException(
+        'Relay URL must be a credential-free ws/wss base without query or fragment',
+      );
+    }
+    return base.replace(path: '/ws', queryParameters: {'pair_id': pairId});
   }
 }

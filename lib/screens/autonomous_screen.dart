@@ -210,55 +210,8 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
 
   /// The configured-only model list (the only models offered for a run).
   List<ws.OsiaModel> get _configuredModels {
-    final config = _config;
-    if (config == null) return const [];
-    return _models
-        .where((m) => _isProviderConfigured(_providerFor(m), config))
-        .toList();
-  }
-
-  /// Provider id for a model, preferring the server-tagged provider and falling
-  /// back to the same name heuristic the PC uses for untagged models.
-  String _providerFor(ws.OsiaModel m) {
-    final tagged = (m.provider ?? '').trim().toLowerCase();
-    if (tagged.isNotEmpty) return tagged;
-    final id = m.id.toLowerCase();
-    if (id.contains('claude')) return 'anthropic';
-    if (id.contains('gemini')) return 'google';
-    if (id.contains('grok')) return 'xai';
-    if (id.contains('deepseek')) return 'deepseek';
-    if (id.startsWith('meta-llama/') ||
-        id.startsWith('moonshotai/') ||
-        id.startsWith('qwen/') ||
-        id.startsWith('groq/') ||
-        id.startsWith('playai/') ||
-        id.contains('gpt-oss') ||
-        id.contains('kimi') ||
-        id.endsWith('-versatile') ||
-        id.endsWith('-instant')) {
-      return 'groq';
-    }
-    if (id.contains('gpt') || id.startsWith('o1') || id.startsWith('o3')) {
-      return 'openai';
-    }
-    return 'ollama';
-  }
-
-  /// Mirror of the PC's "configured" rule: a provider counts as configured when
-  /// it has a primary key OR at least one non-empty fallback key OR is
-  /// keyless/local (Ollama).
-  bool _isProviderConfigured(String provider, ws.ConfigData config) {
-    final p = provider.toLowerCase();
-    if (p.isEmpty || p == 'ollama' || p == 'local') return true;
-    if (config.apiKeysSet[p] == true) return true;
-    final raw = config.settings['api_key_fallbacks'];
-    if (raw is Map) {
-      final list = raw[p];
-      if (list is List && list.any((e) => e.toString().trim().isNotEmpty)) {
-        return true;
-      }
-    }
-    return false;
+    if (_config == null) return const [];
+    return _models.where((model) => model.selectable).toList();
   }
 
   /// Resolve [_selectedModel] against the configured-only list, and push a
@@ -369,8 +322,13 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     }
   }
 
-  void _setReasoningForModel(String modelId, String optionId) {
-    final next = _reasoning.withModelOverride(modelId, optionId);
+  void _setReasoningForModel(ws.OsiaModel model, String optionId) {
+    final provider = (model.provider ?? '').trim();
+    if (provider.isEmpty) return;
+    final key = provider == 'chatgpt_account'
+        ? 'chatgpt_account:${model.id}'
+        : model.id;
+    final next = _reasoning.withModelOverride(key, optionId);
     setState(() => _reasoning = next);
     final notifier = _selectorNotifier;
     if (notifier != null) {
@@ -382,7 +340,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         reasoning: next,
       );
     }
-    widget.wsService.sendSetSetting('reasoning', next.toJson());
+    widget.wsService.sendSetModelReasoning(provider, model.id, optionId);
     widget.wsService.sendGetConfig();
   }
 

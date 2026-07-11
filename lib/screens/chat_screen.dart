@@ -27,7 +27,13 @@ import '../widgets/thinking_indicator.dart';
 import 'autonomous_screen.dart';
 import 'settings_screen.dart';
 
-enum _TurnPhase { idle, pendingNotAccepted, acceptedWorking, streaming }
+enum _TurnPhase {
+  idle,
+  pendingNotAccepted,
+  transferring,
+  acceptedWorking,
+  streaming,
+}
 
 /// Main chat screen: conversation history, floating glass input,
 /// thinking indicator, model selector and connection badge.
@@ -40,8 +46,7 @@ class ChatScreen extends StatefulWidget {
 
   /// A live, already-authenticated connection handed over by the connection
   /// screen on first launch. When present it is reused as-is instead of
-  /// opening a new socket (see [_ChatScreenState._initConnection]). Null on
-  /// app relaunch and Settings round-trips, which build a fresh connection.
+  /// opening a new socket (see [_ChatScreenState._initConnection]).
   final ChatHandoff? handoff;
 
   const ChatScreen({
@@ -60,8 +65,6 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   // Services
-  // Not `final`: the service is disposed and recreated on every Settings
-  // round-trip (see _openSettings → _initConnection).
   late ws.WebSocketService _wsService;
   final AudioService _audioService = AudioService();
   late final OsiaNotificationService _notificationService;
@@ -89,6 +92,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _convStreamSub;
   StreamSubscription? _connSub;
   StreamSubscription? _errSub;
+  StreamSubscription? _relayTransferSub;
   StreamSubscription? _newChatSub;
   StreamSubscription? _cronNotificationSub;
   StreamSubscription? _configSub;
@@ -125,6 +129,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // Models
   List<ws.OsiaModel> _models = [];
   String? _selectedModel;
+  String? _selectedProvider;
   // Whether the PC's AI hierarchy is enabled. When true, the model selector
   // sheet notes that the chosen model is overridden by the configured chain.
   // Tracked via [configStream]; requested on connect.
@@ -215,6 +220,10 @@ class _ChatScreenState extends State<ChatScreen> {
   // [_noResponse] flips and an inline "no response" + Réessayer tile replaces
   // the thinking dots.
   static const Duration _firstTokenTimeout = Duration(seconds: 12);
+  // Queueing all chunks locally is not a peer acknowledgement. Preserve the
+  // 12-second small-frame path, but let the endpoint's 30-second chunk expiry
+  // report a transfer-specific error before showing a generic no-response tile.
+  static const Duration _relayTransferResponseGrace = Duration(seconds: 35);
   static const Duration _acceptedTurnSilenceTimeout = Duration(minutes: 5);
   Timer? _firstTokenTimer;
   Timer? _acceptedTurnTimer;
@@ -225,6 +234,9 @@ class _ChatScreenState extends State<ChatScreen> {
   // True once the watchdog fired with no first token — drives the retry tile.
   // Mutually exclusive with [_thinking] (arming the error clears thinking).
   bool _noResponse = false;
+  ws.RelayTransferErrorKind? _relayTurnError;
+  _TurnPhase _turnPhaseBeforeTransfer = _TurnPhase.pendingNotAccepted;
+  final Set<String> _activeRelayTransfers = <String>{};
   // The last text turn we sent, captured so "Réessayer" re-sends it verbatim
   // (file + prompt) without the user retyping. Cleared on switch/new/reset.
   _PendingTurn? _pendingTurn;
@@ -237,8 +249,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // resulting TTS audio plays even when auto-TTS is off. Reset on playback.
   bool _speakRequested = false;
 
-  // The handed-over connection, consumed on the first _initConnection only —
-  // Settings round-trips rebuild a fresh one.
+  // The handed-over connection, consumed on the first _initConnection only.
   ChatHandoff? _pendingHandoff;
 
   @override
@@ -305,8 +316,8 @@ class _ChatScreenState extends State<ChatScreen> {
     // Reuse the validated, still-open socket the connection screen handed
     // over, rather than opening a second connection (the close+reopen race
     // left the chat stuck "Connecting"). Falls back to a fresh service for
-    // app relaunch / Settings round-trips — which resolves the host from the
-    // token just like the connection screen ([ip] kept only as a fallback).
+    // app relaunch — which resolves the host from the token just like the
+    // connection screen ([ip] kept only as a fallback).
     _wsService =
         handoff?.service ??
         ws.WebSocketService(
@@ -331,10 +342,6 @@ class _ChatScreenState extends State<ChatScreen> {
             _wsService.sendGetModels();
             // Pull config too, so we know whether the AI hierarchy is on.
             _wsService.sendGetConfig();
-            // Replay our remembered selection so the server is in sync.
-            if (_selectedModel != null && _selectedModel!.isNotEmpty) {
-              _wsService.sendSetModel(_selectedModel!);
-            }
             // Re-fetch the open conversation's messages on every (re)connect.
             // The post-auth burst only carries the conversation LIST (never a
             // conversation's messages), and the server resets its
@@ -388,6 +395,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // when the user switches to them.
     _convStreamSub = _wsService.convStreamStream.listen(_onConvStream);
     _busySub = _wsService.conversationBusyStream.listen(_onConversationBusy);
+    _relayTransferSub = _wsService.relayTransferStream.listen(_onRelayTransfer);
 
     // AI-hierarchy state arrives on its own config channel (kept off the
     // sealed-message switch). Track it so the model selector can note when
@@ -445,12 +453,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _connError = null;
       _wsService.sendGetModels();
       _wsService.sendGetConfig();
-      if (_selectedModel != null && _selectedModel!.isNotEmpty) {
-        _wsService.sendSetModel(_selectedModel!);
-      }
     } else {
-      // Fresh connection (relaunch, Settings round-trip, or a handed-over
-      // socket that dropped during navigation).
+      // Fresh connection (relaunch or a handed-over socket that dropped during
+      // navigation).
       _wsService.connect();
     }
 
@@ -858,17 +863,18 @@ class _ChatScreenState extends State<ChatScreen> {
             _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
           }
         });
-      case ws.ModelsListMessage(:final models, :final current):
+      case ws.ModelsListMessage(
+        :final models,
+        :final current,
+        :final currentProvider,
+      ):
         setState(() {
           _models = models;
-          // Server-reported current wins unless we already have a saved
-          // selection that's still in the list.
-          final saved = _selectedModel;
-          if (saved == null || !models.any((m) => m.id == saved)) {
-            _selectedModel = current;
-            if (current != null && current.isNotEmpty) {
-              widget.storage.setSelectedModel(current);
-            }
+          // The PC is authoritative for the exact provider/model selection.
+          _selectedModel = current;
+          _selectedProvider = currentProvider;
+          if (current != null && current.isNotEmpty) {
+            widget.storage.setSelectedModel(current);
           }
         });
         // If the model selector sheet is currently open, push the fresh
@@ -1841,11 +1847,109 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Arm (or re-arm) the no-response watchdog. Fires [_onFirstTokenTimeout]
-  /// after [_firstTokenTimeout] unless cancelled by the first sign of life
+  /// after [timeout] unless cancelled by the first sign of life
   /// from the server for this turn (any turn-progress frame: a status
   /// thinking / tool-status update, an audio frame, the voice transcript, or
   /// the first response_chunk / full response — see [_onMessage]).
-  void _armFirstTokenTimer() {
+  void _onRelayTransfer(ws.RelayTransferEvent event) {
+    if (!mounted) return;
+    final pending = _pendingTurn;
+    final requestId = event.clientRequestId;
+    if (requestId.isNotEmpty &&
+        (pending == null || pending.clientRequestId != requestId)) {
+      return;
+    }
+    final transferKey = '${event.direction.name}:${event.chunkId}';
+
+    switch (event.state) {
+      case ws.RelayTransferState.started:
+        if (!_awaitingResponse || pending == null || event.chunkId.isEmpty) {
+          return;
+        }
+        if (_activeRelayTransfers.isEmpty &&
+            _turnPhase != _TurnPhase.transferring) {
+          _turnPhaseBeforeTransfer = _turnPhase == _TurnPhase.idle
+              ? _TurnPhase.pendingNotAccepted
+              : _turnPhase;
+        }
+        _activeRelayTransfers.add(transferKey);
+        _firstTokenTimer?.cancel();
+        _firstTokenTimer = null;
+        _acceptedTurnTimer?.cancel();
+        _acceptedTurnTimer = null;
+        _turnPhase = _TurnPhase.transferring;
+        setState(() {
+          _thinking = true;
+          _noResponse = false;
+          _relayTurnError = null;
+        });
+      case ws.RelayTransferState.completed:
+        _activeRelayTransfers.remove(transferKey);
+        if (_activeRelayTransfers.isNotEmpty || !_awaitingResponse) return;
+        unawaited(
+          Future<void>.delayed(Duration.zero, () {
+            if (!mounted ||
+                !_awaitingResponse ||
+                _activeRelayTransfers.isNotEmpty ||
+                _turnPhase != _TurnPhase.transferring) {
+              return;
+            }
+            final current = _pendingTurn;
+            if (current == null) return;
+            if (_turnPhaseBeforeTransfer == _TurnPhase.acceptedWorking) {
+              _noteTurnActivity(
+                clientRequestId: current.clientRequestId,
+                turnId: _watchdogTurnId ?? '',
+              );
+            } else {
+              _armFirstTokenTimer(timeout: _relayTransferResponseGrace);
+            }
+          }),
+        );
+      case ws.RelayTransferState.failed:
+        if (event.chunkId.isEmpty) {
+          _activeRelayTransfers.clear();
+        } else {
+          _activeRelayTransfers.remove(transferKey);
+        }
+        final errorKind = event.errorKind;
+        if (errorKind == null) return;
+        if (!_awaitingResponse || pending == null) {
+          final text = _relayTransferErrorText(OsiaL10n.of(context), errorKind);
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(text)));
+          return;
+        }
+        _firstTokenTimer?.cancel();
+        _firstTokenTimer = null;
+        _acceptedTurnTimer?.cancel();
+        _acceptedTurnTimer = null;
+        _turnPhase = _TurnPhase.idle;
+        setState(() {
+          _thinking = false;
+          _noResponse = true;
+          _relayTurnError = errorKind;
+        });
+        _scrollToBottomAnimated();
+    }
+  }
+
+  String _relayTransferErrorText(
+    OsiaStrings strings,
+    ws.RelayTransferErrorKind kind,
+  ) => switch (kind) {
+    ws.RelayTransferErrorKind.unsupportedChunk =>
+      strings.relayChunkUnsupportedError,
+    ws.RelayTransferErrorKind.frameTooLarge => strings.relayFrameTooLargeError,
+    ws.RelayTransferErrorKind.chunkFailed =>
+      strings.relayChunkTransferFailedError,
+    ws.RelayTransferErrorKind.e2eDecryptFailed =>
+      strings.relayE2eDecryptFailedError,
+    ws.RelayTransferErrorKind.relayUnreachable => strings.relayUnreachableError,
+  };
+
+  void _armFirstTokenTimer({Duration timeout = _firstTokenTimeout}) {
     _firstTokenTimer?.cancel();
     _acceptedTurnTimer?.cancel();
     final reqId = _pendingTurn?.clientRequestId ?? '';
@@ -1853,10 +1957,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _watchdogTurnId = null;
     _turnPhase = _TurnPhase.pendingNotAccepted;
     _lastTurnActivityAt = null;
-    _firstTokenTimer = Timer(
-      _firstTokenTimeout,
-      () => _onFirstTokenTimeout(reqId),
-    );
+    _relayTurnError = null;
+    _firstTokenTimer = Timer(timeout, () => _onFirstTokenTimeout(reqId));
   }
 
   bool _isCurrentWatchdogTurn(String clientRequestId, String turnId) {
@@ -1945,6 +2047,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _watchdogTurnId = null;
     _turnPhase = _TurnPhase.idle;
     _lastTurnActivityAt = null;
+    _activeRelayTransfers.clear();
+    _relayTurnError = null;
   }
 
   /// WOR-75/WOR-53/WOR-62 recovery poll. Start (or restart) the periodic
@@ -1996,7 +2100,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// The watchdog elapsed with TOTAL silence from the server — not a single
   /// turn-progress frame (status / tool-status / audio / transcript / response)
-  /// arrived in [_firstTokenTimeout]. Replace the thinking dots with the inline
+  /// arrived before the active watchdog deadline. Replace the thinking dots with
+  /// the inline
   /// "no response" + Réessayer tile — but only if the turn is still genuinely
   /// waiting over a healthy socket. A dropped connection is left to the
   /// connection banner (don't show a misleading "no response" error when it's
@@ -2021,6 +2126,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _thinking = false;
       _noResponse = true;
+      _relayTurnError = null;
     });
     _scrollToBottomAnimated();
   }
@@ -2050,6 +2156,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _thinking = false;
       _noResponse = true;
+      _relayTurnError = null;
     });
     _scrollToBottomAnimated();
   }
@@ -2350,9 +2457,12 @@ class _ChatScreenState extends State<ChatScreen> {
     _modelSelectorNotifier = notifier;
     _modelLoadTimeout?.cancel();
 
+    // Refresh even when a cached list exists so PC-side key/account/local-model
+    // changes are reflected without an app restart or reconnect.
+    _wsService.sendGetModels();
+
     if (_models.isEmpty) {
       final strings = OsiaL10n.of(context);
-      _wsService.sendGetModels();
       _modelLoadTimeout = Timer(const Duration(seconds: 5), () {
         if (_modelSelectorNotifier != notifier) return;
         if (notifier.value.models.isNotEmpty) return;
@@ -2367,17 +2477,25 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     try {
+      ws.OsiaModel? picked;
       final chosen = await showModelSelector(
         context: context,
         stateListenable: notifier,
         currentModel: _selectedModel,
+        currentProvider: _selectedProvider,
         hierarchyActive: _aiHierarchyEnabled,
         onReasoningChanged: _setReasoningForModel,
+        onModelSelected: (model) => picked = model,
       );
-      if (chosen != null && chosen != _selectedModel) {
-        setState(() => _selectedModel = chosen);
+      if (chosen != null &&
+          picked != null &&
+          (chosen != _selectedModel || picked!.provider != _selectedProvider)) {
+        setState(() {
+          _selectedModel = chosen;
+          _selectedProvider = picked!.provider;
+        });
         await widget.storage.setSelectedModel(chosen);
-        _wsService.sendSetModel(chosen);
+        _wsService.sendSetModel(chosen, provider: picked!.provider);
       }
     } finally {
       _modelLoadTimeout?.cancel();
@@ -2387,15 +2505,20 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _setReasoningForModel(String modelId, String optionId) {
+  void _setReasoningForModel(ws.OsiaModel model, String optionId) {
     if (!_reasoningConfigLoaded) {
       _wsService.sendGetConfig();
       return;
     }
-    final next = _reasoning.withModelOverride(modelId, optionId);
+    final provider = (model.provider ?? '').trim();
+    if (provider.isEmpty) return;
+    final key = provider == 'chatgpt_account'
+        ? 'chatgpt_account:${model.id}'
+        : model.id;
+    final next = _reasoning.withModelOverride(key, optionId);
     setState(() => _reasoning = next);
     _pushModelSelectorReasoning(next);
-    _wsService.sendSetSetting('reasoning', next.toJson());
+    _wsService.sendSetModelReasoning(provider, model.id, optionId);
     _wsService.sendGetConfig();
   }
 
@@ -2463,8 +2586,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Settings is pushed directly (not via a named route) so it can borrow
-  /// the live WebSocket service for the "restart server" action. When it
-  /// pops, the connection is rebuilt from scratch in case anything changed.
+  /// the live WebSocket service for server-backed actions. Route navigation
+  /// must not disturb that app-level connection or Chat's live subscriptions.
   Future<void> _openSettings() async {
     await Navigator.of(context).push(
       slideFadeRoute(
@@ -2477,47 +2600,16 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
-    // If settings disconnected us, this whole screen was removed from the
-    // navigator — don't touch state in that case.
     if (!mounted) return;
-    _msgSub?.cancel();
-    _convStreamSub?.cancel();
-    _connSub?.cancel();
-    _errSub?.cancel();
-    _newChatSub?.cancel();
-    _cronNotificationSub?.cancel();
-    _configSub?.cancel();
-    _mcpConfirmSub?.cancel();
-    _busySub?.cancel();
-    // The service (and its confirm stream) is rebuilt below — drop any queued
-    // requests so a stale one isn't answered against the new socket.
-    _mcpConfirmQueue.clear();
-    _mcpConfirmActive = false;
-    _cancelPendingConvLoad();
-    _cancelFirstTokenTimer();
-    _stopRecoveryPoll();
-    _stopTypewriter(); // Feature 2: the connection is being rebuilt.
-    _pendingTurn = null;
-    // Feature 1: the service (and its buffers) is rebuilt below — drop the
-    // in-memory optimistic copies; the re-fetched history restores everything.
-    _optimisticUser.clear();
-    _optimisticUserNoId = null;
-    widget.connectionLifecycle.detach(_wsService);
-    _wsService.dispose();
-    setState(() {
-      _initialized = false;
-      _entries.clear();
-      _thinking = false;
-      _noResponse = false;
-      _connError = null;
-      _conversations = [];
-      _activeConversationId = null;
-      _activeConversationTitle = null;
-      _streamingIndex = null;
-      _typeTarget = '';
-      _typeRevealed = 0;
-    });
-    _initConnection();
+
+    // Auto-TTS is a Chat-local preference that Settings can change. Refresh it
+    // without rebuilding the connection or touching any live turn state.
+    try {
+      final autoTts = await widget.storage.getAutoTts();
+      if (mounted) setState(() => _autoTts = autoTts);
+    } catch (e) {
+      debugPrint('[OSIA Chat] auto-TTS refresh failed: $e');
+    }
   }
 
   /// Full label of the active model for the input-bar pill. Falls back to
@@ -2542,6 +2634,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _convStreamSub?.cancel();
     _connSub?.cancel();
     _errSub?.cancel();
+    _relayTransferSub?.cancel();
     _newChatSub?.cancel();
     _cronNotificationSub?.cancel();
     _configSub?.cancel();
@@ -2778,7 +2871,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Inline thread tile shown in the trailing slot when a sent turn produced
-  /// no first token within [_firstTokenTimeout]. Replaces the thinking dots
+  /// no first token before the active watchdog deadline. Replaces the thinking
+  /// dots
   /// and offers a "Réessayer" button that re-sends the same message via
   /// [_retryLastTurn] (the user's original bubble stays). Styled to match the
   /// connection error banner's error palette.
@@ -2804,7 +2898,9 @@ class _ChatScreenState extends State<ChatScreen> {
               const SizedBox(width: 10),
               Flexible(
                 child: Text(
-                  strings.noResponseError,
+                  _relayTurnError == null
+                      ? strings.noResponseError
+                      : _relayTransferErrorText(strings, _relayTurnError!),
                   style: TextStyle(
                     color: palette.error,
                     fontSize: 13,

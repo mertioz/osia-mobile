@@ -32,6 +32,7 @@ import '../widgets/model_selector_sheet.dart';
 /// Display names for provider ids (mirrors the PC's `PROVIDERS[*].name`).
 /// Used by the AI-hierarchy editor to label `"provider:model"` chain entries.
 const Map<String, String> _kProviderNames = {
+  'chatgpt_account': 'ChatGPT',
   'anthropic': 'Anthropic',
   'openai': 'OpenAI',
   'deepseek': 'DeepSeek',
@@ -160,6 +161,7 @@ const String _kUrlGoogle = 'https://aistudio.google.com/app/apikey';
 const String _kUrlDeepSeek = 'https://platform.deepseek.com/api_keys';
 const String _kUrlXai = 'https://console.x.ai';
 const String _kUrlGroq = 'https://console.groq.com/keys';
+const String _kUrlMistral = 'https://console.mistral.ai/api-keys';
 bool get _liveApiAvailable => false;
 
 /// The providers shown under each category.
@@ -179,6 +181,7 @@ List<ProviderEntry> providersFor(ProviderCategory category) {
         ProviderEntry('DeepSeek', 'deepseek', _kUrlDeepSeek),
         ProviderEntry('xAI', 'xai', _kUrlXai),
         ProviderEntry('Groq', 'groq', _kUrlGroq),
+        ProviderEntry('Mistral', 'mistral', _kUrlMistral),
         ProviderEntry('Ollama', null, null),
       ];
     case ProviderCategory.tts:
@@ -406,6 +409,7 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
   /// Available models, used by the AI-hierarchy editor. Arrives via the
   /// shared message stream (`models_list`); may land slightly after config.
   List<ws.OsiaModel> _models = const [];
+  late ws.ChatGptAccountState _chatGptAccount;
 
   /// Latest raw API keys from the PC (real key strings, for pre-filling the
   /// editors). Pulled right after each config snapshot lands.
@@ -415,10 +419,12 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
   StreamSubscription<ws.ApiKeysMessage>? _apiKeysSub;
   StreamSubscription<ws.OsiaMessage>? _msgSub;
   StreamSubscription<ws.ConnectionState>? _connSub;
+  StreamSubscription<ws.ChatGptAccountState>? _chatGptSub;
 
   @override
   void initState() {
     super.initState();
+    _chatGptAccount = widget.wsService.chatGptAccountState;
     // Subscribe BEFORE requesting so the (broadcast, non-replaying) reply
     // can't slip through before we're listening.
     _configSub = widget.wsService.configStream.listen((data) {
@@ -436,6 +442,9 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
         setState(() => _models = msg.models);
       }
     });
+    _chatGptSub = widget.wsService.chatGptAccountStream.listen((state) {
+      if (mounted) setState(() => _chatGptAccount = state);
+    });
     _connSub = widget.wsService.connectionStream.listen((state) {
       if (state == ws.ConnectionState.connected) {
         _refreshServerState();
@@ -450,6 +459,7 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
     _apiKeysSub?.cancel();
     _msgSub?.cancel();
     _connSub?.cancel();
+    _chatGptSub?.cancel();
     super.dispose();
   }
 
@@ -463,6 +473,7 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
   void _refreshServerState() {
     widget.wsService.sendGetConfig();
     widget.wsService.sendGetModels();
+    widget.wsService.sendGetChatGptAccount();
   }
 
   void _open(Widget screen) {
@@ -470,7 +481,11 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
     // next entry into any section) reflects edits made there — otherwise a
     // stale snapshot could be re-seeded and overwrite server-side changes.
     Navigator.of(context).push(slideFadeRoute(screen)).then((_) {
-      if (mounted) widget.wsService.sendGetConfig();
+      if (mounted) {
+        widget.wsService.sendGetConfig();
+        widget.wsService.sendGetModels();
+        widget.wsService.sendGetChatGptAccount();
+      }
     });
   }
 
@@ -565,6 +580,7 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                                 .toString(),
                             sttProvider: (config.settings['stt_provider'] ?? '')
                                 .toString(),
+                            chatGptAccount: _chatGptAccount,
                           ),
                         ),
                       ),
@@ -1546,6 +1562,7 @@ class _ProviderListScreen extends StatelessWidget {
   final String ttsProvider;
   final String ttsVoice;
   final String sttProvider;
+  final ws.ChatGptAccountState chatGptAccount;
 
   const _ProviderListScreen({
     required this.category,
@@ -1560,6 +1577,7 @@ class _ProviderListScreen extends StatelessWidget {
     this.ttsProvider = '',
     this.ttsVoice = '',
     this.sttProvider = '',
+    this.chatGptAccount = const ws.ChatGptAccountState(),
   });
 
   bool _isKeySet(ProviderEntry entry) =>
@@ -1612,6 +1630,13 @@ class _ProviderListScreen extends StatelessWidget {
                 _SttSelectorCard(
                   wsService: wsService,
                   initialProvider: sttProvider,
+                ),
+                const SizedBox(height: 16),
+              ],
+              if (category == ProviderCategory.ai) ...[
+                _ChatGptAccountCard(
+                  wsService: wsService,
+                  initialState: chatGptAccount,
                 ),
                 const SizedBox(height: 16),
               ],
@@ -1679,6 +1704,177 @@ class _ProviderListScreen extends StatelessWidget {
 }
 
 // ── API-key editor for one provider ─────────────────────────────────────
+
+class _ChatGptAccountCard extends StatefulWidget {
+  final ws.WebSocketService wsService;
+  final ws.ChatGptAccountState initialState;
+
+  const _ChatGptAccountCard({
+    required this.wsService,
+    required this.initialState,
+  });
+
+  @override
+  State<_ChatGptAccountCard> createState() => _ChatGptAccountCardState();
+}
+
+class _ChatGptAccountCardState extends State<_ChatGptAccountCard> {
+  late ws.ChatGptAccountState _state;
+  StreamSubscription<ws.ChatGptAccountState>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _state = widget.initialState;
+    _sub = widget.wsService.chatGptAccountStream.listen((state) {
+      if (mounted) setState(() => _state = state);
+    });
+    widget.wsService.sendGetChatGptAccount();
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _openLogin() async {
+    final value = _state.verificationUrl.trim();
+    if (value.isEmpty) return;
+    try {
+      await launchUrl(Uri.parse(value), mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(OsiaL10n.of(context).linkOpenFailed)),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final details = <String>[
+      if (_state.email.trim().isNotEmpty) _state.email.trim(),
+      if (_state.plan.trim().isNotEmpty && _state.plan != 'unknown')
+        _state.plan.replaceAll('_', ' '),
+    ];
+    return _OsiaCard(
+      palette: palette,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'ChatGPT',
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+              Tooltip(
+                message: strings.chatGptInfo,
+                child: Icon(
+                  Icons.info_outline_rounded,
+                  color: palette.textMuted,
+                  size: 19,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (_state.connected) ...[
+            Text(
+              strings.connected,
+              style: TextStyle(color: palette.accent, fontSize: 13),
+            ),
+            if (details.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                details.join(' · '),
+                style: TextStyle(color: palette.textMuted, fontSize: 12.5),
+              ),
+            ],
+            if (_state.usagePercent != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                strings.chatGptUsage(_state.usagePercent!),
+                style: TextStyle(color: palette.textMuted, fontSize: 12.5),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton(
+                onPressed: widget.wsService.sendChatGptAccountLogout,
+                child: Text(strings.chatGptDisconnect),
+              ),
+            ),
+          ] else if (_state.connecting) ...[
+            Text(
+              strings.connectingStatus,
+              style: TextStyle(color: palette.accent, fontSize: 13),
+            ),
+            if (_state.userCode.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                strings.chatGptEnterCode,
+                style: TextStyle(color: palette.textMuted, fontSize: 12.5),
+              ),
+              const SizedBox(height: 4),
+              SelectableText(
+                _state.userCode,
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.4,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (_state.verificationUrl.isNotEmpty)
+                  FilledButton(
+                    onPressed: _openLogin,
+                    child: Text(strings.chatGptOpenLogin),
+                  ),
+                if (_state.loginCancellable)
+                  OutlinedButton(
+                    onPressed: widget.wsService.sendCancelChatGptAccountLogin,
+                    child: Text(strings.cancel),
+                  ),
+              ],
+            ),
+          ] else ...[
+            if (_state.error.isNotEmpty && _state.error != 'disconnected') ...[
+              Text(
+                strings.chatGptError(_state.error),
+                style: TextStyle(color: palette.textMuted, fontSize: 12.5),
+              ),
+              const SizedBox(height: 10),
+            ],
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton(
+                onPressed: widget.wsService.sendChatGptAccountLogin,
+                child: Text(strings.chatGptConnect),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
 
 class _ProviderConfigScreen extends StatefulWidget {
   final ProviderEntry entry;
@@ -3721,7 +3917,6 @@ class _HierarchyScreenState extends State<_HierarchyScreen> {
   late List<String> _medium;
   late bool _enabled;
   late List<ws.OsiaModel> _models;
-  late Map<String, bool> _apiKeysSet;
   StreamSubscription<ws.OsiaMessage>? _msgSub;
 
   @override
@@ -3731,7 +3926,6 @@ class _HierarchyScreenState extends State<_HierarchyScreen> {
     _medium = List<String>.from(widget.config.mediumChain);
     _enabled = widget.config.aiHierarchyEnabled;
     _models = List<ws.OsiaModel>.from(widget.models);
-    _apiKeysSet = widget.config.apiKeysSet;
     _msgSub = widget.wsService.messageStream.listen((msg) {
       if (msg is ws.ModelsListMessage && mounted) {
         setState(() => _models = msg.models);
@@ -3746,15 +3940,12 @@ class _HierarchyScreenState extends State<_HierarchyScreen> {
     super.dispose();
   }
 
-  /// Configured model choices: models whose provider has a key set, plus
-  /// keyless Ollama. Mirrors the desktop's `_hier_model_choices`.
+  /// PC-authoritative usable model choices from the sanitized catalogue.
   List<_ModelChoice> get _choices {
     final out = <_ModelChoice>[];
     for (final m in _models) {
       final provider = m.provider ?? '';
-      final configured =
-          provider == 'ollama' || (_apiKeysSet[provider] ?? false);
-      if (!configured) continue;
+      if (provider.isEmpty || !m.selectable) continue;
       final pname = _kProviderNames[provider] ?? provider;
       out.add(
         _ModelChoice(

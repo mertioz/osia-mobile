@@ -103,7 +103,22 @@ void main() {
     },
   );
 
-  test('app resume ensures the current service without ChatScreen', () async {
+  test('app resume preserves a healthy current service', () async {
+    final service = _FakeWebSocketService();
+    addTearDown(service.dispose);
+    service.emitConnection(ws.ConnectionState.connected);
+    final lifecycle = ConnectionLifecycleService(resumeThrottle: Duration.zero)
+      ..attach(service);
+
+    lifecycle.didChangeAppLifecycleState(AppLifecycleState.paused);
+    lifecycle.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(service.ensureReasons, ['app_lifecycle_resumed']);
+    expect(service.forceReconnects, [false]);
+  });
+
+  test('app resume asks a disconnected service to reconnect once', () async {
     final service = _FakeWebSocketService();
     addTearDown(service.dispose);
     final lifecycle = ConnectionLifecycleService(resumeThrottle: Duration.zero)
@@ -114,7 +129,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(service.ensureReasons, ['app_lifecycle_resumed']);
-    expect(service.forceReconnects, [true]);
+    expect(service.forceReconnects, [false]);
   });
 
   testWidgets(

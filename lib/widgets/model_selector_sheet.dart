@@ -24,7 +24,9 @@ class ModelSelectorState {
   });
 }
 
-typedef ModelReasoningChanged = void Function(String modelId, String optionId);
+typedef ModelReasoningChanged =
+    void Function(ws.OsiaModel model, String optionId);
+typedef ModelSelected = void Function(ws.OsiaModel model);
 
 class ModelReasoningOption {
   final String id;
@@ -101,6 +103,12 @@ const Set<String> _claudeXhighReasoningModels = {
 
 @visibleForTesting
 List<ModelReasoningOption> reasoningOptionsForModel(ws.OsiaModel model) {
+  if (model.reasoningOptions.isNotEmpty) {
+    return [
+      for (final option in model.reasoningOptions)
+        ModelReasoningOption(option.id, isDefault: option.isDefault),
+    ];
+  }
   final provider = _reasoningProviderFor(model);
   final modelId = model.id.trim();
   if (provider.isEmpty || modelId.isEmpty) return const [];
@@ -201,6 +209,8 @@ Future<String?> showModelSelector({
   required String? currentModel,
   required bool hierarchyActive,
   ModelReasoningChanged? onReasoningChanged,
+  ModelSelected? onModelSelected,
+  String? currentProvider,
 }) {
   return showModalBottomSheet<String>(
     context: context,
@@ -212,54 +222,31 @@ Future<String?> showModelSelector({
         builder: (ctx, state, _) => _ModelSelectorSheet(
           models: state.models,
           currentModel: currentModel,
+          currentProvider: currentProvider,
           isLoading: state.isLoading,
           errorMessage: state.errorMessage,
           hierarchyActive: hierarchyActive,
           reasoning: state.reasoning,
           reasoningReady: state.reasoningReady,
           onReasoningChanged: onReasoningChanged,
+          onModelSelected: onModelSelected,
         ),
       );
-      // Reduced motion: skip the added fade + spring-scale; the modal route's
-      // own slide is the platform-minimal transition.
-      if (Motion.reduced(ctx)) return content;
-      // The modal route already slides the sheet up; riding the same animation
-      // with a fade + a light spring-scale gives a smooth slide-and-pop open.
-      // The fade rides [enter] (opacity must stay in [0,1]); the scale is a
-      // transform, so the spring's ≈6.5% overshoot is safe and reads as a
-      // tasteful settle.
-      final routeAnim =
-          ModalRoute.of(ctx)?.animation ?? kAlwaysCompleteAnimation;
-      return FadeTransition(
-        opacity: CurvedAnimation(
-          parent: routeAnim,
-          curve: MotionCurves.enter,
-          reverseCurve: MotionCurves.exit,
-        ),
-        child: ScaleTransition(
-          alignment: Alignment.bottomCenter,
-          scale: Tween<double>(begin: 0.96, end: 1.0).animate(
-            CurvedAnimation(
-              parent: routeAnim,
-              curve: MotionCurves.spring,
-              reverseCurve: MotionCurves.exit,
-            ),
-          ),
-          child: content,
-        ),
-      );
+      return content;
     },
   );
 }
 
-class _ModelSelectorSheet extends StatelessWidget {
+class _ModelSelectorSheet extends StatefulWidget {
   final List<ws.OsiaModel> models;
   final String? currentModel;
+  final String? currentProvider;
   final bool isLoading;
   final String? errorMessage;
   final ws.OsiaReasoningConfig reasoning;
   final bool reasoningReady;
   final ModelReasoningChanged? onReasoningChanged;
+  final ModelSelected? onModelSelected;
 
   /// When true, the PC's AI hierarchy is on, so the chosen model is overridden
   /// by the configured chain — the sheet shows an explanatory note.
@@ -268,13 +255,51 @@ class _ModelSelectorSheet extends StatelessWidget {
   const _ModelSelectorSheet({
     required this.models,
     required this.currentModel,
+    this.currentProvider,
     required this.isLoading,
     this.errorMessage,
     required this.hierarchyActive,
     required this.reasoning,
     required this.reasoningReady,
     this.onReasoningChanged,
+    this.onModelSelected,
   });
+
+  @override
+  State<_ModelSelectorSheet> createState() => _ModelSelectorSheetState();
+}
+
+class _ModelSelectorSheetState extends State<_ModelSelectorSheet> {
+  String? _provider;
+  ws.OsiaModel? _pendingModelSelection;
+  bool _modelSelectionScheduled = false;
+
+  void _queueModelSelection(ws.OsiaModel model) {
+    _pendingModelSelection = model;
+    if (_modelSelectionScheduled) return;
+    _modelSelectionScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _modelSelectionScheduled = false;
+      if (!mounted) return;
+      final selected = _pendingModelSelection;
+      _pendingModelSelection = null;
+      if (selected == null) return;
+      widget.onModelSelected?.call(selected);
+      Navigator.of(context).pop(selected.id);
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _ModelSelectorSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final provider = _provider;
+    if (provider != null &&
+        !widget.models.any(
+          (model) => (model.provider ?? '').trim().toLowerCase() == provider,
+        )) {
+      _provider = null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -307,7 +332,9 @@ class _ModelSelectorSheet extends StatelessWidget {
                   Icon(Icons.tune_rounded, color: palette.accent, size: 18),
                   const SizedBox(width: 8),
                   Text(
-                    strings.availableModels,
+                    _provider == null
+                        ? strings.availableModels
+                        : _providerName(_provider, strings),
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
@@ -319,7 +346,7 @@ class _ModelSelectorSheet extends StatelessWidget {
             ),
             // When the AI hierarchy is active, the picked model is overridden
             // by the configured chain — note it under the title.
-            if (hierarchyActive)
+            if (widget.hierarchyActive)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
                 child: Text(
@@ -333,20 +360,25 @@ class _ModelSelectorSheet extends StatelessWidget {
                 ),
               ),
             Flexible(
-              // Smooth the height change + cross-fade when the body flips
-              // from spinner to model list (or to an error message).
-              child: AnimatedSize(
-                duration: MotionDurations.medium,
-                curve: MotionCurves.enter,
-                alignment: Alignment.topCenter,
-                child: AnimatedSwitcher(
-                  duration: MotionDurations.medium,
-                  switchInCurve: MotionCurves.enter,
-                  switchOutCurve: MotionCurves.exit,
-                  child: KeyedSubtree(
-                    key: ValueKey(_bodyKind),
-                    child: _buildBody(palette, strings),
-                  ),
+              // One short content-only cross-fade. Stable semantic keys mean a
+              // catalogue refresh with unchanged visible content does not
+              // replay it, and reduced-motion collapses it to an instant swap.
+              child: AnimatedSwitcher(
+                duration: Motion.duration(
+                  context,
+                  MotionDurations.routeReverse,
+                ),
+                switchInCurve: Motion.curve(context, MotionCurves.enter),
+                switchOutCurve: Motion.curve(context, MotionCurves.exit),
+                layoutBuilder: (currentChild, previousChildren) => Stack(
+                  alignment: Alignment.topCenter,
+                  children: <Widget>[...previousChildren, ?currentChild],
+                ),
+                transitionBuilder: (child, animation) =>
+                    FadeTransition(opacity: animation, child: child),
+                child: KeyedSubtree(
+                  key: ValueKey(_bodyKind),
+                  child: _buildBody(palette, strings),
                 ),
               ),
             ),
@@ -360,32 +392,32 @@ class _ModelSelectorSheet extends StatelessWidget {
   /// Discriminates which body variant is showing so the AnimatedSwitcher
   /// only animates on real state flips, not on every rebuild.
   String get _bodyKind {
-    if (isLoading && models.isEmpty) return 'loading';
-    if (errorMessage != null && models.isEmpty) return 'error';
-    if (models.isEmpty) return 'empty';
-    return 'list';
+    if (widget.isLoading && widget.models.isEmpty) return 'loading';
+    if (widget.errorMessage != null && widget.models.isEmpty) return 'error';
+    if (widget.models.isEmpty) return 'empty';
+    return _provider == null ? 'providers' : 'models:$_provider';
   }
 
   Widget _buildBody(OsiaPalette palette, OsiaStrings strings) {
     // Loading but no cached list to fall back on — spinner.
-    if (isLoading && models.isEmpty) {
+    if (widget.isLoading && widget.models.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 36),
         child: Center(child: CircularProgressIndicator(color: palette.accent)),
       );
     }
     // Error and no cached list to fall back on — explicit message.
-    if (errorMessage != null && models.isEmpty) {
+    if (widget.errorMessage != null && widget.models.isEmpty) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
         child: Text(
-          errorMessage!,
+          widget.errorMessage!,
           style: TextStyle(color: palette.textMuted, fontSize: 13),
           textAlign: TextAlign.center,
         ),
       );
     }
-    if (models.isEmpty) {
+    if (widget.models.isEmpty) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
         child: Text(
@@ -395,52 +427,104 @@ class _ModelSelectorSheet extends StatelessWidget {
         ),
       );
     }
-    final entries = _buildEntries(strings);
+    if (_provider == null) return _buildProviderGrid(palette, strings);
+    final models = widget.models
+        .where((model) => (model.provider ?? '').toLowerCase() == _provider)
+        .toList();
     return ListView.separated(
+      key: PageStorageKey<String>('models:$_provider'),
       shrinkWrap: true,
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
-      itemCount: entries.length,
+      itemCount: models.length + 1,
       separatorBuilder: (context, _) => const SizedBox(height: 2),
       itemBuilder: (context, index) {
-        final entry = entries[index];
-        if (entry.providerName != null) {
-          return _ProviderHeader(name: entry.providerName!, palette: palette);
+        if (index == 0) {
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: const ValueKey<String>('models-back'),
+              onPressed: () => setState(() => _provider = null),
+              icon: const Icon(Icons.arrow_back_rounded, size: 17),
+              label: Text(strings.availableModels),
+            ),
+          );
         }
-        final m = entry.model!;
-        final isActive = m.id == currentModel;
+        final m = models[index - 1];
+        final isActive =
+            m.id == widget.currentModel &&
+            (widget.currentProvider == null ||
+                widget.currentProvider!.isEmpty ||
+                m.provider == widget.currentProvider);
         return _ModelTile(
+          key: ValueKey<String>('model:${m.provider}:${m.id}'),
           model: m,
           isActive: isActive,
           palette: palette,
-          reasoning: reasoning,
-          reasoningReady: reasoningReady,
-          onReasoningChanged: onReasoningChanged,
-          onTap: () => Navigator.of(context).pop(m.id),
+          reasoning: widget.reasoning,
+          reasoningReady: widget.reasoningReady,
+          onReasoningChanged: widget.onReasoningChanged,
+          onTap: () => _queueModelSelection(m),
         );
       },
     );
   }
 
-  /// Flattens [models] into list entries: one section header per provider
-  /// (groups ordered by first appearance) followed by that provider's models.
-  /// Falls back to a flat list when no model carries provider info.
-  List<_SheetEntry> _buildEntries(OsiaStrings strings) {
-    final hasProviders = models.any(
-      (m) => (m.provider ?? '').trim().isNotEmpty,
-    );
-    if (!hasProviders) {
-      return [for (final m in models) _SheetEntry.item(m)];
-    }
+  Widget _buildProviderGrid(OsiaPalette palette, OsiaStrings strings) {
     final groups = <String, List<ws.OsiaModel>>{};
-    for (final m in models) {
-      groups.putIfAbsent(_providerName(m.provider, strings), () => []).add(m);
+    for (final model in widget.models) {
+      final provider = (model.provider ?? '').trim().toLowerCase();
+      if (provider.isEmpty) continue;
+      groups.putIfAbsent(provider, () => <ws.OsiaModel>[]).add(model);
     }
-    return [
-      for (final group in groups.entries) ...[
-        _SheetEntry.section(group.key),
-        for (final m in group.value) _SheetEntry.item(m),
-      ],
-    ];
+    return GridView.builder(
+      key: const PageStorageKey<String>('model-providers'),
+      shrinkWrap: true,
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 16),
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+        childAspectRatio: 1.85,
+      ),
+      itemCount: groups.length,
+      itemBuilder: (context, index) {
+        final entry = groups.entries.elementAt(index);
+        return Material(
+          key: ValueKey<String>('provider:${entry.key}'),
+          color: palette.surfaceElevated,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () => setState(() => _provider = entry.key),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _providerName(entry.key, strings),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    strings.modelCount(entry.value.length),
+                    style: TextStyle(color: palette.textMuted, fontSize: 11.5),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   /// Display names for the providers reported by the server; unknown
@@ -454,60 +538,13 @@ class _ModelSelectorSheet extends StatelessWidget {
     'xai': 'XAI',
     'deepseek': 'DEEPSEEK',
     'mistral': 'MISTRAL',
+    'chatgpt_account': 'CHATGPT',
   };
 
   String _providerName(String? provider, OsiaStrings strings) {
     final key = (provider ?? '').trim().toLowerCase();
     if (key.isEmpty) return strings.otherProviders;
     return _providerLabels[key] ?? key.toUpperCase();
-  }
-}
-
-/// A row in the sheet's model list: either a provider section header
-/// (when [providerName] is set) or a selectable model (when [model] is set).
-class _SheetEntry {
-  final String? providerName;
-  final ws.OsiaModel? model;
-
-  const _SheetEntry.section(this.providerName) : model = null;
-  const _SheetEntry.item(this.model) : providerName = null;
-}
-
-/// Thin section divider labelled with the provider name — small uppercase
-/// accent-colored text centered between two subtle horizontal lines.
-class _ProviderHeader extends StatelessWidget {
-  final String name;
-  final OsiaPalette palette;
-
-  const _ProviderHeader({required this.name, required this.palette});
-
-  @override
-  Widget build(BuildContext context) {
-    final line = Container(
-      height: 1,
-      color: palette.accent.withValues(alpha: 0.18),
-    );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 14, 8, 6),
-      child: Row(
-        children: [
-          Expanded(child: line),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Text(
-              name,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 1.2,
-                color: palette.accent,
-              ),
-            ),
-          ),
-          Expanded(child: line),
-        ],
-      ),
-    );
   }
 }
 
@@ -521,6 +558,7 @@ class _ModelTile extends StatelessWidget {
   final VoidCallback onTap;
 
   const _ModelTile({
+    super.key,
     required this.model,
     required this.isActive,
     required this.palette,
@@ -542,107 +580,110 @@ class _ModelTile extends StatelessWidget {
         reasoningOptions.isNotEmpty &&
         onReasoningChanged != null;
 
-    return PressableScale(
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
+    final tile = Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: isActive
+                ? palette.accent.withValues(alpha: 0.10)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
               color: isActive
-                  ? palette.accent.withValues(alpha: 0.10)
+                  ? palette.accent.withValues(alpha: 0.4)
                   : Colors.transparent,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: isActive
-                    ? palette.accent.withValues(alpha: 0.4)
-                    : Colors.transparent,
-                width: 1,
-              ),
+              width: 1,
             ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      model.label,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: isActive
+                            ? FontWeight.w600
+                            : FontWeight.w500,
+                        color: isActive ? palette.accent : palette.textPrimary,
+                      ),
+                    ),
+                    if (model.description != null &&
+                        model.description!.isNotEmpty) ...[
+                      const SizedBox(height: 3),
                       Text(
-                        model.label,
+                        model.description!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: isActive
-                              ? FontWeight.w600
-                              : FontWeight.w500,
-                          color: isActive
-                              ? palette.accent
-                              : palette.textPrimary,
+                          fontSize: 11.5,
+                          color: palette.textMuted,
                         ),
                       ),
-                      if (model.description != null &&
-                          model.description!.isNotEmpty) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          model.description!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            color: palette.textMuted,
-                          ),
-                        ),
-                      ],
-                      if (showChip) ...[
-                        const SizedBox(height: 6),
-                        _ReasoningChip(
-                          label:
-                              '${strings.reasoning}: ${reasoningOption.label(strings)}',
-                          palette: palette,
-                        ),
-                      ],
                     ],
+                    if (showChip) ...[
+                      const SizedBox(height: 6),
+                      _ReasoningChip(
+                        label:
+                            '${strings.reasoning}: ${reasoningOption.label(strings)}',
+                        palette: palette,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (showReasoningControl) ...[
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: strings.reasoning,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 34,
+                    height: 34,
+                  ),
+                  padding: EdgeInsets.zero,
+                  onPressed: () => _showReasoningSheet(
+                    context,
+                    options: reasoningOptions,
+                    currentId: reasoningId,
+                  ),
+                  icon: Icon(
+                    Icons.settings_rounded,
+                    color: showChip ? palette.accent : palette.textMuted,
+                    size: 18,
                   ),
                 ),
-                if (showReasoningControl) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: strings.reasoning,
-                    visualDensity: VisualDensity.compact,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 34,
-                      height: 34,
-                    ),
-                    padding: EdgeInsets.zero,
-                    onPressed: () => _showReasoningSheet(
-                      context,
-                      options: reasoningOptions,
-                      currentId: reasoningId,
-                    ),
-                    icon: Icon(
-                      Icons.settings_rounded,
-                      color: showChip ? palette.accent : palette.textMuted,
-                      size: 18,
-                    ),
-                  ),
-                ],
-                if (isActive) ...[
-                  const SizedBox(width: 4),
-                  Icon(Icons.check_rounded, color: palette.accent, size: 18),
-                ],
               ],
-            ),
+              if (isActive) ...[
+                const SizedBox(width: 4),
+                Icon(Icons.check_rounded, color: palette.accent, size: 18),
+              ],
+            ],
           ),
         ),
       ),
     );
+    return Motion.reduced(context) ? tile : PressableScale(child: tile);
   }
 
   String _selectedReasoningId(List<ModelReasoningOption> options) {
-    final selected = (reasoning.models[model.id] ?? 'auto')
-        .trim()
-        .toLowerCase();
+    final key = model.provider == 'chatgpt_account'
+        ? 'chatgpt_account:${model.id}'
+        : model.id;
+    final selected =
+        (model.reasoningOptions.isNotEmpty
+                ? model.selectedReasoning
+                : reasoning.models[key] ?? 'auto')
+            .trim()
+            .toLowerCase();
     return options.any((option) => option.id == selected) ? selected : 'auto';
   }
 
@@ -670,7 +711,7 @@ class _ModelTile extends StatelessWidget {
         options: options,
         currentId: currentId,
         onSelected: (optionId) {
-          onReasoningChanged?.call(model.id, optionId);
+          onReasoningChanged?.call(model, optionId);
           Navigator.of(ctx).pop();
         },
       ),

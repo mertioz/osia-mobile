@@ -78,6 +78,11 @@ class OsiaStrings {
   final String model;
   final String settingsTooltip;
   final String noResponseError;
+  final String relayChunkUnsupportedError;
+  final String relayFrameTooLargeError;
+  final String relayChunkTransferFailedError;
+  final String relayE2eDecryptFailedError;
+  final String relayUnreachableError;
   final String osiaWorkingBackground;
   final String scheduledTaskCompleted;
   final String scheduledTaskFailed;
@@ -463,6 +468,11 @@ class OsiaStrings {
     required this.model,
     required this.settingsTooltip,
     required this.noResponseError,
+    required this.relayChunkUnsupportedError,
+    required this.relayFrameTooLargeError,
+    required this.relayChunkTransferFailedError,
+    required this.relayE2eDecryptFailedError,
+    required this.relayUnreachableError,
     required this.osiaWorkingBackground,
     required this.scheduledTaskCompleted,
     required this.scheduledTaskFailed,
@@ -805,6 +815,142 @@ class OsiaStrings {
       .replaceAll('{server}', server)
       .replaceAll('{tool}', tool);
 
+  String modelCount(int count) {
+    switch (languageCode) {
+      case 'fr':
+        return count == 1 ? '1 modèle' : '$count modèles';
+      case 'zh':
+        return '$count 个模型';
+      case 'ja':
+        return '$count モデル';
+      case 'de':
+        return count == 1 ? '1 Modell' : '$count Modelle';
+      case 'es':
+        return count == 1 ? '1 modelo' : '$count modelos';
+      default:
+        return count == 1 ? '1 model' : '$count models';
+    }
+  }
+
+  String get chatGptConnect {
+    switch (languageCode) {
+      case 'fr':
+        return 'Se connecter avec ChatGPT';
+      case 'zh':
+        return '使用 ChatGPT 登录';
+      case 'ja':
+        return 'ChatGPT でサインイン';
+      case 'de':
+        return 'Mit ChatGPT anmelden';
+      case 'es':
+        return 'Iniciar sesión con ChatGPT';
+      default:
+        return 'Sign in with ChatGPT';
+    }
+  }
+
+  String get chatGptDisconnect {
+    switch (languageCode) {
+      case 'fr':
+        return 'Se déconnecter';
+      case 'zh':
+        return '退出登录';
+      case 'ja':
+        return 'サインアウト';
+      case 'de':
+        return 'Abmelden';
+      case 'es':
+        return 'Cerrar sesión';
+      default:
+        return 'Sign out';
+    }
+  }
+
+  String get chatGptOpenLogin {
+    switch (languageCode) {
+      case 'fr':
+        return 'Ouvrir la connexion';
+      case 'zh':
+        return '打开登录页面';
+      case 'ja':
+        return 'ログインページを開く';
+      case 'de':
+        return 'Anmeldung öffnen';
+      case 'es':
+        return 'Abrir inicio de sesión';
+      default:
+        return 'Open sign-in page';
+    }
+  }
+
+  String get chatGptEnterCode {
+    switch (languageCode) {
+      case 'fr':
+        return 'Saisissez ce code :';
+      case 'zh':
+        return '输入此代码：';
+      case 'ja':
+        return 'このコードを入力：';
+      case 'de':
+        return 'Diesen Code eingeben:';
+      case 'es':
+        return 'Introduce este código:';
+      default:
+        return 'Enter this code:';
+    }
+  }
+
+  String get chatGptInfo {
+    switch (languageCode) {
+      case 'fr':
+        return "ChatGPT est un fournisseur cloud. Les requêtes et réponses sont traitées par OpenAI. Aucun fichier local n'est joint automatiquement et les garanties de confidentialité des modèles locaux ne s'appliquent pas. ChatGPT est un fournisseur sélectionnable normal, sans priorité particulière.";
+      case 'zh':
+        return 'ChatGPT 是云端提供商。提示和回复由 OpenAI 处理。不会自动附加本地文件，本地模型的隐私保证不适用。ChatGPT 是普通的可选提供商，没有特殊优先级。';
+      case 'ja':
+        return 'ChatGPT はクラウドプロバイダーです。プロンプトと応答は OpenAI が処理します。ローカルファイルは自動添付されず、ローカルモデルのプライバシー保証は適用されません。ChatGPT は特別な優先順位を持たない通常の選択可能プロバイダーです。';
+      case 'de':
+        return 'ChatGPT ist ein Cloud-Anbieter. Anfragen und Antworten werden von OpenAI verarbeitet. Lokale Dateien werden nicht automatisch angehängt; die Datenschutzgarantien lokaler Modelle gelten nicht. ChatGPT ist ein normal auswählbarer Anbieter ohne besondere Priorität.';
+      case 'es':
+        return 'ChatGPT es un proveedor en la nube. OpenAI procesa las solicitudes y respuestas. No se adjuntan archivos locales automáticamente y no se aplican las garantías de privacidad de los modelos locales. ChatGPT es un proveedor seleccionable normal, sin prioridad especial.';
+      default:
+        return 'ChatGPT is a cloud provider. Prompts and responses are processed by OpenAI. No local files are attached automatically, and local-model privacy guarantees do not apply. ChatGPT is a normal selectable provider with no special priority.';
+    }
+  }
+
+  String chatGptError(String category) {
+    switch (languageCode) {
+      case 'fr':
+        return 'ChatGPT est indisponible. Réessayez ou vérifiez OSIA sur le PC.';
+      case 'zh':
+        return 'ChatGPT 当前不可用。请重试或检查电脑上的 OSIA。';
+      case 'ja':
+        return 'ChatGPT を利用できません。再試行するか、PC の OSIA を確認してください。';
+      case 'de':
+        return 'ChatGPT ist nicht verfügbar. Erneut versuchen oder OSIA auf dem PC prüfen.';
+      case 'es':
+        return 'ChatGPT no está disponible. Reinténtalo o revisa OSIA en el PC.';
+      default:
+        return 'ChatGPT is unavailable. Retry or check OSIA on the PC.';
+    }
+  }
+
+  String chatGptUsage(int percent) {
+    switch (languageCode) {
+      case 'fr':
+        return '$percent % utilisés';
+      case 'zh':
+        return '已使用 $percent%';
+      case 'ja':
+        return '$percent% 使用済み';
+      case 'de':
+        return '$percent % verwendet';
+      case 'es':
+        return '$percent % usado';
+      default:
+        return '$percent% used';
+    }
+  }
+
   /// Localized display name for a theme palette key.
   String themeName(String paletteKey) {
     switch (paletteKey) {
@@ -871,6 +1017,12 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   model: 'Model',
   settingsTooltip: 'Settings',
   noResponseError: "OSIA didn't respond.",
+  relayChunkUnsupportedError:
+      'Update OSIA on your PC and phone to send this large message.',
+  relayFrameTooLargeError: 'The encrypted relay message is too large.',
+  relayChunkTransferFailedError: 'The encrypted relay transfer failed.',
+  relayE2eDecryptFailedError: 'Relay encryption verification failed.',
+  relayUnreachableError: 'The public relay is unreachable.',
   osiaWorkingBackground: 'OSIA is working in the background',
   scheduledTaskCompleted: 'Scheduled task completed',
   scheduledTaskFailed: 'Scheduled task failed',
@@ -1244,6 +1396,12 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   model: 'Modèle',
   settingsTooltip: 'Paramètres',
   noResponseError: "OSIA n'a pas répondu.",
+  relayChunkUnsupportedError:
+      'Mettez à jour OSIA sur le PC et le téléphone pour envoyer ce message.',
+  relayFrameTooLargeError: 'Le message chiffré du relais est trop volumineux.',
+  relayChunkTransferFailedError: 'Le transfert chiffré du relais a échoué.',
+  relayE2eDecryptFailedError: 'La vérification du chiffrement a échoué.',
+  relayUnreachableError: 'Le relais public est inaccessible.',
   osiaWorkingBackground: 'OSIA travaille en arrière-plan',
   scheduledTaskCompleted: 'Tâche planifiée terminée',
   scheduledTaskFailed: 'Tâche planifiée échouée',
@@ -1620,6 +1778,11 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   model: '模型',
   settingsTooltip: '设置',
   noResponseError: 'OSIA 没有回应。',
+  relayChunkUnsupportedError: '请更新电脑和手机上的 OSIA 以发送此大消息。',
+  relayFrameTooLargeError: '加密中继消息过大。',
+  relayChunkTransferFailedError: '加密中继传输失败。',
+  relayE2eDecryptFailedError: '中继加密验证失败。',
+  relayUnreachableError: '无法连接公共中继。',
   osiaWorkingBackground: 'OSIA 正在后台工作',
   scheduledTaskCompleted: '定时任务已完成',
   scheduledTaskFailed: '定时任务失败',
@@ -1971,6 +2134,11 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   model: 'モデル',
   settingsTooltip: '設定',
   noResponseError: 'OSIA から応答がありませんでした。',
+  relayChunkUnsupportedError: 'この大きなメッセージを送るには、PC とスマートフォンの OSIA を更新してください。',
+  relayFrameTooLargeError: '暗号化されたリレーメッセージが大きすぎます。',
+  relayChunkTransferFailedError: '暗号化されたリレー転送に失敗しました。',
+  relayE2eDecryptFailedError: 'リレー暗号化の検証に失敗しました。',
+  relayUnreachableError: '公開リレーに接続できません。',
   osiaWorkingBackground: 'OSIA はバックグラウンドで作業中',
   scheduledTaskCompleted: 'スケジュールタスク完了',
   scheduledTaskFailed: 'スケジュールタスク失敗',
@@ -2336,6 +2504,14 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   model: 'Modell',
   settingsTooltip: 'Einstellungen',
   noResponseError: 'OSIA hat nicht geantwortet.',
+  relayChunkUnsupportedError:
+      'Aktualisiere OSIA auf PC und Smartphone für diese große Nachricht.',
+  relayFrameTooLargeError: 'Die verschlüsselte Relay-Nachricht ist zu groß.',
+  relayChunkTransferFailedError:
+      'Die verschlüsselte Relay-Übertragung ist fehlgeschlagen.',
+  relayE2eDecryptFailedError:
+      'Die Relay-Verschlüsselungsprüfung ist fehlgeschlagen.',
+  relayUnreachableError: 'Das öffentliche Relay ist nicht erreichbar.',
   osiaWorkingBackground: 'OSIA arbeitet im Hintergrund',
   scheduledTaskCompleted: 'Geplante Aufgabe abgeschlossen',
   scheduledTaskFailed: 'Geplante Aufgabe fehlgeschlagen',
@@ -2718,6 +2894,12 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   model: 'Modelo',
   settingsTooltip: 'Ajustes',
   noResponseError: 'OSIA no respondió.',
+  relayChunkUnsupportedError:
+      'Actualiza OSIA en el PC y el teléfono para enviar este mensaje grande.',
+  relayFrameTooLargeError: 'El mensaje cifrado del relay es demasiado grande.',
+  relayChunkTransferFailedError: 'Falló la transferencia cifrada del relay.',
+  relayE2eDecryptFailedError: 'Falló la verificación del cifrado del relay.',
+  relayUnreachableError: 'No se puede acceder al relay público.',
   osiaWorkingBackground: 'OSIA está trabajando en segundo plano',
   scheduledTaskCompleted: 'Tarea programada completada',
   scheduledTaskFailed: 'Tarea programada fallida',

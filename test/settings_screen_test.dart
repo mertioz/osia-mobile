@@ -152,6 +152,33 @@ class _FakeBackgroundPermission
   }
 }
 
+class _RecordingBackgroundConnectionService
+    extends BackgroundConnectionService {
+  _RecordingBackgroundConnectionService({
+    required super.storage,
+    required super.platform,
+    required super.notificationPermission,
+  });
+
+  ws.WebSocketService? attachedService;
+  int attachCount = 0;
+  int detachCount = 0;
+
+  @override
+  void attachWebSocketService(ws.WebSocketService service) {
+    attachCount++;
+    attachedService = service;
+    super.attachWebSocketService(service);
+  }
+
+  @override
+  void detachWebSocketService(ws.WebSocketService service) {
+    detachCount++;
+    if (identical(attachedService, service)) attachedService = null;
+    super.detachWebSocketService(service);
+  }
+}
+
 void main() {
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
@@ -164,6 +191,7 @@ void main() {
       _FakeNotificationClient notificationClient,
       _FakeBackgroundPlatform backgroundPlatform,
       _FakeBackgroundPermission backgroundPermission,
+      _RecordingBackgroundConnectionService backgroundService,
     })
   >
   pumpSettings(
@@ -183,6 +211,11 @@ void main() {
     final backgroundPermission = _FakeBackgroundPermission()
       ..requestResult = backgroundPermissionResult
       ..allowedResult = backgroundPermissionResult;
+    final backgroundService = _RecordingBackgroundConnectionService(
+      storage: storage,
+      platform: backgroundPlatform,
+      notificationPermission: backgroundPermission,
+    );
     addTearDown(wsService.dispose);
 
     await tester.pumpWidget(
@@ -200,11 +233,7 @@ void main() {
                 storage: storage,
                 client: notificationClient,
               ),
-              backgroundConnectionService: BackgroundConnectionService(
-                storage: storage,
-                platform: backgroundPlatform,
-                notificationPermission: backgroundPermission,
-              ),
+              backgroundConnectionService: backgroundService,
             ),
           ),
         ),
@@ -218,8 +247,29 @@ void main() {
       notificationClient: notificationClient,
       backgroundPlatform: backgroundPlatform,
       backgroundPermission: backgroundPermission,
+      backgroundService: backgroundService,
     );
   }
+
+  testWidgets(
+    'disposing Settings keeps an injected app-level background attachment',
+    (tester) async {
+      final harness = await pumpSettings(tester);
+      final startCount = harness.backgroundPlatform.startCount;
+      final stopCount = harness.backgroundPlatform.stopCount;
+
+      expect(harness.backgroundService.attachedService, harness.wsService);
+      expect(harness.backgroundService.attachCount, 1);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+
+      expect(harness.backgroundService.attachedService, harness.wsService);
+      expect(harness.backgroundService.detachCount, 0);
+      expect(harness.backgroundPlatform.startCount, startCount);
+      expect(harness.backgroundPlatform.stopCount, stopCount);
+    },
+  );
 
   testWidgets('shows notification toggle in the requested Settings order', (
     tester,

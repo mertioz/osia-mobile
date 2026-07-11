@@ -203,8 +203,7 @@ class BackgroundConnectionService {
     final started = await _platform.start();
     if (!started) return false;
 
-    await _ensureWebSocketConnected(reason);
-    return true;
+    return _ensureWebSocketConnected(reason);
   }
 
   Future<bool> _requestNotificationPermission() async {
@@ -235,7 +234,7 @@ class BackgroundConnectionService {
     }
     try {
       await service.ensureConnected(reason: reason);
-      return true;
+      return service.state == ws.ConnectionState.connected;
     } catch (e) {
       debugPrint('[OSIA Background] ensureConnected failed: $e');
       return false;

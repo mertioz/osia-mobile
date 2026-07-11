@@ -67,6 +67,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _liveApi = false;
   late final OsiaNotificationService _notificationService;
   late final BackgroundConnectionService _backgroundConnectionService;
+  late final bool _ownsBackgroundConnectionService;
   bool _notificationsEnabled = false;
   bool _notificationsBusy = false;
   bool _backgroundConnectionEnabled = false;
@@ -78,6 +79,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _notificationService =
         widget.notificationService ??
         OsiaNotificationService(storage: widget.storage);
+    _ownsBackgroundConnectionService =
+        widget.backgroundConnectionService == null;
     _backgroundConnectionService =
         widget.backgroundConnectionService ??
         BackgroundConnectionService(storage: widget.storage);
@@ -110,7 +113,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
-    _backgroundConnectionService.detachWebSocketService(widget.wsService);
+    if (_ownsBackgroundConnectionService) {
+      _backgroundConnectionService.detachWebSocketService(widget.wsService);
+    }
     _connSub?.cancel();
     _restartStatusSub?.cancel();
     _restartTimeout?.cancel();
@@ -193,6 +198,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _refreshServerState() {
     widget.wsService.sendGetConfig();
     widget.wsService.sendGetModels();
+    widget.wsService.sendGetChatGptAccount();
     widget.wsService.sendMcpStatus();
   }
 

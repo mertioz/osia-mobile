@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'relay_crypto_service.dart';
 import 'relay_service.dart';
 
 // ── WOR-75 diagnostic flag ────────────────────────────────────────────────
@@ -18,7 +19,150 @@ import 'relay_service.dart';
 /// `[OSIA WOR-75]` tag. Shared with chat_screen.dart (referenced there as
 /// `ws.kOsiaDebugPlaceholder`). Flip to `false` (or delete) to silence. Adds
 /// NO behaviour — logging only.
-const bool kOsiaDebugPlaceholder = true;
+const bool kOsiaDebugPlaceholder = false;
+const bool kAllowLegacyRendezvousFallback = bool.fromEnvironment(
+  'OSIA_ALLOW_LEGACY_RENDEZVOUS_FALLBACK',
+);
+const Set<String> _relayControlFields = <String>{
+  'v',
+  'type',
+  'role',
+  'pair_id',
+  'seq',
+  'ack',
+  'payload',
+};
+const Set<String> _relayHelloPayloadFields = <String>{
+  'e2e_version',
+  'alg',
+  'public_key',
+  'nonce_base',
+  'e2e_chunk_version',
+};
+const Set<String> _relayReadyPayloadFields = <String>{
+  'e2e_version',
+  'alg',
+  'kid',
+  'tag',
+};
+const Set<String> _relayE2eFrameFields = <String>{
+  'v',
+  'type',
+  'role',
+  'pair_id',
+  'seq',
+  'ack',
+  'e2e_version',
+  'alg',
+  'kid',
+  'priority',
+  'final',
+  'nonce',
+  'ciphertext',
+};
+const String kRelayE2eUnavailableError =
+    'Relay E2E connection unavailable. Update OSIA on PC and mobile, '
+    'or retry when the public relay is reachable.';
+const String kRelayUnreachableError =
+    'The public relay is unreachable. Check the network and retry.';
+const String kRelayE2eHandshakeTimeoutError =
+    'The relay E2E handshake timed out before both devices were ready.';
+const String kRelayE2eAuthMismatchError =
+    'Relay E2E authentication failed. Verify the pairing token on both devices.';
+const String kRelayE2eStaleSessionError =
+    'The relay E2E session is stale or was replaced. Reconnect both devices.';
+const String kRelayE2eRequiredError =
+    'Relay E2E encryption is required. Update OSIA on PC and mobile.';
+const String kRelayUpdateRequiredError =
+    'The public relay protocol is incompatible. Update OSIA on PC and mobile.';
+const String kRelayConnectionReplacedError =
+    'This relay connection was replaced by a newer mobile connection.';
+const String kRelayPairingConfigurationError =
+    'Relay pairing proof or route is invalid. Pair both devices again.';
+const String kRelayChunkUnsupportedError =
+    'Encrypted relay chunking is not supported by the PC or relay. '
+    'Update OSIA and retry.';
+const String kRelayFrameTooLargeError =
+    'The encrypted relay frame is too large.';
+const String kRelayChunkTransferFailedError =
+    'The encrypted relay chunk transfer failed.';
+const String kRelayE2eDecryptFailedError =
+    'Relay E2E authentication or decryption failed.';
+
+String _relayErrorMessage(String code) {
+  if (code == 'e2e_required') return kRelayE2eRequiredError;
+  if (code == 'update_required') return kRelayUpdateRequiredError;
+  if (code == 'session_superseded') return kRelayConnectionReplacedError;
+  if (code == 'pair_proof_mismatch' || code == 'invalid_pair_route') {
+    return kRelayPairingConfigurationError;
+  }
+  if (code == 'resume_not_supported') return kRelayE2eStaleSessionError;
+  if (code == 'unsupported_chunk') return kRelayChunkUnsupportedError;
+  if (code == 'frame_too_large') return kRelayFrameTooLargeError;
+  if (code.startsWith('chunk_')) return kRelayChunkTransferFailedError;
+  if (code == 'e2e_decrypt_failed' || code == 'e2e_auth_failed') {
+    return kRelayE2eDecryptFailedError;
+  }
+  if (code == 'pair_secret_mismatch' || code == 'e2e_auth_mismatch') {
+    return kRelayE2eAuthMismatchError;
+  }
+  if (code == 'replay_rejected' ||
+      code == 'session_superseded' ||
+      code == 'stale_session') {
+    return kRelayE2eStaleSessionError;
+  }
+  return code.isEmpty ? 'relay_error' : code;
+}
+
+bool isRelayConnectionError(String error) => <String>{
+  kRelayE2eUnavailableError,
+  kRelayUnreachableError,
+  kRelayE2eHandshakeTimeoutError,
+  kRelayE2eAuthMismatchError,
+  kRelayE2eStaleSessionError,
+  kRelayE2eRequiredError,
+  kRelayUpdateRequiredError,
+  kRelayConnectionReplacedError,
+  kRelayPairingConfigurationError,
+  kRelayE2eDecryptFailedError,
+}.contains(error);
+
+enum RelayTransferDirection { outbound, inbound }
+
+enum RelayTransferState { started, completed, failed }
+
+enum RelayTransferErrorKind {
+  unsupportedChunk,
+  frameTooLarge,
+  chunkFailed,
+  e2eDecryptFailed,
+  relayUnreachable,
+}
+
+/// Local-only relay transport progress. App-level ids are never placed in
+/// relay chunk metadata; [clientRequestId] exists only inside this process so
+/// the chat watchdog can correlate a transfer with its pending WOR-111 turn.
+class RelayTransferEvent {
+  const RelayTransferEvent({
+    required this.direction,
+    required this.state,
+    required this.chunkId,
+    this.clientRequestId = '',
+    this.errorKind,
+  });
+
+  final RelayTransferDirection direction;
+  final RelayTransferState state;
+  final String chunkId;
+  final String clientRequestId;
+  final RelayTransferErrorKind? errorKind;
+}
+
+@visibleForTesting
+String relayErrorMessageForTest(String code) => _relayErrorMessage(code);
+
+@visibleForTesting
+bool allowLegacyRendezvousFallbackForTest() => kAllowLegacyRendezvousFallback;
 
 // ── Connection state ──────────────────────────────────────────────────────
 
@@ -170,12 +314,20 @@ class OsiaModel {
   final String label;
   final String? description;
   final String? provider;
+  final List<String> inputModalities;
+  final bool selectable;
+  final List<OsiaModelReasoningOption> reasoningOptions;
+  final String selectedReasoning;
 
   const OsiaModel({
     required this.id,
     required this.label,
     this.description,
     this.provider,
+    this.inputModalities = const ['text'],
+    this.selectable = true,
+    this.reasoningOptions = const [],
+    this.selectedReasoning = 'auto',
   });
 
   factory OsiaModel.fromJson(dynamic raw) {
@@ -188,12 +340,42 @@ class OsiaModel {
       final label = (m['label'] ?? m['name'] ?? m['id'] ?? m['model'] ?? id)
           .toString();
       final desc = m['description']?.toString();
-      final provider = m['provider']?.toString();
+      final provider = (m['providerId'] ?? m['provider'])?.toString();
+      final rawModalities = m['inputModalities'];
+      final modalities = rawModalities is List
+          ? rawModalities
+                .map((value) => value.toString().trim().toLowerCase())
+                .where((value) => value.isNotEmpty)
+                .toList()
+          : const <String>['text'];
+      final rawReasoning = m['reasoning'];
+      final reasoning = rawReasoning is Map
+          ? rawReasoning.cast<String, dynamic>()
+          : const <String, dynamic>{};
+      final rawOptions = reasoning['options'];
+      final options = rawOptions is List
+          ? rawOptions
+                .whereType<Map>()
+                .map(
+                  (value) => OsiaModelReasoningOption.fromJson(
+                    value.cast<String, dynamic>(),
+                  ),
+                )
+                .where((option) => option.id.isNotEmpty)
+                .toList()
+          : const <OsiaModelReasoningOption>[];
       return OsiaModel(
         id: id,
         label: label,
         description: desc,
         provider: provider,
+        inputModalities: modalities,
+        selectable: m['selectable'] != false && m['usable'] != false,
+        reasoningOptions: options,
+        selectedReasoning: (reasoning['selected'] ?? 'auto')
+            .toString()
+            .trim()
+            .toLowerCase(),
       );
     }
     final s = raw?.toString() ?? '';
@@ -201,12 +383,150 @@ class OsiaModel {
   }
 }
 
+class OsiaModelReasoningOption {
+  final String id;
+  final String label;
+  final bool isDefault;
+
+  const OsiaModelReasoningOption({
+    required this.id,
+    required this.label,
+    this.isDefault = false,
+  });
+
+  factory OsiaModelReasoningOption.fromJson(Map<String, dynamic> json) {
+    final id = (json['id'] ?? '').toString().trim().toLowerCase();
+    return OsiaModelReasoningOption(
+      id: id,
+      label: (json['label'] ?? id).toString(),
+      isDefault: json['default'] == true,
+    );
+  }
+}
+
+class ModelProviderCatalogueEntry {
+  final String id;
+  final String displayName;
+  final String kind;
+  final List<OsiaModel> models;
+
+  const ModelProviderCatalogueEntry({
+    required this.id,
+    required this.displayName,
+    required this.kind,
+    required this.models,
+  });
+
+  factory ModelProviderCatalogueEntry.fromJson(Map<String, dynamic> json) {
+    final id = (json['providerId'] ?? json['id'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final rawModels = json['models'];
+    final seen = <String>{};
+    final models = rawModels is List
+        ? rawModels
+              .map(OsiaModel.fromJson)
+              .where(
+                (model) =>
+                    model.id.trim().isNotEmpty &&
+                    model.selectable &&
+                    seen.add('${model.provider ?? id}\u0000${model.id}'),
+              )
+              .toList()
+        : <OsiaModel>[];
+    return ModelProviderCatalogueEntry(
+      id: id,
+      displayName: (json['displayName'] ?? id).toString(),
+      kind: (json['kind'] ?? 'api').toString(),
+      models: models,
+    );
+  }
+}
+
+/// Sanitized ChatGPT-account state. Credentials and raw App Server payloads
+/// are deliberately not represented by this type.
+class ChatGptAccountState {
+  final bool runtimeAvailable;
+  final bool connected;
+  final bool connecting;
+  final bool loginCancellable;
+  final bool available;
+  final String error;
+  final String email;
+  final String plan;
+  final int? usagePercent;
+  final String selectedModel;
+  final String verificationUrl;
+  final String userCode;
+
+  const ChatGptAccountState({
+    this.runtimeAvailable = false,
+    this.connected = false,
+    this.connecting = false,
+    this.loginCancellable = false,
+    this.available = false,
+    this.error = '',
+    this.email = '',
+    this.plan = '',
+    this.usagePercent,
+    this.selectedModel = '',
+    this.verificationUrl = '',
+    this.userCode = '',
+  });
+
+  factory ChatGptAccountState.fromJson(Object? raw) {
+    if (raw is! Map) return const ChatGptAccountState();
+    final json = raw.cast<String, dynamic>();
+    final login = json['login'] is Map
+        ? (json['login'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final usage = json['usagePercent'];
+    return ChatGptAccountState(
+      runtimeAvailable: json['runtimeAvailable'] == true,
+      connected: json['connected'] == true,
+      connecting: json['connecting'] == true,
+      loginCancellable: json['loginCancellable'] == true,
+      available: json['available'] == true,
+      error: (json['error'] ?? '').toString(),
+      email: (json['email'] ?? '').toString(),
+      plan: (json['plan'] ?? '').toString(),
+      usagePercent: usage is int && usage >= 0 && usage <= 100 ? usage : null,
+      selectedModel: (json['selectedModel'] ?? '').toString(),
+      verificationUrl: (login['verificationUrl'] ?? '').toString(),
+      userCode: (login['userCode'] ?? '').toString(),
+    );
+  }
+
+  ChatGptAccountState withoutEphemeralLogin() => ChatGptAccountState(
+    runtimeAvailable: runtimeAvailable,
+    connected: connected,
+    connecting: false,
+    loginCancellable: false,
+    available: available,
+    error: error,
+    email: email,
+    plan: plan,
+    usagePercent: usagePercent,
+    selectedModel: selectedModel,
+  );
+}
+
 /// Full list of available models sent by the server in response to
 /// `{"type":"get_models"}`.
 class ModelsListMessage extends OsiaMessage {
   final List<OsiaModel> models;
+  final List<ModelProviderCatalogueEntry> providers;
   final String? current;
-  const ModelsListMessage({required this.models, this.current});
+  final String? currentProvider;
+  final ChatGptAccountState account;
+  const ModelsListMessage({
+    required this.models,
+    this.providers = const [],
+    this.current,
+    this.currentProvider,
+    this.account = const ChatGptAccountState(),
+  });
 }
 
 /// Per-provider/per-model reasoning settings from `config.reasoning`.
@@ -1152,6 +1472,7 @@ class WebSocketService {
   static const int _baseReconnectMs = 500;
   static const Duration _connectTimeout = Duration(seconds: 10);
   static const Duration _relayReadyTimeout = Duration(seconds: 5);
+  static const Duration _relayNativePingInterval = Duration(seconds: 25);
 
   // ── Streams ───────────────────────────────────────────────────────────
 
@@ -1164,8 +1485,18 @@ class WebSocketService {
   final StreamController<String> _errorCtrl =
       StreamController<String>.broadcast();
 
+  final StreamController<RelayTransferEvent> _relayTransferCtrl =
+      StreamController<RelayTransferEvent>.broadcast();
+
   final StreamController<ConfigData> _configCtrl =
       StreamController<ConfigData>.broadcast();
+
+  final StreamController<ChatGptAccountState> _chatGptAccountCtrl =
+      StreamController<ChatGptAccountState>.broadcast();
+
+  ChatGptAccountState _chatGptAccountState = const ChatGptAccountState();
+  bool _hasChatGptAccountState = false;
+  bool _awaitingAuthenticatedInitialSync = false;
 
   final StreamController<ApiKeysMessage> _apiKeysCtrl =
       StreamController<ApiKeysMessage>.broadcast();
@@ -1262,9 +1593,23 @@ class WebSocketService {
   /// Stream of human-readable connection error messages, for UI surfacing.
   Stream<String> get errorStream => _errorCtrl.stream;
 
+  /// Local-only progress/failure events for oversized encrypted relay frames.
+  /// Kept outside [messageStream] so the sealed app-message hierarchy and PC
+  /// WebSocket protocol remain unchanged.
+  Stream<RelayTransferEvent> get relayTransferStream =>
+      _relayTransferCtrl.stream;
+
   /// Stream of full config snapshots (one per `get_config` reply). Kept off
   /// [messageStream] so the chat screen's sealed-message switch is untouched.
   Stream<ConfigData> get configStream => _configCtrl.stream;
+
+  /// Sanitized ChatGPT-account status and ephemeral device-code updates.
+  Stream<ChatGptAccountState> get chatGptAccountStream =>
+      _chatGptAccountCtrl.stream;
+
+  /// Last valid non-sensitive account snapshot, retained across reconnects so
+  /// Settings never flashes a fabricated disconnected state while refreshing.
+  ChatGptAccountState get chatGptAccountState => _chatGptAccountState;
 
   /// Stream of raw API-key snapshots (one per `get_api_keys` reply). Kept off
   /// [messageStream] for the same reason as [configStream].
@@ -1400,7 +1745,7 @@ class WebSocketService {
       if (terminal) {
         debugPrint(
           '[OSIA WS] ignored uncorrelated terminal frame type=$frameType '
-          'client_request_id=$clientRequestId',
+          'without conversation metadata',
         );
         return true;
       }
@@ -1412,8 +1757,7 @@ class WebSocketService {
       if (activeReq != clientRequestId) {
         debugPrint(
           '[OSIA WS] ignored stale frame type=$frameType '
-          'conversation_id=$id client_request_id=$clientRequestId '
-          'active_client_request_id=$activeReq',
+          'because a newer request is active',
         );
         return true;
       }
@@ -1423,7 +1767,7 @@ class WebSocketService {
     if (terminal && activeReq != null && clientRequestId.isEmpty) {
       debugPrint(
         '[OSIA WS] ignored ambiguous terminal frame type=$frameType '
-        'conversation_id=$id active_client_request_id=$activeReq',
+        'while a request is active',
       );
       return true;
     }
@@ -1433,7 +1777,7 @@ class WebSocketService {
         !_hasLiveConversationTurn(id)) {
       debugPrint(
         '[OSIA WS] ignored late terminal frame type=$frameType '
-        'conversation_id=$id client_request_id=$clientRequestId',
+        'for an inactive conversation',
       );
       return true;
     }
@@ -1445,7 +1789,7 @@ class WebSocketService {
         !_hasLiveConversationTurn(id)) {
       debugPrint(
         '[OSIA WS] ignored late content frame type=$frameType '
-        'conversation_id=$id client_request_id=$clientRequestId',
+        'for an inactive conversation',
       );
       return true;
     }
@@ -1592,8 +1936,50 @@ class WebSocketService {
   }
 
   @visibleForTesting
+  void expectAuthenticatedInitialSyncForTest() {
+    _awaitingAuthenticatedInitialSync = true;
+  }
+
+  @visibleForTesting
   void handleRelayEnvelopeForTest(Map<String, dynamic> envelope) {
     _onRelayData(jsonEncode(envelope));
+  }
+
+  @visibleForTesting
+  Future<Map<String, Object?>> buildRelayEncryptedEnvelopeForTest(
+    Map<String, dynamic> frame, {
+    required RelayConnectionConfig config,
+    required RelaySessionKeys keys,
+    required int seq,
+  }) {
+    return _buildRelayEncryptedEnvelope(
+      frame,
+      config: config,
+      keys: keys,
+      seq: seq,
+      priority: relayFramePriority(frame),
+      finalFrame: relayFrameIsFinal(frame),
+    );
+  }
+
+  @visibleForTesting
+  Future<Map<String, dynamic>?> decryptRelayEnvelopeForTest(
+    Map<String, dynamic> envelope, {
+    required RelaySessionKeys keys,
+    SequenceReplayGuard? replayGuard,
+  }) async {
+    try {
+      final frame = await decryptFrame(
+        envelope,
+        keys: keys,
+        direction: RelayCryptoDirection.pcToMobile,
+        replayGuard: replayGuard,
+        replayKey: 'pc',
+      );
+      return frame.cast<String, dynamic>();
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Mark conversation [id]'s turn as in flight at SEND time (WOR-75/WOR-53/
@@ -1608,7 +1994,7 @@ class WebSocketService {
     if (id.isNotEmpty) _pendingConvs.add(id);
     if (kOsiaDebugPlaceholder) {
       debugPrint(
-        '[OSIA WOR-75] markPending(id="$id") → pending=$_pendingConvs',
+        '[OSIA WOR-75] markPending → pending_count=${_pendingConvs.length}',
       );
     }
   }
@@ -1630,8 +2016,8 @@ class WebSocketService {
     _streamBuffers.remove(id);
     if (kOsiaDebugPlaceholder) {
       debugPrint(
-        '[OSIA WOR-75] clearConvBuffer(id="$id") → buffer dropped, '
-        'pending UNCHANGED=$_pendingConvs',
+        '[OSIA WOR-75] clearConvBuffer → buffer dropped, '
+        'pending_count=${_pendingConvs.length}',
       );
     }
   }
@@ -1648,8 +2034,8 @@ class WebSocketService {
     final removed = _pendingConvs.remove(id);
     if (kOsiaDebugPlaceholder) {
       debugPrint(
-        '[OSIA WOR-75] clearPending(id="$id") removed=$removed → '
-        'pending=$_pendingConvs',
+        '[OSIA WOR-75] clearPending removed=$removed → '
+        'pending_count=${_pendingConvs.length}',
       );
     }
   }
@@ -1689,11 +2075,39 @@ class WebSocketService {
   /// reconnect path, exactly like a socket-level failure.
   final Future<String> Function()? resolveHost;
   final Future<RelayConnectionConfig> Function()? resolveRelay;
+  final bool allowLegacyRendezvousFallback;
 
   bool _connectedViaRelay = false;
   RelayConnectionConfig? _relayConfig;
   Completer<bool>? _relayReadyCompleter;
   int _relaySeq = 0;
+  int _relaySendEpoch = 0;
+  Future<void> _relaySendChain = Future<void>.value();
+  Future<void> _relayReceiveChain = Future<void>.value();
+  int _relayE2eEpoch = 0;
+  RelaySessionContext? _relayE2eContext;
+  RelaySessionKeys? _relayE2eKeys;
+  SequenceReplayGuard _relayE2eReplayGuard = SequenceReplayGuard();
+  Map<String, dynamic>? _pendingRelayE2eReadyEnvelope;
+  bool _relayInitialE2eHelloSent = false;
+  bool _relayPeerContextHelloSent = false;
+  bool _relayMobileReadySent = false;
+  bool _relayE2eReadySent = false;
+  bool _relayPeerE2eReady = false;
+  bool _relayPcReady = false;
+  bool _relayPairConfirmed = false;
+  bool _relayBlocksLegacyFallback = false;
+  String? _relayHandshakeFailure;
+  int _relayWorkerChunkVersion = 0;
+  int _relayWorkerChunkMaxFrameBytes = 0;
+  int _relayWorkerChunkMaxCiphertextChars = 0;
+  int _relayWorkerChunkMaxTotalBytes = 0;
+  int _relayWorkerChunkMaxCount = 0;
+  int _relayPeerChunkVersion = 0;
+  late final RelayE2eChunkReassembler _relayChunkReassembler;
+  final Map<String, String> _relayOutboundChunkRequests = <String, String>{};
+  final Map<String, Timer> _relayOutboundChunkTimers = <String, Timer>{};
+  String _relayLastOutboundRequestId = '';
 
   WebSocketService({
     required this.ip,
@@ -1701,10 +2115,29 @@ class WebSocketService {
     this.autoReconnect = true,
     this.resolveHost,
     this.resolveRelay,
-  });
+    this.allowLegacyRendezvousFallback = kAllowLegacyRendezvousFallback,
+  }) {
+    _relayChunkReassembler = RelayE2eChunkReassembler(
+      onTimeout: _handleRelayChunkTimeout,
+    );
+  }
 
   @visibleForTesting
   int get debugConnectAttemptCount => _debugConnectAttemptCount;
+
+  @visibleForTesting
+  Duration get relayNativePingIntervalForTest => _relayNativePingInterval;
+
+  @visibleForTesting
+  Map<String, bool> relayHandshakeStateForTest() => <String, bool>{
+    'pc_ready': _relayPcReady,
+    'peer_ready': _relayPeerE2eReady,
+    'context_ready': _relayE2eContext != null,
+    'keys_ready': _relayE2eKeys != null,
+  };
+
+  @visibleForTesting
+  int relayInflightChunksForTest() => _relayChunkReassembler.inflightCount;
 
   // ── Public API ───────────────────────────────────────────────────────
 
@@ -1762,6 +2195,7 @@ class WebSocketService {
     _intentionalClose = true;
     _connectGeneration++;
     _socketGeneration++;
+    _clearChatGptEphemeralLogin();
     _connectFuture = null;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
@@ -1769,6 +2203,7 @@ class WebSocketService {
     _channel?.sink.close();
     _channel = null;
     _connectedViaRelay = false;
+    _resetRelayE2eState();
     _relayConfig = null;
     _relayReadyCompleter = null;
     _setState(ConnectionState.disconnected);
@@ -1870,8 +2305,33 @@ class WebSocketService {
   }
 
   /// Tell the server to switch to [model] for subsequent generations.
-  void sendSetModel(String model) {
-    _send({'type': 'set_model', 'model': model});
+  void sendSetModel(String model, {String? provider}) {
+    _send({'type': 'set_model', 'model': model, 'provider': ?provider});
+  }
+
+  void sendSetModelReasoning(String provider, String model, String reasoning) {
+    _send({
+      'type': 'set_model_reasoning',
+      'provider': provider,
+      'model': model,
+      'reasoning': reasoning,
+    });
+  }
+
+  void sendGetChatGptAccount() {
+    _send({'type': 'get_chatgpt_account'});
+  }
+
+  void sendChatGptAccountLogin() {
+    _send({'type': 'chatgpt_account_login'});
+  }
+
+  void sendCancelChatGptAccountLogin() {
+    _send({'type': 'chatgpt_account_cancel_login'});
+  }
+
+  void sendChatGptAccountLogout() {
+    _send({'type': 'chatgpt_account_logout'});
   }
 
   /// Ask the server to synthesize [text] over TTS and send the audio back
@@ -1879,7 +2339,9 @@ class WebSocketService {
   /// the auto-TTS preference.
   void sendSpeak(String text) {
     final preview = text.length > 50 ? '${text.substring(0, 50)}…' : text;
-    debugPrint('[OSIA WS] sendSpeak: state=$_state, text="$preview"');
+    debugPrint(
+      '[OSIA WS] sendSpeak: state=$_state, text_chars=${preview.length}',
+    );
     _send({'type': 'speak', 'text': text});
   }
 
@@ -2130,7 +2592,9 @@ class WebSocketService {
     _connectionCtrl.close();
     _messageCtrl.close();
     _errorCtrl.close();
+    _relayTransferCtrl.close();
     _configCtrl.close();
+    _chatGptAccountCtrl.close();
     _apiKeysCtrl.close();
     _memoryCtrl.close();
     _memoryErrorCtrl.close();
@@ -2173,12 +2637,191 @@ class WebSocketService {
   bool _isCurrentSocket(int generation) =>
       !_disposed && !_intentionalClose && generation == _socketGeneration;
 
+  bool _isValidChatGptAccountSnapshot(Object? raw) {
+    if (raw is! Map || raw['connected'] is! bool) return false;
+    final providerId = (raw['providerId'] ?? 'chatgpt_account')
+        .toString()
+        .trim()
+        .toLowerCase();
+    return providerId == 'chatgpt_account';
+  }
+
+  ChatGptAccountState _acceptChatGptAccountSnapshot(
+    Object? raw, {
+    required bool standalone,
+  }) {
+    if (!_isValidChatGptAccountSnapshot(raw)) return _chatGptAccountState;
+    // A dedicated state reply is newer/more specific than the account copy
+    // embedded in a catalogue. Once any valid snapshot is cached, preserve it
+    // until the requested dedicated reply arrives; a slower models_list must
+    // not roll the UI back during reconnect or refresh.
+    if (!standalone && _hasChatGptAccountState) {
+      return _chatGptAccountState;
+    }
+    final state = ChatGptAccountState.fromJson(raw);
+    _chatGptAccountState = state;
+    _hasChatGptAccountState = true;
+    if (!_chatGptAccountCtrl.isClosed) _chatGptAccountCtrl.add(state);
+    return state;
+  }
+
+  void _clearChatGptEphemeralLogin() {
+    _awaitingAuthenticatedInitialSync = false;
+    if (!_hasChatGptAccountState) return;
+    final current = _chatGptAccountState;
+    if (!current.connecting &&
+        !current.loginCancellable &&
+        current.verificationUrl.isEmpty &&
+        current.userCode.isEmpty) {
+      return;
+    }
+    final safe = current.withoutEphemeralLogin();
+    _chatGptAccountState = safe;
+    if (!_chatGptAccountCtrl.isClosed) _chatGptAccountCtrl.add(safe);
+  }
+
+  void _requestAuthenticatedInitialState() {
+    if (!_awaitingAuthenticatedInitialSync) return;
+    _awaitingAuthenticatedInitialSync = false;
+    sendGetChatGptAccount();
+    sendGetModels();
+  }
+
+  void _resetRelayE2eState() {
+    _relayE2eEpoch++;
+    _relaySendEpoch++;
+    _relaySendChain = Future<void>.value();
+    _relayReceiveChain = Future<void>.value();
+    _relayE2eContext = null;
+    _relayE2eKeys = null;
+    _relayE2eReplayGuard = SequenceReplayGuard();
+    _pendingRelayE2eReadyEnvelope = null;
+    _relayInitialE2eHelloSent = false;
+    _relayPeerContextHelloSent = false;
+    _relayMobileReadySent = false;
+    _relayE2eReadySent = false;
+    _relayPeerE2eReady = false;
+    _relayPcReady = false;
+    _relayPairConfirmed = false;
+    _relayWorkerChunkVersion = 0;
+    _relayWorkerChunkMaxFrameBytes = 0;
+    _relayWorkerChunkMaxCiphertextChars = 0;
+    _relayWorkerChunkMaxTotalBytes = 0;
+    _relayWorkerChunkMaxCount = 0;
+    _relayPeerChunkVersion = 0;
+    _relayChunkReassembler.clear();
+    for (final timer in _relayOutboundChunkTimers.values) {
+      timer.cancel();
+    }
+    _relayOutboundChunkTimers.clear();
+    _relayOutboundChunkRequests.clear();
+    _relayLastOutboundRequestId = '';
+  }
+
+  bool get _relayChunkingSupported =>
+      _relayWorkerChunkVersion == relayE2eChunkVersion &&
+      _relayPeerChunkVersion == relayE2eChunkVersion &&
+      _relayWorkerChunkMaxFrameBytes >= relayE2eSafeFrameBytes &&
+      _relayWorkerChunkMaxCiphertextChars >= relayE2eChunkCiphertextChars &&
+      _relayWorkerChunkMaxTotalBytes >= relayE2eChunkMaxTotalBytes &&
+      _relayWorkerChunkMaxCount >= relayE2eChunkMaxCount;
+
+  void _captureRelayWorkerChunkCapabilities(Object? payload) {
+    if (payload is! Map) return;
+    int readLimit(String name, int localLimit) {
+      final value = payload[name];
+      return value is int && value > 0 ? min(value, localLimit) : 0;
+    }
+
+    final version = payload['e2e_chunk_version'];
+    _relayWorkerChunkVersion = version is int ? version : 0;
+    _relayWorkerChunkMaxFrameBytes = readLimit(
+      'e2e_chunk_max_frame_bytes',
+      relayE2eSafeFrameBytes,
+    );
+    _relayWorkerChunkMaxCiphertextChars = readLimit(
+      'e2e_chunk_max_ciphertext_chars',
+      relayE2eChunkCiphertextChars,
+    );
+    _relayWorkerChunkMaxTotalBytes = readLimit(
+      'e2e_chunk_max_total_bytes',
+      relayE2eChunkMaxTotalBytes,
+    );
+    _relayWorkerChunkMaxCount = readLimit(
+      'e2e_chunk_max_count',
+      relayE2eChunkMaxCount,
+    );
+  }
+
+  bool _relayWorkerCapabilitiesReady(Object? payload) =>
+      payload is Map &&
+      payload['max_frame_bytes'] is int &&
+      payload['max_frame_bytes'] >= 65536 &&
+      payload['max_batch_items'] is int &&
+      payload['max_batch_items'] > 0 &&
+      _relayWorkerChunkVersion == relayE2eChunkVersion &&
+      _relayWorkerChunkMaxFrameBytes == relayE2eSafeFrameBytes &&
+      _relayWorkerChunkMaxCiphertextChars == relayE2eChunkCiphertextChars &&
+      _relayWorkerChunkMaxTotalBytes == relayE2eChunkMaxTotalBytes &&
+      _relayWorkerChunkMaxCount == relayE2eChunkMaxCount;
+
+  void _emitRelayTransfer(RelayTransferEvent event) {
+    if (!_disposed && !_relayTransferCtrl.isClosed) {
+      _relayTransferCtrl.add(event);
+    }
+  }
+
+  void _rememberOutboundRelayChunk(String chunkId, String clientRequestId) {
+    _relayOutboundChunkTimers.remove(chunkId)?.cancel();
+    _relayOutboundChunkRequests.remove(chunkId);
+    while (_relayOutboundChunkRequests.length >= 64) {
+      final oldestChunkId = _relayOutboundChunkRequests.keys.first;
+      _relayOutboundChunkRequests.remove(oldestChunkId);
+      _relayOutboundChunkTimers.remove(oldestChunkId)?.cancel();
+    }
+    _relayOutboundChunkRequests[chunkId] = clientRequestId;
+    _relayOutboundChunkTimers[chunkId] = Timer(const Duration(minutes: 1), () {
+      _relayOutboundChunkTimers.remove(chunkId);
+      _relayOutboundChunkRequests.remove(chunkId);
+    });
+  }
+
+  String _forgetOutboundRelayChunk(String chunkId) {
+    _relayOutboundChunkTimers.remove(chunkId)?.cancel();
+    return _relayOutboundChunkRequests.remove(chunkId) ?? '';
+  }
+
+  void _rollbackRelayRequest(String clientRequestId) {
+    if (clientRequestId.isEmpty) return;
+    final conversationId = _activeConvByRequest.remove(clientRequestId);
+    if (conversationId == null || conversationId.isEmpty) return;
+    if (_activeRequestByConv[conversationId] == clientRequestId) {
+      _activeRequestByConv.remove(conversationId);
+      _acceptedRequests.remove(clientRequestId);
+      _pendingConvs.remove(conversationId);
+      _setConversationBusy(conversationId, false);
+    }
+  }
+
+  void _maybeCompleteRelayReady() {
+    final context = _relayE2eContext;
+    if (context != null &&
+        _relayPairConfirmed &&
+        _relayPcReady &&
+        _relayPeerE2eReady &&
+        _relayE2eKeys != null) {
+      _markConnected();
+      _completeRelayReady(true);
+    }
+  }
+
   void _attachChannel(
     WebSocketChannel channel, {
     required bool relay,
     required void Function(dynamic raw) onData,
   }) {
     final generation = ++_socketGeneration;
+    _awaitingAuthenticatedInitialSync = true;
     _channel = channel;
     _connectedViaRelay = relay;
     channel.stream.listen(
@@ -2205,9 +2848,15 @@ class WebSocketService {
   }) {
     final channel = _channel;
     _socketGeneration++;
+    _clearChatGptEphemeralLogin();
+    // This close path invalidates the socket callback itself, so any one-shot
+    // reconnect suppression assigned to that socket must not leak forward to
+    // a later, healthy connection.
+    _suppressReconnectOnce = false;
     _channel = null;
     _connectedViaRelay = false;
     _relayConfig = null;
+    _resetRelayE2eState();
     _completeRelayReady(false);
     _relayReadyCompleter = null;
     if (channel != null) {
@@ -2300,8 +2949,8 @@ class WebSocketService {
     _pendingConvs.add(convId); // WOR-75/WOR-53/WOR-62: turn in flight.
     if (kOsiaDebugPlaceholder && !wasStreaming) {
       debugPrint(
-        '[OSIA WOR-75] _appendConvDelta FIRST chunk for id="$convId" '
-        '→ streaming=true, pending=$_pendingConvs',
+        '[OSIA WOR-75] _appendConvDelta FIRST chunk '
+        '→ streaming=true, pending_count=${_pendingConvs.length}',
       );
     }
     _capConvBuffers();
@@ -2341,8 +2990,8 @@ class WebSocketService {
     _pendingConvs.add(convId); // WOR-75/WOR-53/WOR-62: turn in flight.
     if (kOsiaDebugPlaceholder) {
       debugPrint(
-        '[OSIA WOR-75] _replaceConvText full reply for id="$convId" '
-        '→ streaming=true, pending=$_pendingConvs',
+        '[OSIA WOR-75] _replaceConvText full reply '
+        '→ streaming=true, pending_count=${_pendingConvs.length}',
       );
     }
     _capConvBuffers();
@@ -2413,8 +3062,8 @@ class WebSocketService {
     );
     if (kOsiaDebugPlaceholder) {
       debugPrint(
-        '[OSIA WOR-75] _finishConvStream(id="$convId", error=$error) '
-        '→ pending=$_pendingConvs',
+        '[OSIA WOR-75] _finishConvStream(error=$error) '
+        '→ pending_count=${_pendingConvs.length}',
       );
     }
     _convStreamCtrl.add(
@@ -2456,7 +3105,7 @@ class WebSocketService {
       return false;
     }
     if (_connectedViaRelay) {
-      return _sendRelayEnvelope('FRAME', {'frame': json});
+      return _sendRelayEncryptedFrame(json);
     }
     final encoded = jsonEncode(json);
     try {
@@ -2478,9 +3127,14 @@ class WebSocketService {
     RelayConnectionConfig config,
     int connectGeneration,
   ) async {
+    _relayHandshakeFailure = null;
+    _relayBlocksLegacyFallback = false;
     final uri = _relayUri(config);
+    final relayTarget =
+        '${uri.scheme}://${uri.host}'
+        '${uri.hasPort ? ':${uri.port}' : ''}${uri.path}';
     debugPrint(
-      '[OSIA Relay] Connecting to $uri '
+      '[OSIA Relay] Connecting to $relayTarget '
       '(timeout ${_connectTimeout.inSeconds}s)',
     );
 
@@ -2492,8 +3146,10 @@ class WebSocketService {
         unawaited(socket.close());
         return false;
       }
+      socket.pingInterval = _relayNativePingInterval;
       _relayConfig = config;
       _relaySeq = 0;
+      _resetRelayE2eState();
       _relayReadyCompleter = Completer<bool>();
       _attachChannel(
         IOWebSocketChannel(socket),
@@ -2502,7 +3158,6 @@ class WebSocketService {
       );
 
       _sendRelayEnvelope('PAIR_START', {'secret': config.secret});
-      _sendRelayEnvelope('MOBILE_READY', {});
 
       final ready = await _relayReadyCompleter!.future.timeout(
         _relayReadyTimeout,
@@ -2511,8 +3166,10 @@ class WebSocketService {
       if (!_isCurrentConnect(connectGeneration)) return false;
       if (ready) return true;
 
+      _relayHandshakeFailure ??= kRelayE2eHandshakeTimeoutError;
+
       _closeCurrentChannel(
-        reason: 'relay not ready; falling back',
+        reason: 'relay E2E handshake did not complete',
         emitDisconnected: false,
       );
       return false;
@@ -2523,44 +3180,323 @@ class WebSocketService {
         _relayConfig = null;
         _relayReadyCompleter = null;
       }
-      debugPrint('[OSIA Relay] connect failed: $e');
+      _relayHandshakeFailure ??= kRelayUnreachableError;
+      debugPrint('[OSIA Relay] connect failed: ${e.runtimeType}');
       return false;
     }
   }
 
   Uri _relayUri(RelayConnectionConfig config) {
-    final query = <String, String>{
-      ...config.endpoint.queryParameters,
-      'role': 'mobile',
-      'pair_id': config.pairId,
-      'device_id': config.deviceId,
-      'session_id': config.sessionId,
-    };
-    return config.endpoint.replace(queryParameters: query);
+    final uri = config.endpoint;
+    if ((uri.scheme != 'ws' && uri.scheme != 'wss') ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasFragment ||
+        uri.path != '/ws' ||
+        uri.queryParametersAll.length != 1 ||
+        uri.queryParametersAll['pair_id']?.length != 1 ||
+        uri.queryParametersAll['pair_id']?.single != config.pairId ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(config.pairId)) {
+      throw const FormatException('invalid canonical relay v2 URL');
+    }
+    return uri;
+  }
+
+  bool _queueRelaySend(
+    Future<void> Function(
+      WebSocketChannel channel,
+      RelayConnectionConfig config,
+      int epoch,
+    )
+    operation, {
+    void Function()? onInvalidated,
+  }) {
+    final channel = _channel;
+    final config = _relayConfig;
+    if (channel == null || config == null) return false;
+    final epoch = _relaySendEpoch;
+    final previous = _relaySendChain;
+    _relaySendChain = _runRelaySend(
+      previous,
+      channel,
+      config,
+      epoch,
+      operation,
+      onInvalidated,
+    );
+    return true;
+  }
+
+  Future<void> _runRelaySend(
+    Future<void> previous,
+    WebSocketChannel channel,
+    RelayConnectionConfig config,
+    int epoch,
+    Future<void> Function(
+      WebSocketChannel channel,
+      RelayConnectionConfig config,
+      int epoch,
+    )
+    operation,
+    void Function()? onInvalidated,
+  ) async {
+    try {
+      await previous;
+      if (epoch != _relaySendEpoch ||
+          !identical(_channel, channel) ||
+          !identical(_relayConfig, config)) {
+        onInvalidated?.call();
+        return;
+      }
+      await operation(channel, config, epoch);
+    } catch (e) {
+      debugPrint('[OSIA Relay] queued send failed: ${e.runtimeType}');
+    }
   }
 
   bool _sendRelayEnvelope(String type, Map<String, dynamic> payload) {
-    final config = _relayConfig;
-    if (_channel == null || config == null) return false;
-    _relaySeq++;
-    final encoded = jsonEncode({
-      'v': 1,
-      'type': type,
-      'role': 'mobile',
-      'pair_id': config.pairId,
-      'device_id': config.deviceId,
-      'session_id': config.sessionId,
-      'seq': _relaySeq,
-      'ack': 0,
-      'payload': payload,
+    final stablePayload = Map<String, dynamic>.from(payload);
+    return _queueRelaySend((channel, config, epoch) async {
+      final seq = ++_relaySeq;
+      channel.sink.add(
+        jsonEncode({
+          'v': 2,
+          'type': type,
+          'role': 'mobile',
+          'pair_id': config.pairId,
+          'seq': seq,
+          'ack': 0,
+          'payload': stablePayload,
+        }),
+      );
     });
-    try {
-      _channel?.sink.add(encoded);
-      return true;
-    } catch (e) {
-      debugPrint('[OSIA Relay] send error: $e');
+  }
+
+  bool _sendRelayE2eHello({bool forPeerContext = false}) {
+    final config = _relayConfig;
+    if (config == null) return false;
+    if (forPeerContext) {
+      if (_relayPeerContextHelloSent) return false;
+    } else if (_relayInitialE2eHelloSent) {
       return false;
     }
+    final queued = _sendRelayEnvelope('E2E_HELLO', {
+      'e2e_version': relayE2eVersion,
+      'alg': relayCryptoAlgChacha20Poly1305,
+      'e2e_chunk_version': relayE2eChunkVersion,
+      'public_key': b64UrlEncodeNoPadding(config.e2ePublicKey),
+      'nonce_base': b64UrlEncodeNoPadding(config.e2eNonceBase),
+    });
+    if (queued) {
+      if (forPeerContext) {
+        _relayPeerContextHelloSent = true;
+      } else {
+        _relayInitialE2eHelloSent = true;
+      }
+    }
+    return queued;
+  }
+
+  bool _sendRelayMobileReady() {
+    if (_relayMobileReadySent) return false;
+    final queued = _sendRelayEnvelope('MOBILE_READY', <String, dynamic>{});
+    if (queued) _relayMobileReadySent = true;
+    return queued;
+  }
+
+  bool _sendRelayE2eReady() {
+    final context = _relayE2eContext;
+    final keys = _relayE2eKeys;
+    final config = _relayConfig;
+    if (_relayE2eReadySent ||
+        context == null ||
+        keys == null ||
+        config == null) {
+      return false;
+    }
+    final queued = _sendRelayEnvelope('E2E_READY', {
+      'e2e_version': relayE2eVersion,
+      'alg': relayCryptoAlgChacha20Poly1305,
+      'kid': keys.kid,
+      'tag': handshakeConfirmationTag(
+        token: token,
+        context: context,
+        senderRole: 'mobile',
+      ),
+    });
+    if (queued) _relayE2eReadySent = true;
+    return queued;
+  }
+
+  bool _sendRelayEncryptedFrame(Map<String, dynamic> frame) {
+    final channel = _channel;
+    final config = _relayConfig;
+    final context = _relayE2eContext;
+    final keys = _relayE2eKeys;
+    if (channel == null ||
+        config == null ||
+        context == null ||
+        keys == null ||
+        !_relayPairConfirmed ||
+        !_relayPcReady ||
+        !_relayPeerE2eReady) {
+      debugPrint('[OSIA Relay] app frame dropped before E2E ready');
+      return false;
+    }
+    final stableFrame = Map<String, dynamic>.from(frame);
+    final clientRequestId = frame['client_request_id']?.toString() ?? '';
+    if (clientRequestId.isNotEmpty) {
+      _relayLastOutboundRequestId = clientRequestId;
+    }
+    final priority = relayFramePriority(frame);
+    final finalFrame = relayFrameIsFinal(frame);
+    var invalidationReported = false;
+    void reportInvalidation() {
+      if (invalidationReported) return;
+      invalidationReported = true;
+      final wasActive = _activeConvByRequest.containsKey(clientRequestId);
+      _rollbackRelayRequest(clientRequestId);
+      if (!wasActive) return;
+      _emitRelayTransfer(
+        RelayTransferEvent(
+          direction: RelayTransferDirection.outbound,
+          state: RelayTransferState.failed,
+          chunkId: '',
+          clientRequestId: clientRequestId,
+          errorKind: RelayTransferErrorKind.relayUnreachable,
+        ),
+      );
+    }
+
+    return _queueRelaySend((queuedChannel, queuedConfig, epoch) async {
+      if (!identical(channel, queuedChannel) ||
+          !identical(config, queuedConfig) ||
+          !identical(_relayE2eKeys, keys)) {
+        reportInvalidation();
+        return;
+      }
+      final seq = ++_relaySeq;
+      final envelope = await _buildRelayEncryptedEnvelope(
+        stableFrame,
+        config: config,
+        keys: keys,
+        seq: seq,
+        priority: priority,
+        finalFrame: finalFrame,
+      );
+      if (epoch != _relaySendEpoch ||
+          !identical(_channel, queuedChannel) ||
+          !identical(_relayConfig, queuedConfig) ||
+          !identical(_relayE2eKeys, keys)) {
+        reportInvalidation();
+        return;
+      }
+
+      if (relaySerializedJsonBytes(envelope) <= relayE2eSafeFrameBytes) {
+        queuedChannel.sink.add(jsonEncode(envelope));
+        return;
+      }
+
+      if (!_relayChunkingSupported) {
+        _rollbackRelayRequest(clientRequestId);
+        _emitRelayTransfer(
+          RelayTransferEvent(
+            direction: RelayTransferDirection.outbound,
+            state: RelayTransferState.failed,
+            chunkId: '',
+            clientRequestId: clientRequestId,
+            errorKind: RelayTransferErrorKind.unsupportedChunk,
+          ),
+        );
+        return;
+      }
+
+      final chunkId = generateRelayChunkId();
+      late final List<Map<String, Object?>> chunks;
+      try {
+        chunks = buildRelayE2eChunks(
+          envelope,
+          chunkId: chunkId,
+          relaySeqForIndex: (index) => index == 0 ? seq : ++_relaySeq,
+        );
+      } on RelayChunkLimitException {
+        _rollbackRelayRequest(clientRequestId);
+        _emitRelayTransfer(
+          RelayTransferEvent(
+            direction: RelayTransferDirection.outbound,
+            state: RelayTransferState.failed,
+            chunkId: chunkId,
+            clientRequestId: clientRequestId,
+            errorKind: RelayTransferErrorKind.frameTooLarge,
+          ),
+        );
+        return;
+      }
+
+      _rememberOutboundRelayChunk(chunkId, clientRequestId);
+      _emitRelayTransfer(
+        RelayTransferEvent(
+          direction: RelayTransferDirection.outbound,
+          state: RelayTransferState.started,
+          chunkId: chunkId,
+          clientRequestId: clientRequestId,
+        ),
+      );
+      try {
+        for (final chunk in chunks) {
+          queuedChannel.sink.add(jsonEncode(chunk));
+        }
+      } catch (_) {
+        _forgetOutboundRelayChunk(chunkId);
+        _rollbackRelayRequest(clientRequestId);
+        _emitRelayTransfer(
+          RelayTransferEvent(
+            direction: RelayTransferDirection.outbound,
+            state: RelayTransferState.failed,
+            chunkId: chunkId,
+            clientRequestId: clientRequestId,
+            errorKind: RelayTransferErrorKind.relayUnreachable,
+          ),
+        );
+        rethrow;
+      }
+      _emitRelayTransfer(
+        RelayTransferEvent(
+          direction: RelayTransferDirection.outbound,
+          state: RelayTransferState.completed,
+          chunkId: chunkId,
+          clientRequestId: clientRequestId,
+        ),
+      );
+    }, onInvalidated: reportInvalidation);
+  }
+
+  Future<Map<String, Object?>> _buildRelayEncryptedEnvelope(
+    Map<String, dynamic> frame, {
+    required RelayConnectionConfig config,
+    required RelaySessionKeys keys,
+    required int seq,
+    required String priority,
+    required bool finalFrame,
+  }) async {
+    final encrypted = await encryptFrame(
+      frame,
+      keys: keys,
+      direction: RelayCryptoDirection.mobileToPc,
+      pairId: config.pairId,
+      role: 'mobile',
+      priority: priority,
+      finalFrame: finalFrame,
+      seq: seq,
+    );
+    return <String, Object?>{
+      'v': 2,
+      'type': 'E2E_FRAME',
+      'role': 'mobile',
+      'pair_id': config.pairId,
+      'seq': seq,
+      'ack': 0,
+      ...encrypted,
+    };
   }
 
   void _markConnected() {
@@ -2579,6 +3515,485 @@ class WebSocketService {
     }
   }
 
+  void _failRelayHandshake(String message, {bool closeSocket = true}) {
+    _relayHandshakeFailure ??= message;
+    _completeRelayReady(false);
+    if (closeSocket) _channel?.sink.close();
+  }
+
+  static bool _hasLegacyRelayIdentity(Map<String, dynamic> envelope) =>
+      const <String>{
+        'device_id',
+        'session_id',
+        'from',
+        'to',
+        'to_session_id',
+      }.any(envelope.containsKey);
+
+  static bool _hasExactKeys(Map<Object?, Object?> value, Set<String> keys) =>
+      value.length == keys.length && value.keys.every(keys.contains);
+
+  void _replaceRelayPeerCryptoContext() {
+    final activeRequestIds = _activeConvByRequest.keys.toList(growable: false);
+    for (final clientRequestId in activeRequestIds) {
+      _rollbackRelayRequest(clientRequestId);
+      _emitRelayTransfer(
+        RelayTransferEvent(
+          direction: RelayTransferDirection.outbound,
+          state: RelayTransferState.failed,
+          chunkId: '',
+          clientRequestId: clientRequestId,
+          errorKind: RelayTransferErrorKind.relayUnreachable,
+        ),
+      );
+    }
+    _relayE2eEpoch++;
+    _relaySendEpoch++;
+    _relaySendChain = Future<void>.value();
+    _relayE2eContext = null;
+    _relayE2eKeys = null;
+    _relayE2eReplayGuard = SequenceReplayGuard();
+    _pendingRelayE2eReadyEnvelope = null;
+    _relayPeerContextHelloSent = false;
+    _relayE2eReadySent = false;
+    _relayPeerE2eReady = false;
+    _relayPcReady = false;
+    _relayPeerChunkVersion = 0;
+    _relayChunkReassembler.clear();
+    for (final timer in _relayOutboundChunkTimers.values) {
+      timer.cancel();
+    }
+    _relayOutboundChunkTimers.clear();
+    _relayOutboundChunkRequests.clear();
+  }
+
+  Future<void> _handleRelayE2eHello(
+    Map<String, dynamic> envelope,
+    Map<Object?, Object?> payload,
+  ) async {
+    final config = _relayConfig;
+    if (config == null || !_relayPairConfirmed) return;
+    if ((envelope['role']?.toString() ?? '') != 'pc' ||
+        (envelope['pair_id']?.toString() ?? '') != config.pairId ||
+        envelope['v'] != 2 ||
+        _hasLegacyRelayIdentity(envelope) ||
+        envelope['type'] != 'E2E_HELLO' ||
+        !_hasExactKeys(envelope, _relayControlFields) ||
+        !_hasExactKeys(payload, _relayHelloPayloadFields) ||
+        envelope['payload'] != payload ||
+        payload['e2e_version'] != relayE2eVersion ||
+        payload['alg'] != relayCryptoAlgChacha20Poly1305) {
+      _failRelayHandshake(kRelayE2eStaleSessionError);
+      return;
+    }
+    final peerChunkVersion = payload['e2e_chunk_version'];
+    var epoch = _relayE2eEpoch;
+    try {
+      final pcPublicKey = b64UrlDecodeNoPadding(
+        payload['public_key']?.toString() ?? '',
+      );
+      final pcNonceBase = b64UrlDecodeNoPadding(
+        payload['nonce_base']?.toString() ?? '',
+      );
+      if (pcPublicKey.length != 32 || pcNonceBase.length != 4) {
+        throw const FormatException('invalid PC E2E key material');
+      }
+      bool matchesContext(RelaySessionContext current) =>
+          listEquals(current.pcPublicKey, pcPublicKey) &&
+          listEquals(current.pcNonceBase, pcNonceBase);
+
+      final active = _relayE2eContext;
+      if (active != null) {
+        if (!matchesContext(active)) {
+          _replaceRelayPeerCryptoContext();
+          epoch = _relayE2eEpoch;
+          debugPrint('[OSIA Relay] authoritative PC E2E peer replaced');
+        } else {
+          return;
+        }
+      }
+      _relayPeerChunkVersion = peerChunkVersion == relayE2eChunkVersion
+          ? relayE2eChunkVersion
+          : 0;
+      // The initial HELLO may have been sent before this PC joined. Send one
+      // peer-bound copy for this validated key+nonce context, never for a
+      // byte-identical duplicate or a readiness hint.
+      _sendRelayE2eHello(forPeerContext: true);
+      final context = RelaySessionContext(
+        pairId: config.pairId,
+        pcPublicKey: pcPublicKey,
+        mobilePublicKey: config.e2ePublicKey,
+        pcNonceBase: pcNonceBase,
+        mobileNonceBase: config.e2eNonceBase,
+      );
+      final keys = await deriveSessionKeys(
+        token: token,
+        localPrivateKey: config.e2ePrivateKey,
+        peerPublicKey: pcPublicKey,
+        context: context,
+      );
+      if (epoch != _relayE2eEpoch ||
+          !identical(_relayConfig, config) ||
+          _channel == null) {
+        return;
+      }
+      final activeAfterDerive = _relayE2eContext;
+      if (activeAfterDerive != null) {
+        if (!matchesContext(activeAfterDerive)) {
+          _replaceRelayPeerCryptoContext();
+        }
+        return;
+      }
+      _relayE2eContext = context;
+      _relayE2eKeys = keys;
+      _sendRelayE2eReady();
+      final pendingReady = _pendingRelayE2eReadyEnvelope;
+      if (pendingReady != null) {
+        _pendingRelayE2eReadyEnvelope = null;
+        _handleRelayE2eReady(pendingReady);
+      }
+      _maybeCompleteRelayReady();
+    } catch (e) {
+      debugPrint('[OSIA Relay] E2E hello rejected: ${e.runtimeType}');
+      _failRelayHandshake(kRelayE2eAuthMismatchError);
+    }
+  }
+
+  void _handleRelayE2eReady(Map<String, dynamic> envelope) {
+    final payload = envelope['payload'];
+    if (payload is! Map) {
+      _failRelayHandshake(kRelayE2eAuthMismatchError);
+      return;
+    }
+    final context = _relayE2eContext;
+    final keys = _relayE2eKeys;
+    if (context == null || keys == null) {
+      _pendingRelayE2eReadyEnvelope = Map<String, dynamic>.from(envelope);
+      return;
+    }
+    if (envelope['v'] != 2 ||
+        (envelope['role']?.toString() ?? '') != 'pc' ||
+        (envelope['pair_id']?.toString() ?? '') != context.pairId ||
+        _hasLegacyRelayIdentity(envelope) ||
+        envelope['type'] != 'E2E_READY' ||
+        !_hasExactKeys(envelope, _relayControlFields) ||
+        !_hasExactKeys(payload, _relayReadyPayloadFields) ||
+        envelope['payload'] != payload ||
+        payload['e2e_version'] != relayE2eVersion ||
+        payload['alg'] != relayCryptoAlgChacha20Poly1305) {
+      _failRelayHandshake(kRelayE2eStaleSessionError);
+      return;
+    }
+    final kid = payload['kid']?.toString() ?? '';
+    if (kid != keys.kid) {
+      debugPrint('[OSIA Relay] E2E ready rejected: key id mismatch');
+      _failRelayHandshake(kRelayE2eAuthMismatchError);
+      return;
+    }
+    final tag = payload['tag']?.toString() ?? '';
+    bool verified;
+    try {
+      verified = verifyHandshakeConfirmation(
+        token: token,
+        context: context,
+        senderRole: 'pc',
+        tag: tag,
+      );
+    } catch (_) {
+      verified = false;
+    }
+    if (!verified) {
+      debugPrint('[OSIA Relay] E2E ready rejected: confirmation failed');
+      _failRelayHandshake(kRelayE2eAuthMismatchError);
+      return;
+    }
+    _relayPeerE2eReady = true;
+    _maybeCompleteRelayReady();
+  }
+
+  void _queueRelayE2eFrame(Map<String, dynamic> envelope) {
+    final epoch = _relayE2eEpoch;
+    final previous = _relayReceiveChain;
+    final stableEnvelope = Map<String, dynamic>.from(envelope);
+    _relayReceiveChain = _runRelayE2eFrame(previous, stableEnvelope, epoch);
+  }
+
+  void _queueRelayE2eHello(
+    Map<String, dynamic> envelope,
+    Map<Object?, Object?> payload,
+  ) {
+    final previous = _relayReceiveChain;
+    final stableEnvelope = Map<String, dynamic>.from(envelope);
+    final stablePayload = Map<Object?, Object?>.from(payload);
+    stableEnvelope['payload'] = stablePayload;
+    _relayReceiveChain = _runRelayE2eHello(
+      previous,
+      stableEnvelope,
+      stablePayload,
+    );
+  }
+
+  Future<void> _runRelayE2eHello(
+    Future<void> previous,
+    Map<String, dynamic> envelope,
+    Map<Object?, Object?> payload,
+  ) async {
+    try {
+      await previous;
+      await _handleRelayE2eHello(envelope, payload);
+    } catch (e) {
+      debugPrint('[OSIA Relay] E2E hello processing failed: ${e.runtimeType}');
+    }
+  }
+
+  void _queueRelayE2eChunk(Map<String, dynamic> envelope) {
+    final epoch = _relayE2eEpoch;
+    final previous = _relayReceiveChain;
+    final stableEnvelope = Map<String, dynamic>.from(envelope);
+    _relayReceiveChain = _runRelayE2eChunk(previous, stableEnvelope, epoch);
+  }
+
+  Future<void> _runRelayE2eFrame(
+    Future<void> previous,
+    Map<String, dynamic> envelope,
+    int epoch,
+  ) async {
+    try {
+      await previous;
+      if (epoch != _relayE2eEpoch) return;
+      await _handleRelayE2eFrame(envelope, epoch);
+    } catch (e) {
+      debugPrint(
+        '[OSIA Relay] encrypted frame processing failed: ${e.runtimeType}',
+      );
+    }
+  }
+
+  Future<void> _runRelayE2eChunk(
+    Future<void> previous,
+    Map<String, dynamic> envelope,
+    int epoch,
+  ) async {
+    try {
+      await previous;
+      if (epoch != _relayE2eEpoch) return;
+      await _handleRelayE2eChunk(envelope, epoch);
+    } catch (e) {
+      debugPrint(
+        '[OSIA Relay] encrypted chunk processing failed: ${e.runtimeType}',
+      );
+    }
+  }
+
+  Future<bool> _handleRelayE2eFrame(
+    Map<String, dynamic> envelope,
+    int epoch,
+  ) async {
+    final keys = _relayE2eKeys;
+    final context = _relayE2eContext;
+    if (keys == null || context == null || !_relayPeerE2eReady) {
+      debugPrint('[OSIA Relay] encrypted frame arrived before E2E was ready');
+      _relayHandshakeFailure ??= kRelayE2eStaleSessionError;
+      return false;
+    }
+    if (envelope['v'] != 2 ||
+        (envelope['role']?.toString() ?? '') != 'pc' ||
+        (envelope['pair_id']?.toString() ?? '') != context.pairId ||
+        _hasLegacyRelayIdentity(envelope) ||
+        !_hasExactKeys(envelope, _relayE2eFrameFields)) {
+      debugPrint('[OSIA Relay] ignored encrypted frame for a stale session');
+      return false;
+    }
+    try {
+      final frame = await decryptFrame(
+        envelope,
+        keys: keys,
+        direction: RelayCryptoDirection.pcToMobile,
+        replayGuard: _relayE2eReplayGuard,
+        replayKey: 'pc',
+      );
+      if (epoch != _relayE2eEpoch) return false;
+      if (frame['type'] == 'relay_chunk_error') {
+        _handleRelayChunkErrorFrame(frame);
+        return true;
+      }
+      _onData(frame.cast<String, dynamic>());
+      return true;
+    } catch (e) {
+      debugPrint('[OSIA Relay] invalid encrypted frame: ${e.runtimeType}');
+      _emitRelayTransfer(
+        RelayTransferEvent(
+          direction: RelayTransferDirection.inbound,
+          state: RelayTransferState.failed,
+          chunkId: '',
+          clientRequestId: _relayLastOutboundRequestId,
+          errorKind: RelayTransferErrorKind.e2eDecryptFailed,
+        ),
+      );
+      if (!_errorCtrl.isClosed) {
+        _errorCtrl.add(kRelayE2eDecryptFailedError);
+      }
+      _channel?.sink.close();
+      return false;
+    }
+  }
+
+  Future<void> _handleRelayE2eChunk(
+    Map<String, dynamic> envelope,
+    int epoch,
+  ) async {
+    final context = _relayE2eContext;
+    final keys = _relayE2eKeys;
+    if (!_relayChunkingSupported ||
+        keys == null ||
+        context == null ||
+        !_relayPeerE2eReady) {
+      _emitRelayTransfer(
+        const RelayTransferEvent(
+          direction: RelayTransferDirection.inbound,
+          state: RelayTransferState.failed,
+          chunkId: '',
+          errorKind: RelayTransferErrorKind.unsupportedChunk,
+        ),
+      );
+      return;
+    }
+    final frameSeq = envelope['frame_seq'];
+    if (envelope['kid'] != keys.kid || frameSeq is! int) {
+      debugPrint('[OSIA Relay] ignored encrypted chunk for an old key context');
+      return;
+    }
+    try {
+      final nonce = b64UrlDecodeNoPadding(envelope['nonce']?.toString() ?? '');
+      final expected = nonceForSeq(
+        keys.directionNonceBase(RelayCryptoDirection.pcToMobile),
+        frameSeq,
+      );
+      if (!listEquals(nonce, expected)) {
+        debugPrint('[OSIA Relay] ignored encrypted chunk with a stale nonce');
+        return;
+      }
+    } catch (_) {
+      debugPrint('[OSIA Relay] ignored encrypted chunk with invalid metadata');
+      return;
+    }
+    if (envelope['v'] != 2 ||
+        (envelope['role']?.toString() ?? '') != 'pc' ||
+        (envelope['pair_id']?.toString() ?? '') != context.pairId ||
+        _hasLegacyRelayIdentity(envelope)) {
+      debugPrint('[OSIA Relay] ignored encrypted chunk for a stale session');
+      return;
+    }
+
+    try {
+      final result = _relayChunkReassembler.accept(
+        envelope.cast<String, Object?>(),
+      );
+      if (result.started) {
+        _emitRelayTransfer(
+          RelayTransferEvent(
+            direction: RelayTransferDirection.inbound,
+            state: RelayTransferState.started,
+            chunkId: result.chunkId,
+            clientRequestId: _relayLastOutboundRequestId,
+          ),
+        );
+      }
+      final complete = result.completeEnvelope;
+      if (complete == null || epoch != _relayE2eEpoch) return;
+      final delivered = await _handleRelayE2eFrame(
+        complete.cast<String, dynamic>(),
+        epoch,
+      );
+      if (delivered && epoch == _relayE2eEpoch) {
+        _emitRelayTransfer(
+          RelayTransferEvent(
+            direction: RelayTransferDirection.inbound,
+            state: RelayTransferState.completed,
+            chunkId: result.chunkId,
+            clientRequestId: _relayLastOutboundRequestId,
+          ),
+        );
+      }
+    } on RelayChunkException catch (e) {
+      _emitRelayTransfer(
+        RelayTransferEvent(
+          direction: RelayTransferDirection.inbound,
+          state: RelayTransferState.failed,
+          chunkId: e.chunkId,
+          clientRequestId: _relayLastOutboundRequestId,
+          errorKind: RelayTransferErrorKind.chunkFailed,
+        ),
+      );
+      _sendRelayInternalChunkError(e.chunkId, e.code);
+      final sendTail = _relaySendChain;
+      final channel = _channel;
+      unawaited(
+        sendTail.whenComplete(() {
+          if (epoch == _relayE2eEpoch && identical(channel, _channel)) {
+            channel?.sink.close();
+          }
+        }),
+      );
+    }
+  }
+
+  void _handleRelayChunkTimeout(RelayChunkTimeoutEvent event) {
+    if (_relayE2eKeys == null || !_relayPeerE2eReady) return;
+    _emitRelayTransfer(
+      RelayTransferEvent(
+        direction: RelayTransferDirection.inbound,
+        state: RelayTransferState.failed,
+        chunkId: event.chunkId,
+        clientRequestId: _relayLastOutboundRequestId,
+        errorKind: RelayTransferErrorKind.chunkFailed,
+      ),
+    );
+    _sendRelayInternalChunkError(event.chunkId, 'chunk_timeout');
+  }
+
+  void _sendRelayInternalChunkError(String chunkId, String code) {
+    if (chunkId.isEmpty) return;
+    _sendRelayEncryptedFrame(<String, dynamic>{
+      'type': 'relay_chunk_error',
+      'chunk_id': chunkId,
+      'code': code,
+    });
+  }
+
+  void _handleRelayChunkErrorFrame(Map<String, Object?> frame) {
+    final chunkId = frame['chunk_id']?.toString() ?? '';
+    final code = frame['code']?.toString() ?? '';
+    if (chunkId.isEmpty) return;
+    if (code == 'unsupported_chunk' || code == 'frame_too_large') {
+      _emitRelayTransfer(
+        RelayTransferEvent(
+          direction: RelayTransferDirection.inbound,
+          state: RelayTransferState.failed,
+          chunkId: chunkId,
+          clientRequestId: _relayLastOutboundRequestId,
+          errorKind: code == 'unsupported_chunk'
+              ? RelayTransferErrorKind.unsupportedChunk
+              : RelayTransferErrorKind.frameTooLarge,
+        ),
+      );
+      return;
+    }
+    if (!code.startsWith('chunk_')) return;
+    final clientRequestId = _forgetOutboundRelayChunk(chunkId);
+    if (clientRequestId.isEmpty) return;
+    _rollbackRelayRequest(clientRequestId);
+    _emitRelayTransfer(
+      RelayTransferEvent(
+        direction: RelayTransferDirection.outbound,
+        state: RelayTransferState.failed,
+        chunkId: chunkId,
+        clientRequestId: clientRequestId,
+        errorKind: RelayTransferErrorKind.chunkFailed,
+      ),
+    );
+  }
+
   void _onRelayData(dynamic raw) {
     try {
       final Map<String, dynamic> envelope = (raw is String)
@@ -2589,11 +4004,53 @@ class WebSocketService {
 
       switch (type) {
         case 'PAIR_CONFIRM':
+          final config = _relayConfig;
+          _captureRelayWorkerChunkCapabilities(payload);
+          if (config == null ||
+              envelope['v'] != 2 ||
+              envelope['role'] != 'mobile' ||
+              envelope['pair_id'] != config.pairId ||
+              payload is! Map ||
+              payload['relay_protocol_version'] != 2 ||
+              payload['identity_mode'] != 'role_authority' ||
+              !_relayWorkerCapabilitiesReady(payload) ||
+              _hasLegacyRelayIdentity(envelope)) {
+            _relayBlocksLegacyFallback = true;
+            _failRelayHandshake(kRelayUpdateRequiredError);
+            break;
+          }
           debugPrint('[OSIA Relay] pair confirmed');
+          _relayPairConfirmed = true;
+          _sendRelayE2eHello();
+          _sendRelayMobileReady();
+        case 'E2E_HELLO':
+          if (payload is Map) {
+            _queueRelayE2eHello(envelope, payload);
+          }
+        case 'E2E_READY':
+          _handleRelayE2eReady(envelope);
         case 'PC_READY':
-          _markConnected();
-          _completeRelayReady(true);
+          final config = _relayConfig;
+          if (config == null ||
+              envelope['v'] != 2 ||
+              (envelope['role']?.toString() ?? '') != 'pc' ||
+              (envelope['pair_id']?.toString() ?? '') != config.pairId ||
+              _hasLegacyRelayIdentity(envelope)) {
+            _failRelayHandshake(kRelayE2eStaleSessionError);
+            break;
+          }
+          _relayPcReady = true;
+          _maybeCompleteRelayReady();
+        case 'E2E_FRAME':
+          _queueRelayE2eFrame(envelope);
+        case 'E2E_CHUNK':
+          _queueRelayE2eChunk(envelope);
         case 'FRAME':
+          if (_connectedViaRelay) {
+            debugPrint('[OSIA Relay] dropped plaintext FRAME; E2E is required');
+            _failRelayHandshake(kRelayE2eRequiredError);
+            break;
+          }
           _markConnected();
           _completeRelayReady(true);
           if (payload is Map) {
@@ -2603,6 +4060,11 @@ class WebSocketService {
             }
           }
         case 'BATCH':
+          if (_connectedViaRelay) {
+            debugPrint('[OSIA Relay] dropped plaintext BATCH; E2E is required');
+            _failRelayHandshake(kRelayE2eRequiredError);
+            break;
+          }
           _markConnected();
           _completeRelayReady(true);
           if (payload is Map && payload['frames'] is List) {
@@ -2615,20 +4077,71 @@ class WebSocketService {
             't': DateTime.now().millisecondsSinceEpoch,
           });
         case 'DISCONNECT':
+          _relayHandshakeFailure ??= kRelayE2eStaleSessionError;
           _channel?.sink.close();
         case 'ERROR':
           final code = payload is Map ? payload['code']?.toString() ?? '' : '';
-          if (code != 'peer_unavailable') {
-            final msg = code.isEmpty ? 'relay_error' : code;
-            debugPrint('[OSIA Relay] error: $msg');
-            _errorCtrl.add(msg);
+          if (code == 'peer_unavailable') {
+            debugPrint('[OSIA Relay] peer unavailable during handshake grace');
+            break;
           }
+          final msg = _relayErrorMessage(code);
+          debugPrint('[OSIA Relay] control error: $code');
+          if (code == 'update_required' ||
+              code == 'pair_proof_mismatch' ||
+              code == 'invalid_pair_route' ||
+              code == 'session_superseded') {
+            _relayBlocksLegacyFallback = true;
+            _reconnectTimer?.cancel();
+            _reconnectTimer = null;
+            _suppressReconnectOnce = true;
+            _relayHandshakeFailure ??= msg;
+            _completeRelayReady(false);
+            if (_state == ConnectionState.connected && !_errorCtrl.isClosed) {
+              _errorCtrl.add(msg);
+            }
+            _channel?.sink.close();
+            break;
+          }
+          if (code == 'resume_not_supported') {
+            _relayHandshakeFailure ??= msg;
+            _completeRelayReady(false);
+            _channel?.sink.close();
+            break;
+          }
+          if (_state == ConnectionState.connected) {
+            final RelayTransferErrorKind? errorKind = switch (code) {
+              'frame_too_large' => RelayTransferErrorKind.frameTooLarge,
+              'unsupported_chunk' ||
+              'update_required' => RelayTransferErrorKind.unsupportedChunk,
+              'e2e_auth_failed' ||
+              'e2e_decrypt_failed' => RelayTransferErrorKind.e2eDecryptFailed,
+              _ when code.startsWith('chunk_') =>
+                RelayTransferErrorKind.chunkFailed,
+              _ => null,
+            };
+            if (errorKind != null) {
+              final requestId = _relayLastOutboundRequestId;
+              _rollbackRelayRequest(requestId);
+              _emitRelayTransfer(
+                RelayTransferEvent(
+                  direction: RelayTransferDirection.outbound,
+                  state: RelayTransferState.failed,
+                  chunkId: '',
+                  clientRequestId: requestId,
+                  errorKind: errorKind,
+                ),
+              );
+            }
+            break;
+          }
+          _relayHandshakeFailure ??= msg;
           _completeRelayReady(false);
         default:
           debugPrint('[OSIA Relay] unhandled envelope type="$type"');
       }
     } catch (e) {
-      debugPrint('[OSIA Relay] parse error: $e');
+      debugPrint('[OSIA Relay] parse error: ${e.runtimeType}');
     }
   }
 
@@ -2648,12 +4161,45 @@ class WebSocketService {
         );
         if (!_isCurrentConnect(connectGeneration)) return;
         if (relayReady) return;
+        if (_relayBlocksLegacyFallback) {
+          final error = _relayHandshakeFailure ?? kRelayUpdateRequiredError;
+          if (!_errorCtrl.isClosed) _errorCtrl.add(error);
+          _setState(ConnectionState.disconnected);
+          return;
+        }
+        if (!allowLegacyRendezvousFallback) {
+          final error = _relayHandshakeFailure ?? kRelayE2eUnavailableError;
+          debugPrint(
+            '[OSIA Relay] E2E connection failed; legacy fallback disabled',
+          );
+          _errorCtrl.add(error);
+          _setState(ConnectionState.disconnected);
+          _scheduleReconnect();
+          return;
+        }
         debugPrint(
-          '[OSIA Relay] Relay unavailable, falling back to rendezvous',
+          '[OSIA Relay] Relay unavailable; using legacy rendezvous fallback',
         );
       } catch (e) {
         if (!_isCurrentConnect(connectGeneration)) return;
-        debugPrint('[OSIA Relay] Relay setup failed, falling back: $e');
+        if (e is FormatException) {
+          debugPrint('[OSIA Relay] invalid relay configuration');
+          if (!_errorCtrl.isClosed) {
+            _errorCtrl.add(kRelayPairingConfigurationError);
+          }
+          _setState(ConnectionState.disconnected);
+          return;
+        }
+        if (!allowLegacyRendezvousFallback) {
+          debugPrint(
+            '[OSIA Relay] Relay setup failed; legacy rendezvous fallback disabled',
+          );
+          _errorCtrl.add(kRelayUnreachableError);
+          _setState(ConnectionState.disconnected);
+          _scheduleReconnect();
+          return;
+        }
+        debugPrint('[OSIA Relay] Relay setup failed; using legacy fallback');
       }
     }
 
@@ -2711,9 +4257,7 @@ class WebSocketService {
       _reconnectTimer?.cancel();
       _reconnectTimer = null;
       _reconnectAttempt = 0;
-      debugPrint(
-        '[OSIA WS] Socket open, sending auth (token length ${token.length})',
-      );
+      debugPrint('[OSIA WS] Socket open, sending auth');
 
       // Auth is the first message after the socket opens.
       _send({'type': 'auth', 'token': token});
@@ -2807,6 +4351,9 @@ class WebSocketService {
           }
         case 'status':
           if (content != null) {
+            if (content == 'done' && (convId == null || convId.isEmpty)) {
+              _requestAuthenticatedInitialState();
+            }
             _emit(
               StatusMessage(
                 content,
@@ -2822,8 +4369,8 @@ class WebSocketService {
             if (content == 'done' || content == 'error') {
               if (kOsiaDebugPlaceholder) {
                 debugPrint(
-                  '[OSIA WOR-75] status="$content" conversation_id='
-                  '${convId == null ? "null (UNTAGGED!)" : "id=$convId"}',
+                  '[OSIA WOR-75] terminal status received '
+                  'tagged=${convId != null}',
                 );
               }
               _finishConvStream(
@@ -2869,9 +4416,7 @@ class WebSocketService {
               '[OSIA WS] conversations received: ${list.length} item(s)',
             );
             if (list.isNotEmpty) {
-              debugPrint(
-                '[OSIA WS]   first: id=${list.first.id} title="${list.first.title}" date=${list.first.date}',
-              );
+              debugPrint('[OSIA WS]   first conversation metadata received');
             }
             _emit(ConversationsMessage(list));
           } else {
@@ -2882,18 +4427,66 @@ class WebSocketService {
         case 'active_conversation':
           final id = json['id']?.toString();
           final title = json['title']?.toString();
-          debugPrint('[OSIA WS] active_conversation: id=$id title="$title"');
+          debugPrint('[OSIA WS] active_conversation received');
           _emit(ActiveConversationMessage(id: id, title: title));
         case 'models_list':
+          final catalogue = json['catalogue'];
+          final rawProviders = catalogue is Map ? catalogue['providers'] : null;
+          final hasAuthoritativeCatalogue = rawProviders is List;
+          final providerIds = <String>{};
+          final providers = rawProviders is List
+              ? rawProviders
+                    .whereType<Map>()
+                    .map(
+                      (value) => ModelProviderCatalogueEntry.fromJson(
+                        value.cast<String, dynamic>(),
+                      ),
+                    )
+                    .where(
+                      (entry) =>
+                          entry.id.isNotEmpty &&
+                          entry.models.isNotEmpty &&
+                          providerIds.add(entry.id),
+                    )
+                    .toList()
+              : <ModelProviderCatalogueEntry>[];
+          final seenModels = <String>{};
           final rawModels = json['models'] ?? json['items'];
-          final list = rawModels is List
-              ? rawModels.map(OsiaModel.fromJson).toList()
+          final list = hasAuthoritativeCatalogue
+              ? [for (final provider in providers) ...provider.models]
+              : rawModels is List
+              ? rawModels
+                    .map(OsiaModel.fromJson)
+                    .where(
+                      (model) =>
+                          model.id.trim().isNotEmpty &&
+                          model.selectable &&
+                          seenModels.add(
+                            '${model.provider ?? ''}\u0000${model.id}',
+                          ),
+                    )
+                    .toList()
               : <OsiaModel>[];
           final current = (json['current'] ?? json['selected'])?.toString();
+          final currentProvider = json['current_provider']?.toString();
+          final account = _acceptChatGptAccountSnapshot(
+            json['account'],
+            standalone: false,
+          );
           debugPrint(
             '[OSIA WS] models_list: ${list.length} model(s), current=$current',
           );
-          _emit(ModelsListMessage(models: list, current: current));
+          _emit(
+            ModelsListMessage(
+              models: list,
+              providers: providers,
+              current: current,
+              currentProvider: currentProvider,
+              account: account,
+            ),
+          );
+        case 'chatgpt_account_state':
+          _acceptChatGptAccountSnapshot(json['account'], standalone: true);
         case 'config':
           // Full config snapshot. Delivered on its own [configStream] (NOT
           // through the paced message queue) so it can't interleave with or
@@ -2921,7 +4514,7 @@ class WebSocketService {
                     .toList()
               : <HistoryMessage>[];
           debugPrint(
-            '[OSIA WS] conversation_history: ${list.length} message(s) for id=${json['id']}',
+            '[OSIA WS] conversation_history: ${list.length} message(s)',
           );
           _emit(
             ConversationHistoryMessage(
@@ -2956,7 +4549,7 @@ class WebSocketService {
           }
         case 'memory_error':
           final err = MemoryErrorMessage.fromJson(json);
-          debugPrint('[OSIA WS] memory_error ${err.code}: ${err.message}');
+          debugPrint('[OSIA WS] memory_error ${err.code}');
           if (!_memoryErrorCtrl.isClosed) _memoryErrorCtrl.add(err);
         case 'heartbeat_data':
           // Live system metrics. Own [heartbeatStream], same rationale.
@@ -3000,10 +4593,7 @@ class WebSocketService {
               _seenCronNotifications.add(id);
             }
           }
-          debugPrint(
-            '[OSIA WS] cron_notification: status=${note.status} '
-            'title="${note.title}" conversation=${note.conversationId}',
-          );
+          debugPrint('[OSIA WS] cron_notification: status=${note.status}');
           if (!_cronNotificationCtrl.isClosed) {
             _cronNotificationCtrl.add(note);
           }
@@ -3014,7 +4604,7 @@ class WebSocketService {
           final prog = AutonomousProgressMessage.fromJson(json);
           debugPrint(
             '[OSIA WS] autonomous_progress: event=${prog.event} '
-            'phase="${prog.phaseName}" ${prog.tasksDone}/${prog.tasksTotal}',
+            '${prog.tasksDone}/${prog.tasksTotal}',
           );
           if (!_autonomousCtrl.isClosed) {
             _autonomousCtrl.add(prog);
@@ -3074,16 +4664,33 @@ class WebSocketService {
     // network drop when reading logs.
     final code = _channel?.closeCode;
     final reason = _channel?.closeReason;
+    _clearChatGptEphemeralLogin();
     debugPrint(
       '[OSIA WS] Connection closed (code=$code, reason="$reason", '
       'intentional=$_intentionalClose, autoReconnect=$autoReconnect).',
     );
+    final relayDroppedWhileConnected =
+        _connectedViaRelay && _state == ConnectionState.connected;
+    final relayDroppedRequestId = _relayLastOutboundRequestId;
     _channel = null;
     _connectedViaRelay = false;
     _relayConfig = null;
+    _resetRelayE2eState();
     _completeRelayReady(false);
     _relayReadyCompleter = null;
     _setState(ConnectionState.disconnected);
+    if (relayDroppedWhileConnected && !_intentionalClose) {
+      if (!_errorCtrl.isClosed) _errorCtrl.add(kRelayUnreachableError);
+      _emitRelayTransfer(
+        RelayTransferEvent(
+          direction: RelayTransferDirection.outbound,
+          state: RelayTransferState.failed,
+          chunkId: '',
+          clientRequestId: relayDroppedRequestId,
+          errorKind: RelayTransferErrorKind.relayUnreachable,
+        ),
+      );
+    }
     if (_suppressReconnectOnce) {
       _suppressReconnectOnce = false;
     } else if (!_intentionalClose) {

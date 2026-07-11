@@ -9,6 +9,13 @@ class _FakeWebSocketService extends ws.WebSocketService {
     : super(ip: '127.0.0.1', token: 'token', autoReconnect: false);
 
   final List<String> ensureReasons = [];
+  final List<bool> ensureResults = [];
+  bool connected = true;
+
+  @override
+  ws.ConnectionState get state => connected
+      ? ws.ConnectionState.connected
+      : ws.ConnectionState.disconnected;
 
   @override
   Future<void> ensureConnected({
@@ -16,6 +23,9 @@ class _FakeWebSocketService extends ws.WebSocketService {
     bool forceReconnect = false,
   }) async {
     ensureReasons.add(reason);
+    if (ensureResults.isNotEmpty) {
+      connected = ensureResults.removeAt(0);
+    }
   }
 }
 
@@ -106,6 +116,23 @@ void main() {
     final harness = await buildHarness();
 
     expect(await harness.storage.getBackgroundConnectionEnabled(), isFalse);
+  });
+
+  test('failed relay connection does not report background success', () async {
+    final harness = await buildHarness();
+    harness.wsService.connected = false;
+
+    expect(await harness.service.startBackgroundConnection(), isFalse);
+    expect(harness.platform.startCount, 0);
+  });
+
+  test('post-start relay failure remains authoritative', () async {
+    final harness = await buildHarness();
+    harness.wsService.ensureResults.addAll(<bool>[true, false]);
+
+    expect(await harness.service.startBackgroundConnection(), isFalse);
+    expect(harness.platform.startCount, 1);
+    expect(harness.wsService.ensureReasons, hasLength(2));
   });
 
   test('enabling persists true and starts foreground service', () async {

@@ -19,7 +19,6 @@ class ConnectionLifecycleService with WidgetsBindingObserver {
   final BackgroundConnectionService? backgroundConnectionService;
 
   ws.WebSocketService? _service;
-  bool _wasBackgrounded = false;
   DateTime? _lastResumeEnsureAt;
 
   @visibleForTesting
@@ -41,7 +40,7 @@ class ConnectionLifecycleService with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _ensureAfterResume(forceReconnect: _wasBackgrounded);
+      _ensureAfterResume();
       final background = backgroundConnectionService;
       if (background != null) {
         unawaited(
@@ -50,17 +49,10 @@ class ConnectionLifecycleService with WidgetsBindingObserver {
               .then<void>((_) {}),
         );
       }
-      _wasBackgrounded = false;
-      return;
-    }
-
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
-      _wasBackgrounded = true;
     }
   }
 
-  void _ensureAfterResume({required bool forceReconnect}) {
+  void _ensureAfterResume() {
     final service = _service;
     if (service == null) return;
 
@@ -71,11 +63,6 @@ class ConnectionLifecycleService with WidgetsBindingObserver {
     }
     _lastResumeEnsureAt = now;
 
-    unawaited(
-      service.ensureConnected(
-        reason: 'app_lifecycle_resumed',
-        forceReconnect: forceReconnect,
-      ),
-    );
+    unawaited(service.ensureConnected(reason: 'app_lifecycle_resumed'));
   }
 }

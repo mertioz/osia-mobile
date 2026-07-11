@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../l10n.dart';
 import '../motion.dart';
 import '../services/rendezvous_service.dart';
+import '../services/relay_service.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
@@ -171,8 +172,7 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     _handedOff = false;
     _bufferedMessages.clear();
 
-    debugPrint('[OSIA Connect] Verifying token (length ${token.length}) '
-        'against ${StorageService.defaultHost}…');
+    debugPrint('[OSIA Connect] Verifying public relay connection.');
 
     // This validated connection is reused by the chat screen — on success we
     // hand the live socket over instead of closing and reopening it — so it
@@ -186,6 +186,8 @@ class _ConnectionScreenState extends State<ConnectionScreen>
       token: token,
       // WOR-64: resolve the PC's current host from the token on every connect/
       // reconnect instead of using a fixed host. [ip] stays as the fallback.
+      resolveRelay: () =>
+          RelayService(storage: widget.storage).connectionConfig(token),
       resolveHost: () => RendezvousService().resolveHost(token),
     );
     _probe = probe;
@@ -193,14 +195,18 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     // Backstop: if the server neither accepts nor rejects us in time, stop
     // the spinner and tell the user to check the token.
     _probeTimeout = Timer(_verifyTimeout, () {
-      debugPrint('[OSIA Connect] No verdict after '
-          '${_verifyTimeout.inSeconds}s → failure.');
+      debugPrint(
+        '[OSIA Connect] No verdict after '
+        '${_verifyTimeout.inSeconds}s → failure.',
+      );
       _failConnection(strings.connectionFailed);
     });
 
     _probeConnSub = probe.connectionStream.listen((state) {
-      debugPrint('[OSIA Connect] probe state → $state '
-          '(reachedConnected=$_probeReachedConnected)');
+      debugPrint(
+        '[OSIA Connect] probe state → $state '
+        '(reachedConnected=$_probeReachedConnected)',
+      );
       if (state == ws.ConnectionState.connected) {
         _probeReachedConnected = true;
         // Socket is open and auth was sent. Treat the token as good once
@@ -210,10 +216,10 @@ class _ConnectionScreenState extends State<ConnectionScreen>
         _probeGrace?.cancel();
         _probeGrace = Timer(_verifyGrace, () {
           if (_resolved) return;
-          if (_probe == probe &&
-              probe.state == ws.ConnectionState.connected) {
+          if (_probe == probe && probe.state == ws.ConnectionState.connected) {
             debugPrint(
-                '[OSIA Connect] Stayed connected through grace → success.');
+              '[OSIA Connect] Stayed connected through grace → success.',
+            );
             _finishConnection(token);
           }
         });
@@ -221,8 +227,10 @@ class _ConnectionScreenState extends State<ConnectionScreen>
           _probeReachedConnected) {
         // We were open and authenticated, then the server hung up: that is
         // an auth rejection — a valid token's socket stays up.
-        debugPrint('[OSIA Connect] Server closed the socket after auth '
-            '→ token rejected.');
+        debugPrint(
+          '[OSIA Connect] Server closed the socket after auth '
+          '→ token rejected.',
+        );
         _failConnection(strings.invalidToken);
       }
     });
@@ -232,8 +240,10 @@ class _ConnectionScreenState extends State<ConnectionScreen>
       // burst (conversations list, active conversation, history, models)
       // after the hand-off — it subscribes too late to receive these live.
       if (_bufferedMessages.isEmpty) {
-        debugPrint('[OSIA Connect] First server frame after auth: '
-            '${msg.runtimeType} → token is valid.');
+        debugPrint(
+          '[OSIA Connect] First server frame after auth: '
+          '${msg.runtimeType} → token is valid.',
+        );
       }
       _bufferedMessages.add(msg);
 
@@ -244,26 +254,34 @@ class _ConnectionScreenState extends State<ConnectionScreen>
           msg is ws.ModelsListMessage ||
           msg is ws.ActiveConversationMessage ||
           msg is ws.ConversationHistoryMessage) {
-        debugPrint('[OSIA Connect] Authenticated frame (${msg.runtimeType}) '
-            '→ success.');
+        debugPrint(
+          '[OSIA Connect] Authenticated frame (${msg.runtimeType}) '
+          '→ success.',
+        );
         _finishConnection(token);
       }
     });
 
     _probeErrSub = probe.errorStream.listen((err) {
-      debugPrint('[OSIA Connect] probe error: $err '
-          '(reachedConnected=$_probeReachedConnected)');
+      debugPrint(
+        '[OSIA Connect] probe error: $err '
+        '(reachedConnected=$_probeReachedConnected)',
+      );
       // A rendezvous 404 means the PC isn't publishing a tunnel URL — it's
       // offline, NOT a bad token. Surface that distinctly so an offline PC is
       // never reported as a rejected token. Otherwise: before the socket ever
       // opened this is a reachability problem; after, it's the server refusing
       // us.
-      if (err == kPcOfflineError) {
+      if (ws.isRelayConnectionError(err)) {
+        _failConnection(err);
+      } else if (err == kPcOfflineError) {
         _failConnection(strings.pcOffline);
       } else {
-        _failConnection(_probeReachedConnected
-            ? strings.invalidToken
-            : strings.connectionFailed);
+        _failConnection(
+          _probeReachedConnected
+              ? strings.invalidToken
+              : strings.connectionFailed,
+        );
       }
     });
 
@@ -274,8 +292,10 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     if (_resolved) return;
     _resolved = true;
     final probe = _probe;
-    debugPrint('[OSIA Connect] SUCCESS — keeping the live connection open to '
-        'hand it to the chat screen.');
+    debugPrint(
+      '[OSIA Connect] SUCCESS — keeping the live connection open to '
+      'hand it to the chat screen.',
+    );
 
     // Stop the validation machinery but KEEP the socket open: the same
     // authenticated connection is reused by the chat screen, so we never
@@ -312,8 +332,10 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     // Past this point the chat screen owns the socket — dispose() must not
     // close it.
     _handedOff = true;
-    debugPrint('[OSIA Connect] Navigating to /chat with the live connection '
-        '(${_bufferedMessages.length} buffered frame(s)).');
+    debugPrint(
+      '[OSIA Connect] Navigating to /chat with the live connection '
+      '(${_bufferedMessages.length} buffered frame(s)).',
+    );
     Navigator.of(context).pushReplacementNamed(
       '/chat',
       arguments: ChatHandoff(
