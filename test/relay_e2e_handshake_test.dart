@@ -66,6 +66,37 @@ void main() {
     expect(service.relayNativePingIntervalForTest, const Duration(seconds: 25));
   });
 
+  test('LAN-capable client accepts an authenticated relay-only PC', () async {
+    final peer = await _LocalRelayPeer.start(token: token);
+    addTearDown(peer.close);
+    final config = await _mobileConfig(peer.endpoint, token, 101);
+    final service = WebSocketService(
+      ip: '127.0.0.1',
+      token: token,
+      autoReconnect: false,
+      resolveRelay: () async => config,
+      lanDirectV1: true,
+    );
+    addTearDown(service.dispose);
+
+    await service.ensureConnected(reason: 'relay_only_pc_compatibility_test');
+
+    expect(service.state, ConnectionState.connected);
+    expect(
+      service.sendText(
+        'relay-only compatibility',
+        conversationId: 'conv-relay-only',
+        clientRequestId: 'req-relay-only',
+      ),
+      isTrue,
+    );
+    final frame = await peer.nextMobileAppFrame().timeout(
+      const Duration(seconds: 2),
+    );
+    expect(frame['type'], 'text');
+    expect(frame['client_request_id'], 'req-relay-only');
+  });
+
   test('app frame before E2E ready fails locally without plaintext', () async {
     final peer = await _LocalRelayPeer.start(token: token, holdHandshake: true);
     addTearDown(peer.close);

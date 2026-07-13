@@ -66,6 +66,22 @@ class _FakeWebSocketService extends ws.WebSocketService {
   }
 }
 
+class _ControlledConnectAttempts {
+  _ControlledConnectAttempts(int count)
+    : results = List<Completer<bool>>.generate(count, (_) => Completer<bool>()),
+      started = List<Completer<void>>.generate(count, (_) => Completer<void>());
+
+  final List<Completer<bool>> results;
+  final List<Completer<void>> started;
+  int calls = 0;
+
+  Future<bool> call() {
+    final index = calls++;
+    started[index].complete();
+    return results[index].future;
+  }
+}
+
 void main() {
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
@@ -75,6 +91,7 @@ void main() {
     'WebSocketService ensureConnected shares one in-flight attempt',
     () async {
       final hostCompleter = Completer<String>();
+      final resolveStarted = Completer<void>();
       var resolveCalls = 0;
       final service = ws.WebSocketService(
         ip: '127.0.0.1',
@@ -82,6 +99,7 @@ void main() {
         autoReconnect: false,
         resolveHost: () {
           resolveCalls++;
+          resolveStarted.complete();
           return hostCompleter.future;
         },
       );
@@ -93,6 +111,7 @@ void main() {
       expect(identical(first, second), isTrue);
       expect(service.state, ws.ConnectionState.connecting);
       expect(service.debugConnectAttemptCount, 1);
+      await resolveStarted.future;
       expect(resolveCalls, 1);
 
       hostCompleter.completeError(StateError('offline'));
@@ -100,6 +119,214 @@ void main() {
 
       expect(service.debugConnectAttemptCount, 1);
       expect(service.state, ws.ConnectionState.disconnected);
+    },
+  );
+
+  test(
+    'ten concurrent ensureConnected calls share one successful attempt',
+    () async {
+      final attempts = _ControlledConnectAttempts(1);
+      final service = ws.WebSocketService(
+        ip: '127.0.0.1',
+        token: 'token',
+        autoReconnect: false,
+        connectAttemptForTest: attempts.call,
+      );
+      addTearDown(service.dispose);
+      final notifications = <ws.ConnectionState>[];
+      final connectedNotified = Completer<void>();
+      final subscription = service.connectionStream.listen((state) {
+        notifications.add(state);
+        if (state == ws.ConnectionState.connected &&
+            !connectedNotified.isCompleted) {
+          connectedNotified.complete();
+        }
+      });
+      addTearDown(subscription.cancel);
+
+      final futures = List<Future<void>>.generate(
+        10,
+        (index) => service.ensureConnected(reason: 'concurrent_$index'),
+      );
+
+      expect(
+        futures.every((future) => identical(future, futures.first)),
+        isTrue,
+      );
+      expect(service.state, ws.ConnectionState.connecting);
+      expect(service.debugConnectAttemptCount, 1);
+      await attempts.started.single.future;
+      expect(attempts.calls, 1);
+
+      attempts.results.single.complete(true);
+      await Future.wait(futures);
+      await connectedNotified.future;
+
+      expect(service.state, ws.ConnectionState.connected);
+      expect(notifications, <ws.ConnectionState>[
+        ws.ConnectionState.connecting,
+        ws.ConnectionState.connected,
+      ]);
+      expect(service.hasPendingConnectAttemptForTest, isFalse);
+      expect(service.hasReconnectTimerForTest, isFalse);
+    },
+  );
+
+  test(
+    'failed attempt clears once and a later retry starts one new attempt',
+    () async {
+      final attempts = _ControlledConnectAttempts(2);
+      final service = ws.WebSocketService(
+        ip: '127.0.0.1',
+        token: 'token',
+        autoReconnect: false,
+        connectAttemptForTest: attempts.call,
+      );
+      addTearDown(service.dispose);
+      final notifications = <ws.ConnectionState>[];
+      final subscription = service.connectionStream.listen(notifications.add);
+      addTearDown(subscription.cancel);
+
+      final first = service.ensureConnected(reason: 'first_failure');
+      await attempts.started[0].future;
+      attempts.results[0].complete(false);
+      await first;
+
+      expect(service.state, ws.ConnectionState.disconnected);
+      expect(service.hasPendingConnectAttemptForTest, isFalse);
+
+      final retry = service.ensureConnected(reason: 'retry_after_failure');
+      await attempts.started[1].future;
+      attempts.results[1].complete(false);
+      await retry;
+
+      expect(attempts.calls, 2);
+      expect(service.debugConnectAttemptCount, 2);
+      expect(service.state, ws.ConnectionState.disconnected);
+      expect(notifications, <ws.ConnectionState>[
+        ws.ConnectionState.connecting,
+        ws.ConnectionState.disconnected,
+        ws.ConnectionState.connecting,
+        ws.ConnectionState.disconnected,
+      ]);
+      expect(service.hasPendingConnectAttemptForTest, isFalse);
+      expect(service.hasReconnectTimerForTest, isFalse);
+    },
+  );
+
+  test(
+    'stale failure cannot overwrite a newer successful generation',
+    () async {
+      final attempts = _ControlledConnectAttempts(2);
+      final service = ws.WebSocketService(
+        ip: '127.0.0.1',
+        token: 'token',
+        autoReconnect: false,
+        connectAttemptForTest: attempts.call,
+      );
+      addTearDown(service.dispose);
+
+      final stale = service.ensureConnected(reason: 'stale_generation');
+      await attempts.started[0].future;
+      service.disconnect();
+      await stale;
+      expect(service.hasPendingConnectAttemptForTest, isFalse);
+
+      final current = service.ensureConnected(reason: 'current_generation');
+      await attempts.started[1].future;
+      attempts.results[1].complete(true);
+      await current;
+      expect(service.state, ws.ConnectionState.connected);
+
+      attempts.results[0].complete(false);
+      await Future<void>.microtask(() {});
+      await Future<void>.microtask(() {});
+
+      expect(service.state, ws.ConnectionState.connected);
+      expect(service.debugConnectAttemptCount, 2);
+    },
+  );
+
+  test(
+    'disconnect during connecting completes waiters and rejects late success',
+    () async {
+      final attempts = _ControlledConnectAttempts(1);
+      final service = ws.WebSocketService(
+        ip: '127.0.0.1',
+        token: 'token',
+        autoReconnect: false,
+        connectAttemptForTest: attempts.call,
+      );
+      addTearDown(service.dispose);
+
+      final pending = service.ensureConnected(
+        reason: 'disconnect_during_connect',
+      );
+      await attempts.started.single.future;
+      service.disconnect();
+      await pending;
+
+      expect(service.state, ws.ConnectionState.disconnected);
+      expect(service.hasPendingConnectAttemptForTest, isFalse);
+      attempts.results.single.complete(true);
+      await Future<void>.microtask(() {});
+      await Future<void>.microtask(() {});
+      expect(service.state, ws.ConnectionState.disconnected);
+      expect(service.hasReconnectTimerForTest, isFalse);
+    },
+  );
+
+  test('dispose during connecting completes all shared waiters', () async {
+    final attempts = _ControlledConnectAttempts(1);
+    final service = ws.WebSocketService(
+      ip: '127.0.0.1',
+      token: 'token',
+      autoReconnect: false,
+      connectAttemptForTest: attempts.call,
+    );
+
+    final first = service.ensureConnected(reason: 'dispose_first');
+    final second = service.ensureConnected(reason: 'dispose_second');
+    await attempts.started.single.future;
+    service.dispose();
+    await Future.wait(<Future<void>>[first, second]);
+
+    expect(identical(first, second), isTrue);
+    expect(service.state, ws.ConnectionState.disconnected);
+    expect(service.hasPendingConnectAttemptForTest, isFalse);
+    expect(service.hasReconnectTimerForTest, isFalse);
+    attempts.results.single.complete(true);
+    await Future<void>.microtask(() {});
+  });
+
+  test(
+    'background resume during connecting does not start a parallel attempt',
+    () async {
+      final attempts = _ControlledConnectAttempts(1);
+      final service = ws.WebSocketService(
+        ip: '127.0.0.1',
+        token: 'token',
+        autoReconnect: false,
+        connectAttemptForTest: attempts.call,
+      );
+      addTearDown(service.dispose);
+      final lifecycle = ConnectionLifecycleService(
+        resumeThrottle: Duration.zero,
+      )..attach(service);
+
+      final pending = service.ensureConnected(reason: 'foreground_connect');
+      await attempts.started.single.future;
+      lifecycle.didChangeAppLifecycleState(AppLifecycleState.paused);
+      lifecycle.didChangeAppLifecycleState(AppLifecycleState.resumed);
+
+      expect(service.state, ws.ConnectionState.connecting);
+      expect(service.debugConnectAttemptCount, 1);
+      expect(attempts.calls, 1);
+
+      attempts.results.single.complete(false);
+      await pending;
+      expect(service.state, ws.ConnectionState.disconnected);
+      expect(service.hasPendingConnectAttemptForTest, isFalse);
     },
   );
 

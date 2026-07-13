@@ -28,6 +28,12 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>OSIA a besoin d'accéder au microphone pour recevoir vos commandes vocales. L'audio est envoyé au serveur OSIA sur votre PC pour être transcrit.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>OSIA utilise votre réseau local pour se connecter directement et de manière chiffrée à votre PC associé.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_osia._tcp</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

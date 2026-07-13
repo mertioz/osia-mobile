@@ -323,6 +323,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ws.WebSocketService(
           ip: ip ?? StorageService.defaultHost,
           token: authToken,
+          storage: widget.storage,
           resolveRelay: () =>
               RelayService(storage: widget.storage).connectionConfig(authToken),
           resolveHost: () => RendezvousService().resolveHost(authToken),
@@ -464,13 +465,34 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _onMessage(ws.OsiaMessage msg) {
     switch (msg) {
-      case ws.TranscriptMessage(:final content):
+      case ws.TranscriptMessage(
+        :final content,
+        :final conversationId,
+        :final clientRequestId,
+        :final turnId,
+        :final messageId,
+      ):
+        if (_wsService.lanDirectV1 &&
+            !_isFrameForCurrentTurn(
+              conversationId: conversationId,
+              clientRequestId: clientRequestId,
+            )) {
+          break;
+        }
         // The STT transcript of the user's voice turn — proof the server
         // received the request and is working. Stand the watchdog down.
         _cancelFirstTokenTimer();
         if (content.isNotEmpty) {
           _addEntry(
-            _ChatEntry(content: content, isUser: true, isTranscript: true),
+            _ChatEntry(
+              content: content,
+              isUser: true,
+              isTranscript: true,
+              conversationId: conversationId,
+              clientRequestId: clientRequestId,
+              turnId: turnId,
+              messageId: messageId,
+            ),
           );
           // Feature 1: retain the voice transcript (the user's "message" for a
           // voice turn) so a switch-back / reconnect re-fetch re-injects it
@@ -740,7 +762,14 @@ class _ChatScreenState extends State<ChatScreen> {
             ..clear()
             ..addAll(
               messages.map(
-                (m) => _ChatEntry(content: m.content, isUser: m.role == 'user'),
+                (m) => _ChatEntry(
+                  content: m.content,
+                  isUser: m.role == 'user',
+                  conversationId: m.conversationId,
+                  clientRequestId: m.clientRequestId,
+                  turnId: m.turnId,
+                  messageId: m.messageId,
+                ),
               ),
             );
           _thinking = false;
@@ -986,10 +1015,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (pending != null &&
         clientRequestId.isNotEmpty &&
         clientRequestId != pending.clientRequestId) {
-      debugPrint(
-        '[OSIA Chat] ignored stale frame client_request_id=$clientRequestId '
-        'pending_client_request_id=${pending.clientRequestId}',
-      );
+      debugPrint('[OSIA Chat] ignored stale frame for a non-current request');
       return false;
     }
     return true;
@@ -1097,9 +1123,15 @@ class _ChatScreenState extends State<ChatScreen> {
         // Existing streaming bubble — extend the reveal target. Under reduced
         // motion show it all at once; otherwise the timer below catches up.
         _typeTarget = text;
+        _entries[idx] = _entries[idx].copyWith(
+          content: reduced ? text : null,
+          conversationId: event.conversationId,
+          clientRequestId: event.clientRequestId,
+          turnId: event.turnId,
+          messageId: event.messageId,
+        );
         if (reduced) {
           _typeRevealed = text.length;
-          _entries[idx] = _entries[idx].copyWith(content: text);
         }
       } else if (_entries.isNotEmpty &&
           !_entries.last.isUser &&
@@ -1109,6 +1141,10 @@ class _ChatScreenState extends State<ChatScreen> {
         // a duplicate streaming bubble (WOR-53). It is already shown in full.
         _entries[_entries.length - 1] = _entries.last.copyWith(
           isStreaming: true,
+          conversationId: event.conversationId,
+          clientRequestId: event.clientRequestId,
+          turnId: event.turnId,
+          messageId: event.messageId,
         );
         _streamingIndex = _entries.length - 1;
         _typeTarget = text;
@@ -1121,6 +1157,10 @@ class _ChatScreenState extends State<ChatScreen> {
             content: reduced ? text : '',
             isUser: false,
             isStreaming: true,
+            conversationId: event.conversationId,
+            clientRequestId: event.clientRequestId,
+            turnId: event.turnId,
+            messageId: event.messageId,
           ),
         );
         _streamingIndex = _entries.length - 1;
@@ -1766,10 +1806,6 @@ class _ChatScreenState extends State<ChatScreen> {
         : text;
     _addEntry(_ChatEntry(content: displayContent, isUser: true));
 
-    if (hasFile) {
-      _wsService.sendFile(filename, base64Encode(bytes), isImage: isImage);
-    }
-
     final strings = OsiaL10n.of(context);
     final prompt = text.isNotEmpty
         ? text
@@ -1777,11 +1813,25 @@ class _ChatScreenState extends State<ChatScreen> {
               ? strings.analyzeImagePrompt
               : strings.hereIsFile(filename ?? ''));
     final clientRequestId = ws.WebSocketService.newClientRequestId();
-    if (!_wsService.sendText(
-      prompt,
-      conversationId: sendingConv,
-      clientRequestId: clientRequestId,
-    )) {
+    var sent = true;
+    if (hasFile) {
+      sent = _wsService.sendFile(
+        filename,
+        base64Encode(bytes),
+        isImage: isImage,
+        conversationId: sendingConv ?? '',
+        clientRequestId: clientRequestId,
+        prompt: prompt,
+      );
+    }
+    if (sent && !isImage) {
+      sent = _wsService.sendText(
+        prompt,
+        conversationId: sendingConv,
+        clientRequestId: clientRequestId,
+      );
+    }
+    if (!sent) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('OSIA is still working in this conversation.'),
@@ -2181,18 +2231,25 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
+    var sent = true;
     if (turn.hasFile) {
-      _wsService.sendFile(
+      sent = _wsService.sendFile(
         turn.filename!,
         base64Encode(turn.fileBytes!),
         isImage: turn.isImage,
+        conversationId: retryConv ?? '',
+        clientRequestId: turn.clientRequestId,
+        prompt: turn.prompt,
       );
     }
-    if (!_wsService.sendText(
-      turn.prompt,
-      conversationId: retryConv,
-      clientRequestId: turn.clientRequestId,
-    )) {
+    if (sent && !turn.isImage) {
+      sent = _wsService.sendText(
+        turn.prompt,
+        conversationId: retryConv,
+        clientRequestId: turn.clientRequestId,
+      );
+    }
+    if (!sent) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('OSIA is still working in this conversation.'),
@@ -2232,7 +2289,8 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Ask the server to read one assistant message aloud (speaker button on
   /// the bubble). The server synthesizes TTS and sends the audio back to
   /// the phone. Always allowed, regardless of the auto-TTS preference.
-  void _speakMessage(String content) {
+  void _speakMessage(_ChatEntry entry) {
+    final content = entry.content;
     if (content.isEmpty) return;
     final connState = _wsService.state;
     debugPrint(
@@ -2246,8 +2304,22 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
+    final sent = _wsService.sendSpeak(
+      content,
+      conversationId: entry.conversationId,
+      sourceRequestId: entry.clientRequestId,
+      sourceTurnId: entry.turnId,
+      messageId: entry.messageId,
+    );
+    if (!sent) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This response cannot be read aloud yet.'),
+        ),
+      );
+      return;
+    }
     _speakRequested = true;
-    _wsService.sendSpeak(content);
   }
 
   bool _isImageFilename(String filename) {
@@ -2780,7 +2852,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ? const _MiniThinkingDots()
                                 : null,
                             onSpeak: isAssistant
-                                ? () => _speakMessage(entry.content)
+                                ? () => _speakMessage(entry)
                                 : null,
                           );
                         },
@@ -3218,6 +3290,10 @@ class _ChatEntry {
   final bool isTranscript;
   final bool isStreaming;
   final bool isSystem;
+  final String conversationId;
+  final String clientRequestId;
+  final String turnId;
+  final String messageId;
 
   const _ChatEntry({
     required this.content,
@@ -3225,15 +3301,30 @@ class _ChatEntry {
     this.isTranscript = false,
     this.isStreaming = false,
     this.isSystem = false,
+    this.conversationId = '',
+    this.clientRequestId = '',
+    this.turnId = '',
+    this.messageId = '',
   });
 
-  _ChatEntry copyWith({String? content, bool? isStreaming}) {
+  _ChatEntry copyWith({
+    String? content,
+    bool? isStreaming,
+    String? conversationId,
+    String? clientRequestId,
+    String? turnId,
+    String? messageId,
+  }) {
     return _ChatEntry(
       content: content ?? this.content,
       isUser: isUser,
       isTranscript: isTranscript,
       isStreaming: isStreaming ?? this.isStreaming,
       isSystem: isSystem,
+      conversationId: conversationId ?? this.conversationId,
+      clientRequestId: clientRequestId ?? this.clientRequestId,
+      turnId: turnId ?? this.turnId,
+      messageId: messageId ?? this.messageId,
     );
   }
 }

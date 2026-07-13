@@ -4,6 +4,16 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+class LanPairingIdentity {
+  const LanPairingIdentity({
+    required this.instanceAlias,
+    required this.certificateSha256,
+  });
+
+  final String instanceAlias;
+  final String certificateSha256;
+}
+
 /// Service for persisting sensitive settings: server host and auth token.
 ///
 /// Uses [FlutterSecureStorage] so keys are stored in the platform keychain
@@ -27,6 +37,7 @@ class StorageService {
   static const _keyBackgroundConnectionEnabled =
       'osia_background_connection_enabled';
   static const _keyShownNotificationIds = 'osia_shown_notification_ids';
+  static const _keyLanPairings = 'osia_lan_pairings_v1';
 
   /// Default/fallback server host. Normal connections resolve the current
   /// quick-tunnel host through rendezvous; only the token is asked for.
@@ -114,6 +125,56 @@ class StorageService {
     final id = 'mobile-$suffix';
     await _storage.write(key: _keyRelayDeviceId, value: id);
     return id;
+  }
+
+  Future<LanPairingIdentity?> getLanPairing(String pairId) async {
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(pairId)) return null;
+    final raw = await _safeRead(_keyLanPairings);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final entry = decoded[pairId];
+      if (entry is! Map) return null;
+      final alias = (entry['instance_alias'] ?? '').toString();
+      final pin = (entry['certificate_sha256'] ?? '').toString().toLowerCase();
+      if (!RegExp(r'^[0-9a-f]{16}$').hasMatch(alias) ||
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(pin)) {
+        return null;
+      }
+      return LanPairingIdentity(instanceAlias: alias, certificateSha256: pin);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> setLanPairing(String pairId, LanPairingIdentity identity) async {
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(pairId) ||
+        !RegExp(r'^[0-9a-f]{16}$').hasMatch(identity.instanceAlias) ||
+        !RegExp(
+          r'^[0-9a-f]{64}$',
+        ).hasMatch(identity.certificateSha256.toLowerCase())) {
+      throw const FormatException('invalid LAN pairing identity');
+    }
+    final existing = await _safeRead(_keyLanPairings);
+    Map<String, dynamic> pairings = <String, dynamic>{};
+    if (existing != null && existing.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(existing);
+        if (decoded is Map) {
+          pairings = decoded.map(
+            (key, value) => MapEntry(key.toString(), value),
+          );
+        }
+      } catch (_) {
+        pairings = <String, dynamic>{};
+      }
+    }
+    pairings[pairId] = <String, String>{
+      'instance_alias': identity.instanceAlias,
+      'certificate_sha256': identity.certificateSha256.toLowerCase(),
+    };
+    await _storage.write(key: _keyLanPairings, value: jsonEncode(pairings));
   }
 
   // ── Theme ────────────────────────────────────────────────────────────
@@ -263,6 +324,7 @@ class StorageService {
     await _storage.delete(key: _keyTailscaleIp);
     await _storage.delete(key: _keyToken);
     await _storage.delete(key: _keySelectedModel);
+    await _storage.delete(key: _keyLanPairings);
   }
 
   /// Clear all stored values.

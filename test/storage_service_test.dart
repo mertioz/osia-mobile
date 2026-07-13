@@ -46,4 +46,66 @@ void main() {
       expect(await storage.getTailscaleIp(), 'https://osia.space');
     });
   });
+
+  group('StorageService authenticated LAN pairing', () {
+    const pairId =
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const pin =
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const alias = '0123456789abcdef';
+
+    setUp(() {
+      FlutterSecureStorage.setMockInitialValues({});
+    });
+
+    test('stores and reloads the authenticated alias and pin', () async {
+      final storage = StorageService();
+      await storage.setLanPairing(
+        pairId,
+        const LanPairingIdentity(instanceAlias: alias, certificateSha256: pin),
+      );
+
+      final restored = await storage.getLanPairing(pairId);
+
+      expect(restored, isNotNull);
+      expect(restored!.instanceAlias, alias);
+      expect(restored.certificateSha256, pin);
+    });
+
+    test('invalid pairing identity fails closed', () async {
+      final storage = StorageService();
+
+      expect(await storage.getLanPairing('invalid'), isNull);
+      expect(
+        () => storage.setLanPairing(
+          pairId,
+          const LanPairingIdentity(
+            instanceAlias: 'invalid',
+            certificateSha256: pin,
+          ),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test(
+      'model clearing preserves pairing but credential clearing removes it',
+      () async {
+        final storage = StorageService();
+        await storage.setLanPairing(
+          pairId,
+          const LanPairingIdentity(
+            instanceAlias: alias,
+            certificateSha256: pin,
+          ),
+        );
+
+        await storage.clearSelectedModel();
+        expect(await storage.getLanPairing(pairId), isNotNull);
+
+        await storage.clearCredentials();
+        expect(await storage.getLanPairing(pairId), isNull);
+      },
+    );
+  });
 }

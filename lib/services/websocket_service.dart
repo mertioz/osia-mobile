@@ -8,8 +8,12 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'lan_direct_transport.dart';
+import 'lan_discovery_service.dart';
 import 'relay_crypto_service.dart';
 import 'relay_service.dart';
+import 'storage_service.dart';
+import 'transport_coordinator.dart';
 
 // ── WOR-75 diagnostic flag ────────────────────────────────────────────────
 
@@ -178,7 +182,18 @@ sealed class OsiaMessage {
 
 class TranscriptMessage extends OsiaMessage {
   final String content;
-  const TranscriptMessage(this.content);
+  final String conversationId;
+  final String clientRequestId;
+  final String turnId;
+  final String messageId;
+
+  const TranscriptMessage(
+    this.content, {
+    this.conversationId = '',
+    this.clientRequestId = '',
+    this.turnId = '',
+    this.messageId = '',
+  });
 }
 
 class ResponseMessage extends OsiaMessage {
@@ -201,7 +216,18 @@ class AudioMessage extends OsiaMessage {
   /// 'speak' for an explicit read-aloud request. Null when the server
   /// doesn't tag its audio frames (older server versions).
   final String? source;
-  const AudioMessage(this.data, {this.source});
+  final String conversationId;
+  final String clientRequestId;
+  final String turnId;
+  final String messageId;
+  const AudioMessage(
+    this.data, {
+    this.source,
+    this.conversationId = '',
+    this.clientRequestId = '',
+    this.turnId = '',
+    this.messageId = '',
+  });
 }
 
 class StatusMessage extends OsiaMessage {
@@ -281,7 +307,18 @@ class HistoryMessage {
   /// "user" or "assistant".
   final String role;
   final String content;
-  const HistoryMessage({required this.role, required this.content});
+  final String conversationId;
+  final String clientRequestId;
+  final String turnId;
+  final String messageId;
+  const HistoryMessage({
+    required this.role,
+    required this.content,
+    this.conversationId = '',
+    this.clientRequestId = '',
+    this.turnId = '',
+    this.messageId = '',
+  });
 
   factory HistoryMessage.fromJson(Map<String, dynamic> json) {
     final raw = json['content'];
@@ -297,7 +334,15 @@ class HistoryMessage {
     } else {
       text = raw?.toString() ?? '';
     }
-    return HistoryMessage(role: (json['role'] ?? '').toString(), content: text);
+    return HistoryMessage(
+      role: (json['role'] ?? '').toString(),
+      content: text,
+      conversationId: (json['conversation_id'] ?? '').toString(),
+      clientRequestId: (json['request_id'] ?? json['client_request_id'] ?? '')
+          .toString(),
+      turnId: (json['turn_id'] ?? '').toString(),
+      messageId: (json['message_id'] ?? '').toString(),
+    );
   }
 }
 
@@ -1117,6 +1162,13 @@ class CronNotificationMessage {
   final String status;
   final String conversationId;
   final String createdAt;
+  final String requestId;
+  final String turnId;
+  final String messageId;
+  final String eventId;
+  final String eventType;
+  final int sequence;
+  final bool terminal;
 
   const CronNotificationMessage({
     required this.id,
@@ -1125,6 +1177,13 @@ class CronNotificationMessage {
     required this.status,
     required this.conversationId,
     required this.createdAt,
+    this.requestId = '',
+    this.turnId = '',
+    this.messageId = '',
+    this.eventId = '',
+    this.eventType = '',
+    this.sequence = 0,
+    this.terminal = false,
   });
 
   bool get failed => status == 'failed';
@@ -1141,6 +1200,14 @@ class CronNotificationMessage {
       conversationId: (json['conversation_id'] ?? json['conversationId'] ?? '')
           .toString(),
       createdAt: (json['created_at'] ?? json['createdAt'] ?? '').toString(),
+      requestId: (json['request_id'] ?? json['client_request_id'] ?? '')
+          .toString(),
+      turnId: (json['turn_id'] ?? '').toString(),
+      messageId: (json['message_id'] ?? '').toString(),
+      eventId: (json['event_id'] ?? '').toString(),
+      eventType: (json['event_type'] ?? '').toString(),
+      sequence: json['sequence'] is int ? json['sequence'] as int : 0,
+      terminal: json['terminal'] == true,
     );
   }
 }
@@ -1254,6 +1321,7 @@ class ConvStreamEvent {
   final String conversationId;
   final String clientRequestId;
   final String turnId;
+  final String messageId;
   final String? delta;
   final bool done;
   final bool error;
@@ -1267,6 +1335,7 @@ class ConvStreamEvent {
     this.conversationId, {
     this.clientRequestId = '',
     this.turnId = '',
+    this.messageId = '',
     this.delta,
     this.done = false,
     this.error = false,
@@ -1299,6 +1368,19 @@ class ConversationBusyEvent {
 class _ConvStreamState {
   final StringBuffer text = StringBuffer();
   bool streaming = false;
+  String messageId = '';
+}
+
+class _MediaCorrelation {
+  const _MediaCorrelation({
+    required this.requestId,
+    required this.turnId,
+    required this.messageId,
+  });
+
+  final String requestId;
+  final String turnId;
+  final String messageId;
 }
 
 /// Live status of a single MCP server (WOR-44 Phase 4), one entry of an
@@ -1459,8 +1541,16 @@ class WebSocketService {
   final bool autoReconnect;
 
   WebSocketChannel? _channel;
+  LanDirectTransport? _lanTransport;
+  bool _connectedViaLan = false;
+  final ApplicationTransportCoordinator _transportCoordinator =
+      applicationTransportCoordinator;
+  ApplicationTransportLease? _transportLease;
+  ApplicationTransportKind? _lastTransportKind;
   Timer? _reconnectTimer;
   Future<void>? _connectFuture;
+  Completer<void>? _connectCompleter;
+  Future<void> _transportCleanup = Future<void>.value();
   int _reconnectAttempt = 0;
   int _connectGeneration = 0;
   int _socketGeneration = 0;
@@ -1574,7 +1664,14 @@ class WebSocketService {
   final Map<String, String> _activeRequestByConv = {};
   final Map<String, String> _activeConvByRequest = {};
   final Set<String> _acceptedRequests = {};
+  final Map<String, String> _turnByRequest = <String, String>{};
+  final Set<String> _unboundRequestIds = <String>{};
   final Set<String> _seenCronNotifications = {};
+  final Set<String> _seenApplicationEventIds = <String>{};
+  final Queue<String> _applicationEventOrder = Queue<String>();
+  final Map<String, int> _lastApplicationSequence = <String, int>{};
+  final Map<String, _MediaCorrelation> _mediaByConversation =
+      <String, _MediaCorrelation>{};
 
   /// Hard cap on retained per-conversation buffers (WOR-53) — a backstop for
   /// buffers the user never explicitly leaves or deletes (e.g. a server-streamed
@@ -1721,18 +1818,126 @@ class WebSocketService {
     if (id.isNotEmpty) {
       _activeRequestByConv[id] = clientRequestId;
       _activeConvByRequest[clientRequestId] = id;
+    } else {
+      _unboundRequestIds.add(clientRequestId);
     }
   }
 
   void _forgetConversationRequest(String conversationId) {
     final req = _activeRequestByConv.remove(conversationId);
-    if (req != null) _activeConvByRequest.remove(req);
+    if (req != null) {
+      _activeConvByRequest.remove(req);
+      _acceptedRequests.remove(req);
+      _turnByRequest.remove(req);
+    }
+  }
+
+  void _forgetRequest(String clientRequestId) {
+    if (clientRequestId.isEmpty) return;
+    _unboundRequestIds.remove(clientRequestId);
+    _acceptedRequests.remove(clientRequestId);
+    _turnByRequest.remove(clientRequestId);
+    final conversationId = _activeConvByRequest.remove(clientRequestId);
+    if (conversationId != null &&
+        _activeRequestByConv[conversationId] == clientRequestId) {
+      _activeRequestByConv.remove(conversationId);
+    }
+  }
+
+  void _clearApplicationTurnTracking() {
+    _activeRequestByConv.clear();
+    _activeConvByRequest.clear();
+    _acceptedRequests.clear();
+    _turnByRequest.clear();
+    _unboundRequestIds.clear();
+    _pendingConvs.clear();
+    _mediaByConversation.clear();
+    for (final conversationId in _busyConvs.toList()) {
+      _setConversationBusy(conversationId, false);
+    }
   }
 
   bool _hasLiveConversationTurn(String id) =>
       _pendingConvs.contains(id) ||
       (_streamBuffers[id]?.streaming ?? false) ||
       _busyConvs.contains(id);
+
+  bool _acceptCanonicalApplicationEvent(Map<String, dynamic> json) {
+    if (!lanDirectV1) return true;
+    final type = json['type']?.toString() ?? '';
+    final canonicalTypes = <String>{
+      'transcript',
+      'response',
+      'response_chunk',
+      'audio',
+      'media_status',
+      'turn_accepted',
+      'turn_status',
+      'conversation_busy_changed',
+    };
+    if (type == 'status' && json['conversation_id'] != null) {
+      canonicalTypes.add('status');
+    }
+    if (!canonicalTypes.contains(type)) return true;
+    final conversationId = json['conversation_id']?.toString() ?? '';
+    final requestId =
+        json['request_id']?.toString() ??
+        json['client_request_id']?.toString() ??
+        '';
+    final turnId = json['turn_id']?.toString() ?? '';
+    final eventId = json['event_id']?.toString() ?? '';
+    final eventType = json['event_type']?.toString() ?? '';
+    final sequence = json['sequence'];
+    final terminal = json['terminal'];
+    final needsMessageId = type != 'conversation_busy_changed';
+    if (conversationId.isEmpty ||
+        requestId.isEmpty ||
+        turnId.isEmpty ||
+        eventId.isEmpty ||
+        eventType != type ||
+        sequence is! int ||
+        sequence <= 0 ||
+        terminal is! bool ||
+        (needsMessageId && (json['message_id']?.toString() ?? '').isEmpty)) {
+      debugPrint('[OSIA WS] rejected incomplete canonical event type=$type');
+      return false;
+    }
+    final media = _mediaByConversation[conversationId];
+    final ownsRequest =
+        _activeRequestByConv[conversationId] == requestId ||
+        _activeConvByRequest[requestId] == conversationId ||
+        _unboundRequestIds.contains(requestId) ||
+        _acceptedRequests.contains(requestId) ||
+        media?.requestId == requestId;
+    if (!ownsRequest) {
+      debugPrint('[OSIA WS] rejected unowned canonical event type=$type');
+      return false;
+    }
+    final ownedTurn = media?.requestId == requestId
+        ? media?.turnId ?? ''
+        : _turnByRequest[requestId] ?? '';
+    if (ownedTurn.isNotEmpty && ownedTurn != turnId) {
+      debugPrint(
+        '[OSIA WS] rejected event for a stale canonical turn type=$type',
+      );
+      return false;
+    }
+    _turnByRequest.putIfAbsent(requestId, () => turnId);
+    if (_seenApplicationEventIds.contains(eventId)) return false;
+    final sequenceKey = '$conversationId\u0000$requestId\u0000$turnId';
+    final previous = _lastApplicationSequence[sequenceKey] ?? 0;
+    if (sequence <= previous) {
+      debugPrint('[OSIA WS] rejected stale canonical event type=$type');
+      return false;
+    }
+    _lastApplicationSequence[sequenceKey] = sequence;
+    _seenApplicationEventIds.add(eventId);
+    _applicationEventOrder.addLast(eventId);
+    while (_applicationEventOrder.length > 2048) {
+      _seenApplicationEventIds.remove(_applicationEventOrder.removeFirst());
+    }
+    return true;
+  }
 
   bool _shouldIgnoreConversationFrame(
     String? conversationId, {
@@ -1743,6 +1948,10 @@ class WebSocketService {
     final id = conversationId ?? '';
     if (id.isEmpty) {
       if (terminal) {
+        if (clientRequestId.isNotEmpty &&
+            _acceptedRequests.contains(clientRequestId)) {
+          return false;
+        }
         debugPrint(
           '[OSIA WS] ignored uncorrelated terminal frame type=$frameType '
           'without conversation metadata',
@@ -1825,7 +2034,10 @@ class WebSocketService {
 
   void _handleConversationBusyFrame(Map<String, dynamic> json) {
     final id = json['conversation_id']?.toString() ?? '';
-    final reqId = json['client_request_id']?.toString() ?? '';
+    final reqId =
+        json['request_id']?.toString() ??
+        json['client_request_id']?.toString() ??
+        '';
     final turnId = json['turn_id']?.toString() ?? '';
     if ((json['type'] ?? '').toString() == 'conversation_busy') {
       final message = json['message']?.toString() ?? '';
@@ -1875,14 +2087,25 @@ class WebSocketService {
 
   void _handleTurnAcceptedFrame(Map<String, dynamic> json) {
     final id = json['conversation_id']?.toString() ?? '';
-    final reqId = json['client_request_id']?.toString() ?? '';
+    final reqId =
+        json['request_id']?.toString() ??
+        json['client_request_id']?.toString() ??
+        '';
     final turnId = json['turn_id']?.toString() ?? '';
+    final messageId = json['message_id']?.toString() ?? '';
     final status = json['status']?.toString() ?? 'accepted';
     final frameType = (json['type'] ?? '').toString() == 'turn_status'
         ? 'turn_status'
         : 'turn_accepted';
     if (id.isNotEmpty) {
-      if (status == 'done' || status == 'error') {
+      _unboundRequestIds.remove(reqId);
+      if (const <String>{
+        'done',
+        'error',
+        'cancelled',
+        'canceled',
+        'rejected',
+      }.contains(status)) {
         if (_shouldIgnoreConversationFrame(
           id,
           clientRequestId: reqId,
@@ -1891,12 +2114,13 @@ class WebSocketService {
         )) {
           return;
         }
-        if (reqId.isNotEmpty) _acceptedRequests.add(reqId);
         _finishConvStream(
           id,
-          error: status == 'error',
+          error: status != 'done',
           clientRequestId: reqId,
           turnId: turnId,
+          messageId: messageId,
+          keepMediaPhase: lanDirectV1 && status == 'done',
         );
       } else {
         if (_shouldIgnoreConversationFrame(
@@ -2076,6 +2300,13 @@ class WebSocketService {
   final Future<String> Function()? resolveHost;
   final Future<RelayConnectionConfig> Function()? resolveRelay;
   final bool allowLegacyRendezvousFallback;
+  final bool lanDirectV1;
+  final LanDirectConfig? lanDirectConfig;
+  final StorageService? storage;
+  final LanDiscoveryService lanDiscoveryService;
+
+  @visibleForTesting
+  final Future<bool> Function()? connectAttemptForTest;
 
   bool _connectedViaRelay = false;
   RelayConnectionConfig? _relayConfig;
@@ -2096,6 +2327,13 @@ class WebSocketService {
   bool _relayPeerE2eReady = false;
   bool _relayPcReady = false;
   bool _relayPairConfirmed = false;
+  String _relayCommitAttemptId = '';
+  bool _relayCommitSent = false;
+  bool _relayCommitConfirmed = false;
+  bool _relayCommitAuthorized = false;
+  bool _relaySignalingStandby = false;
+  bool _relayPcRequiresCommit = false;
+  Completer<LanPairingIdentity?>? _lanProvisioningCompleter;
   bool _relayBlocksLegacyFallback = false;
   String? _relayHandshakeFailure;
   int _relayWorkerChunkVersion = 0;
@@ -2116,7 +2354,13 @@ class WebSocketService {
     this.resolveHost,
     this.resolveRelay,
     this.allowLegacyRendezvousFallback = kAllowLegacyRendezvousFallback,
-  }) {
+    this.lanDirectV1 = kLanDirectV1,
+    this.lanDirectConfig,
+    this.storage,
+    LanDiscoveryService? lanDiscoveryService,
+    this.connectAttemptForTest,
+  }) : lanDiscoveryService = lanDiscoveryService ?? LanDiscoveryService() {
+    debugPrint('[OSIA LAN] capability enabled=$lanDirectV1');
     _relayChunkReassembler = RelayE2eChunkReassembler(
       onTimeout: _handleRelayChunkTimeout,
     );
@@ -2124,6 +2368,24 @@ class WebSocketService {
 
   @visibleForTesting
   int get debugConnectAttemptCount => _debugConnectAttemptCount;
+
+  @visibleForTesting
+  bool get hasPendingConnectAttemptForTest => _connectFuture != null;
+
+  @visibleForTesting
+  bool get hasReconnectTimerForTest => _reconnectTimer?.isActive == true;
+
+  @visibleForTesting
+  bool get hasActiveApplicationTurnForTest => _hasActiveApplicationTurn;
+
+  @visibleForTesting
+  bool acquireApplicationTransportForTest(ApplicationTransportKind kind) {
+    if (_transportLease != null) return false;
+    final lease = _transportCoordinator.tryAcquire(kind, this);
+    if (lease == null) return false;
+    _transportLease = lease;
+    return true;
+  }
 
   @visibleForTesting
   Duration get relayNativePingIntervalForTest => _relayNativePingInterval;
@@ -2158,55 +2420,103 @@ class WebSocketService {
   }) {
     if (_disposed) return Future<void>.value();
 
+    final inFlight = _connectFuture;
+    if (inFlight != null) return inFlight;
+
     final alreadyConnected =
-        _state == ConnectionState.connected && _channel != null;
+        _state == ConnectionState.connected &&
+        (_channel != null || _lanTransport?.active == true);
     if (alreadyConnected && !forceReconnect) {
       return Future<void>.value();
     }
-
-    final inFlight = _connectFuture;
-    if (inFlight != null) return inFlight;
 
     _intentionalClose = false;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
 
-    if (forceReconnect && _channel != null) {
-      _closeCurrentChannel(
-        reason: 'force reconnect: $reason',
-        emitDisconnected: true,
-      );
-    } else if (_state == ConnectionState.connected && _channel == null) {
-      _setState(ConnectionState.disconnected);
-    }
+    final connectGeneration = ++_connectGeneration;
+    _debugConnectAttemptCount++;
+    debugPrint('[OSIA WS] ensureConnected($reason)');
 
-    late final Future<void> future;
-    future = _doConnect(reason: reason).whenComplete(() {
-      if (identical(_connectFuture, future)) {
-        _connectFuture = null;
-      }
-    });
+    final completer = Completer<void>();
+    final future = completer.future;
+    _connectCompleter = completer;
     _connectFuture = future;
+    unawaited(
+      future.then<void>(
+        (_) => _clearConnectAttempt(future, completer),
+        onError: (Object _, StackTrace _) =>
+            _clearConnectAttempt(future, completer),
+      ),
+    );
+
+    _setState(ConnectionState.connecting);
+    unawaited(
+      Future<void>.microtask(() async {
+        if (!_isCurrentConnect(connectGeneration)) return;
+        Future<void> closeBeforeConnect = _transportCleanup;
+        if (forceReconnect &&
+            (_channel != null || _lanTransport?.active == true)) {
+          closeBeforeConnect = _closeCurrentChannel(
+            reason: 'force reconnect: $reason',
+            emitDisconnected: false,
+          );
+        }
+        await closeBeforeConnect;
+        if (!_isCurrentConnect(connectGeneration)) return;
+        await _doConnect(reason: reason, connectGeneration: connectGeneration);
+      }).then<void>(
+        (_) {
+          if (!completer.isCompleted) completer.complete();
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          if (!completer.isCompleted) {
+            completer.completeError(error, stackTrace);
+          }
+        },
+      ),
+    );
     return future;
   }
 
   /// Close the connection and stop reconnection attempts.
   void disconnect() {
     _intentionalClose = true;
+    lanDiscoveryService.stop();
     _connectGeneration++;
     _socketGeneration++;
     _clearChatGptEphemeralLogin();
-    _connectFuture = null;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _reconnectAttempt = 0;
-    _channel?.sink.close();
+    final lanTransport = _lanTransport;
+    final channel = _channel;
+    final lease = _transportLease;
+    _lanTransport = null;
+    _connectedViaLan = false;
     _channel = null;
+    _transportLease = null;
+    _transportCleanup = () async {
+      if (lanTransport != null) await lanTransport.close();
+      if (channel != null) {
+        try {
+          await channel.sink.close();
+        } catch (_) {
+          // Best-effort intentional shutdown.
+        }
+      }
+      lease?.release();
+    }();
     _connectedViaRelay = false;
     _resetRelayE2eState();
     _relayConfig = null;
     _relayReadyCompleter = null;
+    _clearApplicationTurnTracking();
     _setState(ConnectionState.disconnected);
+    final connectCompleter = _connectCompleter;
+    if (connectCompleter != null && !connectCompleter.isCompleted) {
+      connectCompleter.complete();
+    }
   }
 
   /// Send a text command. Returns false when the target conversation is busy.
@@ -2226,6 +2536,8 @@ class WebSocketService {
     final sent = _send({
       'type': 'text',
       'content': content,
+      'conversation_id': id,
+      'request_id': requestId,
       'client_request_id': requestId,
     });
     if (sent) {
@@ -2253,6 +2565,8 @@ class WebSocketService {
       'type': 'audio',
       'format': 'wav',
       'data': base64Data,
+      'conversation_id': id,
+      'request_id': requestId,
       'client_request_id': requestId,
     });
     if (sent) {
@@ -2285,6 +2599,7 @@ class WebSocketService {
     // WOR-75: ...and clear its pending flag (clearConvBuffer no longer does so),
     // so no stale background placeholder lingers for a deleted conversation.
     clearPending(id);
+    _forgetConversationRequest(id);
     _setConversationBusy(id, false);
   }
 
@@ -2337,12 +2652,57 @@ class WebSocketService {
   /// Ask the server to synthesize [text] over TTS and send the audio back
   /// (the speaker button under an assistant message). Works regardless of
   /// the auto-TTS preference.
-  void sendSpeak(String text) {
+  bool sendSpeak(
+    String text, {
+    required String conversationId,
+    required String sourceRequestId,
+    required String sourceTurnId,
+    required String messageId,
+  }) {
+    if (!lanDirectV1) {
+      if (text.isEmpty) return false;
+      return _send({'type': 'speak', 'text': text});
+    }
+    if (conversationId.isEmpty ||
+        sourceRequestId.isEmpty ||
+        sourceTurnId.isEmpty ||
+        messageId.isEmpty ||
+        isConversationBusy(conversationId)) {
+      return false;
+    }
     final preview = text.length > 50 ? '${text.substring(0, 50)}…' : text;
     debugPrint(
       '[OSIA WS] sendSpeak: state=$_state, text_chars=${preview.length}',
     );
-    _send({'type': 'speak', 'text': text});
+    final requestId = newClientRequestId();
+    final turnId = 'turn_${newClientRequestId()}';
+    _mediaByConversation[conversationId] = _MediaCorrelation(
+      requestId: requestId,
+      turnId: turnId,
+      messageId: messageId,
+    );
+    _setConversationBusy(
+      conversationId,
+      true,
+      clientRequestId: requestId,
+      turnId: turnId,
+    );
+    final sent = _send({
+      'type': 'speak',
+      'text': text,
+      'conversation_id': conversationId,
+      'request_id': requestId,
+      'client_request_id': requestId,
+      'turn_id': turnId,
+      'message_id': messageId,
+      'source_request_id': sourceRequestId,
+      'source_turn_id': sourceTurnId,
+    });
+    if (!sent) {
+      _mediaByConversation.remove(conversationId);
+      _setConversationBusy(conversationId, false);
+    }
+    return sent;
   }
 
   /// Ask the server to restart itself. The socket will drop shortly after;
@@ -2568,17 +2928,36 @@ class WebSocketService {
   /// the same base64 payload is repeated under `image_base64` so the
   /// server can hand it straight to a vision model without re-reading
   /// the file from disk.
-  void sendFile(String filename, String base64Data, {bool isImage = false}) {
+  bool sendFile(
+    String filename,
+    String base64Data, {
+    bool isImage = false,
+    String conversationId = '',
+    String clientRequestId = '',
+    String prompt = '',
+  }) {
     final msg = <String, dynamic>{
       'type': 'file',
       'filename': filename,
       'data': base64Data,
       'is_image': isImage,
+      'conversation_id': conversationId,
     };
     if (isImage) {
+      if (clientRequestId.isEmpty) return false;
       msg['image_base64'] = base64Data;
+      msg['request_id'] = clientRequestId;
+      msg['client_request_id'] = clientRequestId;
+      msg['prompt'] = prompt;
     }
-    _send(msg);
+    final sent = _send(msg);
+    if (sent && isImage) {
+      _rememberRequest(conversationId, clientRequestId);
+      if (conversationId.isNotEmpty) {
+        _setConversationBusy(conversationId, true);
+      }
+    }
+    return sent;
   }
 
   /// Free all resources.
@@ -2614,7 +2993,13 @@ class WebSocketService {
     _activeRequestByConv.clear();
     _activeConvByRequest.clear();
     _acceptedRequests.clear();
+    _turnByRequest.clear();
+    _unboundRequestIds.clear();
     _seenCronNotifications.clear();
+    _mediaByConversation.clear();
+    _seenApplicationEventIds.clear();
+    _applicationEventOrder.clear();
+    _lastApplicationSequence.clear();
   }
 
   /// Strip any scheme, path, or port the user may have pasted into the
@@ -2631,8 +3016,25 @@ class WebSocketService {
 
   // ── Internals ────────────────────────────────────────────────────────
 
+  void _releaseTransportLease() {
+    final lease = _transportLease;
+    _transportLease = null;
+    lease?.release();
+  }
+
+  bool get _hasActiveApplicationTurn =>
+      _activeRequestByConv.isNotEmpty ||
+      _acceptedRequests.isNotEmpty ||
+      _unboundRequestIds.isNotEmpty ||
+      _mediaByConversation.isNotEmpty;
+
   bool _isCurrentConnect(int generation) =>
       !_disposed && !_intentionalClose && generation == _connectGeneration;
+
+  void _clearConnectAttempt(Future<void> future, Completer<void> completer) {
+    if (identical(_connectFuture, future)) _connectFuture = null;
+    if (identical(_connectCompleter, completer)) _connectCompleter = null;
+  }
 
   bool _isCurrentSocket(int generation) =>
       !_disposed && !_intentionalClose && generation == _socketGeneration;
@@ -2703,6 +3105,13 @@ class WebSocketService {
     _relayPeerE2eReady = false;
     _relayPcReady = false;
     _relayPairConfirmed = false;
+    _relayCommitAttemptId = '';
+    _relayCommitSent = false;
+    _relayCommitConfirmed = false;
+    _relayCommitAuthorized = false;
+    _relaySignalingStandby = false;
+    _relayPcRequiresCommit = false;
+    _lanProvisioningCompleter = null;
     _relayWorkerChunkVersion = 0;
     _relayWorkerChunkMaxFrameBytes = 0;
     _relayWorkerChunkMaxCiphertextChars = 0;
@@ -2793,11 +3202,12 @@ class WebSocketService {
 
   void _rollbackRelayRequest(String clientRequestId) {
     if (clientRequestId.isEmpty) return;
+    _acceptedRequests.remove(clientRequestId);
+    _turnByRequest.remove(clientRequestId);
     final conversationId = _activeConvByRequest.remove(clientRequestId);
     if (conversationId == null || conversationId.isEmpty) return;
     if (_activeRequestByConv[conversationId] == clientRequestId) {
       _activeRequestByConv.remove(conversationId);
-      _acceptedRequests.remove(clientRequestId);
       _pendingConvs.remove(conversationId);
       _setConversationBusy(conversationId, false);
     }
@@ -2810,8 +3220,61 @@ class WebSocketService {
         _relayPcReady &&
         _relayPeerE2eReady &&
         _relayE2eKeys != null) {
-      _markConnected();
-      _completeRelayReady(true);
+      if (!lanDirectV1) {
+        _markConnected();
+        _completeRelayReady(true);
+        return;
+      }
+      if (!_relayPcRequiresCommit) {
+        var activated = false;
+        if (_transportLease?.active != true) {
+          final lease = _transportCoordinator.tryAcquire(
+            ApplicationTransportKind.relay,
+            this,
+          );
+          if (lease == null) {
+            _failRelayHandshake(kRelayE2eStaleSessionError);
+            return;
+          }
+          _transportLease = lease;
+          activated = true;
+        }
+        _relaySignalingStandby = false;
+        _lastTransportKind = ApplicationTransportKind.relay;
+        if (_state != ConnectionState.connected) _markConnected();
+        _completeRelayReady(true);
+        if (activated) {
+          debugPrint('[OSIA Relay] authenticated relay-only PC selected');
+        }
+        return;
+      }
+      if (!_relayCommitAuthorized) {
+        _relaySignalingStandby = true;
+        _completeRelayReady(true);
+        return;
+      }
+      if (_relayCommitConfirmed) {
+        _relaySignalingStandby = false;
+        _markConnected();
+        _completeRelayReady(true);
+        return;
+      }
+      if (_relayCommitSent) return;
+      final random = Random.secure();
+      _relayCommitAttemptId = List<int>.generate(
+        16,
+        (_) => random.nextInt(256),
+      ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+      _relayCommitSent = true;
+      final queued = _sendRelayEncryptedFrame(<String, dynamic>{
+        'type': 'transport_commit',
+        'transport': 'relay',
+        'attempt_id': _relayCommitAttemptId,
+      });
+      if (!queued) {
+        _relayCommitSent = false;
+        _failRelayHandshake(kRelayE2eStaleSessionError);
+      }
     }
   }
 
@@ -2842,11 +3305,12 @@ class WebSocketService {
     );
   }
 
-  void _closeCurrentChannel({
+  Future<void> _closeCurrentChannel({
     required String reason,
     required bool emitDisconnected,
-  }) {
+  }) async {
     final channel = _channel;
+    final lanTransport = _lanTransport;
     _socketGeneration++;
     _clearChatGptEphemeralLogin();
     // This close path invalidates the socket callback itself, so any one-shot
@@ -2854,19 +3318,23 @@ class WebSocketService {
     // a later, healthy connection.
     _suppressReconnectOnce = false;
     _channel = null;
+    _lanTransport = null;
+    _connectedViaLan = false;
     _connectedViaRelay = false;
     _relayConfig = null;
-    _resetRelayE2eState();
     _completeRelayReady(false);
+    _resetRelayE2eState();
     _relayReadyCompleter = null;
     if (channel != null) {
       debugPrint('[OSIA WS] Closing current socket ($reason).');
       try {
-        channel.sink.close();
+        await channel.sink.close();
       } catch (e) {
         debugPrint('[OSIA WS] Socket close failed during reconnect: $e');
       }
     }
+    if (lanTransport != null) await lanTransport.close();
+    _releaseTransportLease();
     if (emitDisconnected) _setState(ConnectionState.disconnected);
   }
 
@@ -2924,6 +3392,7 @@ class WebSocketService {
     String delta, {
     String clientRequestId = '',
     String turnId = '',
+    String messageId = '',
   }) {
     if (convId == null || convId.isEmpty || _convStreamCtrl.isClosed) return;
     if (_shouldIgnoreConversationFrame(
@@ -2946,6 +3415,7 @@ class WebSocketService {
     if (needsSpace) st.text.write(' ');
     st.text.write(delta);
     st.streaming = true;
+    if (messageId.isNotEmpty) st.messageId = messageId;
     _pendingConvs.add(convId); // WOR-75/WOR-53/WOR-62: turn in flight.
     if (kOsiaDebugPlaceholder && !wasStreaming) {
       debugPrint(
@@ -2959,6 +3429,7 @@ class WebSocketService {
         convId,
         clientRequestId: clientRequestId,
         turnId: turnId,
+        messageId: messageId,
         delta: delta,
       ),
     );
@@ -2973,6 +3444,7 @@ class WebSocketService {
     String text, {
     String clientRequestId = '',
     String turnId = '',
+    String messageId = '',
   }) {
     if (convId == null || convId.isEmpty || _convStreamCtrl.isClosed) return;
     if (_shouldIgnoreConversationFrame(
@@ -2987,6 +3459,7 @@ class WebSocketService {
       ..clear()
       ..write(text);
     st.streaming = true;
+    if (messageId.isNotEmpty) st.messageId = messageId;
     _pendingConvs.add(convId); // WOR-75/WOR-53/WOR-62: turn in flight.
     if (kOsiaDebugPlaceholder) {
       debugPrint(
@@ -3000,6 +3473,7 @@ class WebSocketService {
         convId,
         clientRequestId: clientRequestId,
         turnId: turnId,
+        messageId: messageId,
         delta: text,
       ),
     );
@@ -3014,7 +3488,9 @@ class WebSocketService {
     required bool error,
     String clientRequestId = '',
     String turnId = '',
+    String messageId = '',
     String frameType = 'terminal',
+    bool keepMediaPhase = false,
   }) {
     if (_convStreamCtrl.isClosed) return;
     if (_shouldIgnoreConversationFrame(
@@ -3038,6 +3514,7 @@ class WebSocketService {
           'broadcasting to active conv (no id to clear in service)',
         );
       }
+      _forgetRequest(clientRequestId);
       _convStreamCtrl.add(
         ConvStreamEvent(
           '',
@@ -3053,13 +3530,31 @@ class WebSocketService {
     final st = _streamBuffers[convId];
     if (st != null) st.streaming = false;
     _pendingConvs.remove(convId); // WOR-75/WOR-53/WOR-62: turn finished.
-    _forgetConversationRequest(convId);
-    _setConversationBusy(
-      convId,
-      false,
-      clientRequestId: clientRequestId,
-      turnId: turnId,
-    );
+    if (keepMediaPhase &&
+        clientRequestId.isNotEmpty &&
+        turnId.isNotEmpty &&
+        messageId.isNotEmpty) {
+      _mediaByConversation[convId] = _MediaCorrelation(
+        requestId: clientRequestId,
+        turnId: turnId,
+        messageId: messageId,
+      );
+      _setConversationBusy(
+        convId,
+        true,
+        clientRequestId: clientRequestId,
+        turnId: turnId,
+      );
+    } else {
+      _forgetConversationRequest(convId);
+      _acceptedRequests.remove(clientRequestId);
+      _setConversationBusy(
+        convId,
+        false,
+        clientRequestId: clientRequestId,
+        turnId: turnId,
+      );
+    }
     if (kOsiaDebugPlaceholder) {
       debugPrint(
         '[OSIA WOR-75] _finishConvStream(error=$error) '
@@ -3071,10 +3566,38 @@ class WebSocketService {
         convId,
         clientRequestId: clientRequestId,
         turnId: turnId,
+        messageId: messageId,
         done: !error,
         error: error,
       ),
     );
+  }
+
+  bool _finishMediaPhase(
+    String conversationId, {
+    required String clientRequestId,
+    required String turnId,
+    required String messageId,
+  }) {
+    if (!lanDirectV1) return true;
+    final expected = _mediaByConversation[conversationId];
+    if (expected == null ||
+        expected.requestId != clientRequestId ||
+        expected.turnId != turnId ||
+        expected.messageId != messageId) {
+      debugPrint('[OSIA WS] ignored stale or unowned media event');
+      return false;
+    }
+    _mediaByConversation.remove(conversationId);
+    _forgetConversationRequest(conversationId);
+    _acceptedRequests.remove(clientRequestId);
+    _setConversationBusy(
+      conversationId,
+      false,
+      clientRequestId: clientRequestId,
+      turnId: turnId,
+    );
+    return true;
   }
 
   /// Evict the oldest FINISHED buffer when the map exceeds [_maxConvBuffers].
@@ -3096,6 +3619,17 @@ class WebSocketService {
   }
 
   bool _send(Map<String, dynamic> json) {
+    final lanTransport = _lanTransport;
+    if (_connectedViaLan && lanTransport != null) {
+      if (_transportLease?.active != true) {
+        debugPrint(
+          '[OSIA LAN] Send DROPPED (application lease inactive): '
+          'type=${json['type']}',
+        );
+        return false;
+      }
+      return lanTransport.send(json);
+    }
     // Surface dropped sends loudly — a null channel means the socket is
     // down and the message silently goes nowhere otherwise.
     if (_channel == null) {
@@ -3105,8 +3639,10 @@ class WebSocketService {
       return false;
     }
     if (_connectedViaRelay) {
+      if (_transportLease?.active != true) return false;
       return _sendRelayEncryptedFrame(json);
     }
+    if (_transportLease?.active != true) return false;
     final encoded = jsonEncode(json);
     try {
       _channel?.sink.add(encoded);
@@ -3120,13 +3656,146 @@ class WebSocketService {
   /// Clear conversation [id]'s busy flag (WOR-103), used by recovery paths that
   /// learn a turn finished via refreshed history instead of a terminal frame.
   void clearConversationBusy(String id) {
+    _forgetConversationRequest(id);
     _setConversationBusy(id, false);
+  }
+
+  Future<bool> _tryLanConnect(
+    LanDirectConfig config,
+    int connectGeneration,
+  ) async {
+    final lease = _transportCoordinator.tryAcquire(
+      ApplicationTransportKind.lan,
+      this,
+    );
+    if (lease == null) return false;
+    _transportLease = lease;
+    var retainLease = false;
+    LanCloseInfo? closeInfo;
+    late final LanDirectTransport transport;
+    transport = LanDirectTransport(
+      config: config,
+      token: token,
+      onFrame: (frame) {
+        if (identical(_lanTransport, transport)) {
+          _onData(frame);
+        }
+      },
+      onClosed: () => _onLanTransportClosed(transport, closeInfo),
+      onCloseInfo: (info) => closeInfo = info,
+      onError: (error) {
+        debugPrint('[OSIA LAN] active transport error: ${error.runtimeType}');
+      },
+    );
+    _lanTransport = transport;
+    try {
+      debugPrint('[OSIA LAN] Connecting to authenticated private endpoint');
+      _awaitingAuthenticatedInitialSync = true;
+      final ready = await transport.connect();
+      if (!_isCurrentConnect(connectGeneration) || !ready) {
+        await transport.close();
+        return false;
+      }
+      _lanTransport = transport;
+      _connectedViaLan = true;
+      _lastTransportKind = ApplicationTransportKind.lan;
+      retainLease = true;
+      _markConnected();
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
+      _reconnectAttempt = 0;
+      debugPrint('[OSIA LAN] secure E2E bridge ready');
+      return true;
+    } catch (error) {
+      debugPrint('[OSIA LAN] handshake failed: ${error.runtimeType}');
+      await transport.close();
+      return false;
+    } finally {
+      if (!retainLease) {
+        if (identical(_lanTransport, transport)) _lanTransport = null;
+        if (identical(_transportLease, lease)) _transportLease = null;
+        lease.release();
+      }
+    }
+  }
+
+  void _onLanTransportClosed(
+    LanDirectTransport transport,
+    LanCloseInfo? closeInfo,
+  ) {
+    if (!identical(_lanTransport, transport)) return;
+    final hadActiveTurn = _hasActiveApplicationTurn;
+    _lanTransport = null;
+    _connectedViaLan = false;
+    _clearChatGptEphemeralLogin();
+    _releaseTransportLease();
+    _setState(ConnectionState.disconnected);
+    debugPrint(
+      '[OSIA LAN] closed '
+      '(code=${closeInfo?.code}, category=${closeInfo?.category ?? 'network'})',
+    );
+    if (_intentionalClose) return;
+    if (hadActiveTurn) {
+      _failActiveApplicationTurns();
+      if (!_errorCtrl.isClosed) {
+        _errorCtrl.add(
+          'Secure LAN connection closed during an active request. '
+          'Automatic transport switching is disabled.',
+        );
+      }
+      return;
+    }
+    _scheduleReconnect();
+  }
+
+  Future<LanDirectConfig?> _discoverLanConfig(
+    LanPairingIdentity identity,
+  ) async {
+    final service = await lanDiscoveryService.discover(identity.instanceAlias);
+    if (service == null) return null;
+    return LanDirectConfig(
+      host: service.host,
+      port: service.port,
+      certificateSha256: identity.certificateSha256,
+    );
+  }
+
+  void _failActiveApplicationTurns() {
+    final conversations = <String>{
+      ..._activeRequestByConv.keys,
+      ..._mediaByConversation.keys,
+    };
+    for (final conversationId in conversations) {
+      final media = _mediaByConversation[conversationId];
+      final requestId =
+          _activeRequestByConv[conversationId] ?? media?.requestId ?? '';
+      _finishConvStream(
+        conversationId,
+        error: true,
+        clientRequestId: requestId,
+        turnId: media?.turnId ?? '',
+        messageId: media?.messageId ?? '',
+        frameType: 'local_transport_failure',
+      );
+    }
+    _mediaByConversation.clear();
+    _unboundRequestIds.clear();
   }
 
   Future<bool> _tryRelayConnect(
     RelayConnectionConfig config,
-    int connectGeneration,
-  ) async {
+    int connectGeneration, {
+    bool standbyOnly = false,
+  }) async {
+    final lease = standbyOnly
+        ? null
+        : _transportCoordinator.tryAcquire(
+            ApplicationTransportKind.relay,
+            this,
+          );
+    if (!standbyOnly && lease == null) return false;
+    if (lease != null) _transportLease = lease;
+    var retainLease = false;
     _relayHandshakeFailure = null;
     _relayBlocksLegacyFallback = false;
     final uri = _relayUri(config);
@@ -3150,6 +3819,10 @@ class WebSocketService {
       _relayConfig = config;
       _relaySeq = 0;
       _resetRelayE2eState();
+      if (standbyOnly) {
+        _relaySignalingStandby = true;
+        _lanProvisioningCompleter = Completer<LanPairingIdentity?>();
+      }
       _relayReadyCompleter = Completer<bool>();
       _attachChannel(
         IOWebSocketChannel(socket),
@@ -3164,11 +3837,18 @@ class WebSocketService {
         onTimeout: () => false,
       );
       if (!_isCurrentConnect(connectGeneration)) return false;
-      if (ready) return true;
+      if (ready) {
+        if (!standbyOnly && lease != null) {
+          _transportLease = lease;
+          _lastTransportKind = ApplicationTransportKind.relay;
+          retainLease = true;
+        }
+        return true;
+      }
 
       _relayHandshakeFailure ??= kRelayE2eHandshakeTimeoutError;
 
-      _closeCurrentChannel(
+      await _closeCurrentChannel(
         reason: 'relay E2E handshake did not complete',
         emitDisconnected: false,
       );
@@ -3183,6 +3863,48 @@ class WebSocketService {
       _relayHandshakeFailure ??= kRelayUnreachableError;
       debugPrint('[OSIA Relay] connect failed: ${e.runtimeType}');
       return false;
+    } finally {
+      if (lease != null && !retainLease) {
+        if (identical(_transportLease, lease)) _transportLease = null;
+        lease.release();
+      }
+    }
+  }
+
+  Future<bool> _commitRelayStandby(int connectGeneration) async {
+    if (_channel == null ||
+        _relayConfig == null ||
+        !_relaySignalingStandby ||
+        !_relayPcReady ||
+        !_relayPeerE2eReady ||
+        _relayE2eKeys == null) {
+      return false;
+    }
+    final lease = _transportCoordinator.tryAcquire(
+      ApplicationTransportKind.relay,
+      this,
+    );
+    if (lease == null) return false;
+    _transportLease = lease;
+    var retainLease = false;
+    try {
+      _relayCommitAuthorized = true;
+      _relayReadyCompleter = Completer<bool>();
+      _maybeCompleteRelayReady();
+      final ready = await _relayReadyCompleter!.future.timeout(
+        _relayReadyTimeout,
+        onTimeout: () => false,
+      );
+      if (!_isCurrentConnect(connectGeneration) || !ready) return false;
+      _relaySignalingStandby = false;
+      _lastTransportKind = ApplicationTransportKind.relay;
+      retainLease = true;
+      return true;
+    } finally {
+      if (!retainLease) {
+        if (identical(_transportLease, lease)) _transportLease = null;
+        lease.release();
+      }
     }
   }
 
@@ -3813,9 +4535,65 @@ class WebSocketService {
         replayKey: 'pc',
       );
       if (epoch != _relayE2eEpoch) return false;
+      if (frame['type'] == 'lan_provisioning') {
+        if (frame.keys.toSet().difference(const <String>{
+              'type',
+              'protocol_version',
+              'product_version',
+              'instance_alias',
+              'certificate_sha256',
+              'port',
+              'path',
+            }).isNotEmpty ||
+            frame.length != 7 ||
+            frame['protocol_version'] != lanDirectProtocolVersion ||
+            frame['port'] != lanDirectPort ||
+            frame['path'] != '/lan' ||
+            (frame['product_version']?.toString() ?? '').isEmpty) {
+          _failRelayHandshake(kRelayE2eStaleSessionError);
+          return false;
+        }
+        final alias = frame['instance_alias']?.toString() ?? '';
+        final pin = frame['certificate_sha256']?.toString() ?? '';
+        if (!RegExp(r'^[0-9a-f]{16}$').hasMatch(alias) ||
+            !RegExp(r'^[0-9a-f]{64}$').hasMatch(pin)) {
+          _failRelayHandshake(kRelayE2eStaleSessionError);
+          return false;
+        }
+        final identity = LanPairingIdentity(
+          instanceAlias: alias,
+          certificateSha256: pin,
+        );
+        final config = _relayConfig;
+        if (storage != null && config != null) {
+          await storage!.setLanPairing(config.pairId, identity);
+        }
+        final completer = _lanProvisioningCompleter;
+        if (completer != null && !completer.isCompleted) {
+          completer.complete(identity);
+        }
+        return true;
+      }
       if (frame['type'] == 'relay_chunk_error') {
         _handleRelayChunkErrorFrame(frame);
         return true;
+      }
+      if (frame['type'] == 'transport_committed') {
+        if (!lanDirectV1 ||
+            frame.length != 3 ||
+            frame['transport'] != 'relay' ||
+            frame['attempt_id'] != _relayCommitAttemptId ||
+            !_relayCommitSent) {
+          _failRelayHandshake(kRelayE2eStaleSessionError);
+          return false;
+        }
+        _relayCommitConfirmed = true;
+        _maybeCompleteRelayReady();
+        return true;
+      }
+      if (lanDirectV1 && _relaySignalingStandby && !_relayCommitConfirmed) {
+        _failRelayHandshake(kRelayE2eStaleSessionError);
+        return false;
       }
       _onData(frame.cast<String, dynamic>());
       return true;
@@ -4039,6 +4817,21 @@ class WebSocketService {
             _failRelayHandshake(kRelayE2eStaleSessionError);
             break;
           }
+          final relayOnlyReady =
+              payload is Map && payload.length == 1 && payload['e2e'] == true;
+          final standbyReady =
+              payload is Map &&
+              payload.length == 2 &&
+              payload['e2e'] == true &&
+              payload['standby'] == true;
+          if (lanDirectV1 && !relayOnlyReady && !standbyReady) {
+            _failRelayHandshake(kRelayE2eStaleSessionError);
+            break;
+          }
+          _relayPcRequiresCommit = lanDirectV1 && standbyReady;
+          if (lanDirectV1 && relayOnlyReady) {
+            _relaySignalingStandby = false;
+          }
           _relayPcReady = true;
           _maybeCompleteRelayReady();
         case 'E2E_FRAME':
@@ -4145,11 +4938,75 @@ class WebSocketService {
     }
   }
 
-  Future<void> _doConnect({required String reason}) async {
-    final connectGeneration = ++_connectGeneration;
-    _debugConnectAttemptCount++;
-    debugPrint('[OSIA WS] ensureConnected($reason)');
-    _setState(ConnectionState.connecting);
+  Future<void> _doConnect({
+    required String reason,
+    required int connectGeneration,
+  }) async {
+    final testAttempt = connectAttemptForTest;
+    if (testAttempt != null) {
+      try {
+        final succeeded = await testAttempt();
+        if (!_isCurrentConnect(connectGeneration)) return;
+        _setState(
+          succeeded ? ConnectionState.connected : ConnectionState.disconnected,
+        );
+      } catch (_) {
+        if (_isCurrentConnect(connectGeneration)) {
+          _setState(ConnectionState.disconnected);
+        }
+      }
+      return;
+    }
+
+    if (lanDirectV1 &&
+        _lastTransportKind == ApplicationTransportKind.lan &&
+        _hasActiveApplicationTurn) {
+      debugPrint(
+        '[OSIA LAN] reconnect blocked while an application request is active',
+      );
+      _setState(ConnectionState.disconnected);
+      return;
+    }
+
+    if (lanDirectV1 && !_hasActiveApplicationTurn) {
+      try {
+        final manualConfig =
+            lanDirectConfig ?? LanDirectConfig.fromEnvironment();
+        if (manualConfig != null) {
+          final lanReady = await _tryLanConnect(
+            manualConfig,
+            connectGeneration,
+          );
+          if (!_isCurrentConnect(connectGeneration)) return;
+          if (lanReady) return;
+        } else if (storage != null) {
+          final pairId = RelayService.derivePairCredentials(token).pairId;
+          final savedIdentity = await storage!.getLanPairing(pairId);
+          if (!_isCurrentConnect(connectGeneration)) return;
+          if (savedIdentity != null) {
+            final discovered = await _discoverLanConfig(savedIdentity);
+            if (!_isCurrentConnect(connectGeneration)) return;
+            if (discovered != null &&
+                await _tryLanConnect(discovered, connectGeneration)) {
+              return;
+            }
+          }
+        }
+      } catch (error) {
+        debugPrint('[OSIA LAN] preactivation attempt failed');
+      }
+    }
+
+    if (lanDirectV1 &&
+        _relaySignalingStandby &&
+        _channel != null &&
+        !_hasActiveApplicationTurn) {
+      if (await _commitRelayStandby(connectGeneration)) return;
+      await _closeCurrentChannel(
+        reason: 'existing relay standby could not be committed',
+        emitDisconnected: false,
+      );
+    }
 
     if (resolveRelay != null) {
       try {
@@ -4158,9 +5015,36 @@ class WebSocketService {
         final relayReady = await _tryRelayConnect(
           relayConfig,
           connectGeneration,
+          standbyOnly: lanDirectV1,
         );
         if (!_isCurrentConnect(connectGeneration)) return;
-        if (relayReady) return;
+        if (relayReady && lanDirectV1) {
+          if (!_relaySignalingStandby) return;
+          LanPairingIdentity? provisioned;
+          final provisioning = _lanProvisioningCompleter;
+          if (provisioning != null) {
+            provisioned = await provisioning.future.timeout(
+              const Duration(seconds: 2),
+              onTimeout: () => null,
+            );
+          }
+          if (!_isCurrentConnect(connectGeneration)) return;
+          if (provisioned != null) {
+            final discovered = await _discoverLanConfig(provisioned);
+            if (!_isCurrentConnect(connectGeneration)) return;
+            if (discovered != null &&
+                await _tryLanConnect(discovered, connectGeneration)) {
+              return;
+            }
+          }
+          if (await _commitRelayStandby(connectGeneration)) return;
+          await _closeCurrentChannel(
+            reason: 'LAN preactivation failed and relay commit was unavailable',
+            emitDisconnected: false,
+          );
+        } else if (relayReady) {
+          return;
+        }
         if (_relayBlocksLegacyFallback) {
           final error = _relayHandshakeFailure ?? kRelayUpdateRequiredError;
           if (!_errorCtrl.isClosed) _errorCtrl.add(error);
@@ -4235,6 +5119,16 @@ class WebSocketService {
       '[OSIA WS] Connecting to $url (timeout ${_connectTimeout.inSeconds}s)',
     );
 
+    final legacyLease = _transportCoordinator.tryAcquire(
+      ApplicationTransportKind.legacy,
+      this,
+    );
+    if (legacyLease == null) {
+      _setState(ConnectionState.disconnected);
+      return;
+    }
+    _transportLease = legacyLease;
+    var retainLegacyLease = false;
     try {
       final socket = await WebSocket.connect(url).timeout(_connectTimeout);
       if (!_isCurrentConnect(connectGeneration)) {
@@ -4245,6 +5139,8 @@ class WebSocketService {
       // Socket is open — we're connected. Don't wait for any server message
       // to flip state, or the badge stays on "Connexion…" forever.
       _attachChannel(IOWebSocketChannel(socket), relay: false, onData: _onData);
+      _lastTransportKind = ApplicationTransportKind.legacy;
+      retainLegacyLease = true;
       _markConnected();
       // The socket is open and healthy: kill any reconnect timer left pending
       // from an earlier failed attempt. Otherwise that stale timer fires while
@@ -4290,6 +5186,11 @@ class WebSocketService {
       _errorCtrl.add(msg);
       _setState(ConnectionState.disconnected);
       _scheduleReconnect();
+    } finally {
+      if (!retainLegacyLease) {
+        if (identical(_transportLease, legacyLease)) _transportLease = null;
+        legacyLease.release();
+      }
     }
   }
 
@@ -4298,6 +5199,8 @@ class WebSocketService {
       final Map<String, dynamic> json = (raw is String)
           ? jsonDecode(raw) as Map<String, dynamic>
           : raw;
+
+      if (!_acceptCanonicalApplicationEvent(json)) return;
 
       final type = json['type'] as String?;
       final content = json['content'] as String?;
@@ -4308,17 +5211,29 @@ class WebSocketService {
       // conversation_id with an id fallback. Only the streaming cases below use
       // it — it routes a backgrounded stream to its conversation buffer.
       final convId = (json['conversation_id'] ?? json['id'])?.toString();
-      final clientRequestId = json['client_request_id']?.toString() ?? '';
+      final clientRequestId =
+          json['request_id']?.toString() ??
+          json['client_request_id']?.toString() ??
+          '';
       final turnId = json['turn_id']?.toString() ?? '';
+      final messageId = json['message_id']?.toString() ?? '';
 
       switch (type) {
         case 'transcript':
           if (content != null) {
-            _emit(TranscriptMessage(content));
+            _emit(
+              TranscriptMessage(
+                content,
+                conversationId: convId ?? '',
+                clientRequestId: clientRequestId,
+                turnId: turnId,
+                messageId: messageId,
+              ),
+            );
           }
         case 'response':
           if (content != null) {
-            _emit(ResponseMessage(content));
+            if (!lanDirectV1) _emit(ResponseMessage(content));
             // WOR-53: also replace this conversation's buffer with the
             // canonical full reply (parallel sink — no change to pacing).
             _replaceConvText(
@@ -4326,11 +5241,12 @@ class WebSocketService {
               content,
               clientRequestId: clientRequestId,
               turnId: turnId,
+              messageId: messageId,
             );
           }
         case 'response_chunk':
           if (content != null && content.isNotEmpty) {
-            _emit(ResponseChunkMessage(content));
+            if (!lanDirectV1) _emit(ResponseChunkMessage(content));
             // WOR-53: also accrue the delta into this conversation's buffer so
             // its reply survives a screen switch and hydrates on return.
             _appendConvDelta(
@@ -4338,6 +5254,7 @@ class WebSocketService {
               content,
               clientRequestId: clientRequestId,
               turnId: turnId,
+              messageId: messageId,
             );
           }
         case 'audio':
@@ -4347,7 +5264,32 @@ class WebSocketService {
               '[OSIA WS] audio frame received: ${data.length} b64 chars, '
               'source=$source',
             );
-            _emit(AudioMessage(data, source: source));
+            final owned = _finishMediaPhase(
+              convId ?? '',
+              clientRequestId: clientRequestId,
+              turnId: turnId,
+              messageId: messageId,
+            );
+            if (!owned) break;
+            _emit(
+              AudioMessage(
+                data,
+                source: source,
+                conversationId: convId ?? '',
+                clientRequestId: clientRequestId,
+                turnId: turnId,
+                messageId: messageId,
+              ),
+            );
+          }
+        case 'media_status':
+          if (json['media_terminal'] == true) {
+            _finishMediaPhase(
+              convId ?? '',
+              clientRequestId: clientRequestId,
+              turnId: turnId,
+              messageId: messageId,
+            );
           }
         case 'status':
           if (content != null) {
@@ -4584,6 +5526,18 @@ class WebSocketService {
           }
         case 'cron_notification':
           final note = CronNotificationMessage.fromJson(json);
+          if (lanDirectV1 &&
+              (note.id.isEmpty ||
+                  note.requestId.isEmpty ||
+                  note.turnId.isEmpty ||
+                  note.messageId.isEmpty ||
+                  note.eventId != note.id ||
+                  note.eventType != 'cron_notification' ||
+                  note.sequence <= 0 ||
+                  !note.terminal)) {
+            debugPrint('[OSIA WS] rejected incomplete cron notification');
+            break;
+          }
           final id = note.id;
           if (id.isNotEmpty) {
             if (_seenCronNotifications.contains(id)) break;
@@ -4669,10 +5623,27 @@ class WebSocketService {
       '[OSIA WS] Connection closed (code=$code, reason="$reason", '
       'intentional=$_intentionalClose, autoReconnect=$autoReconnect).',
     );
+    final signalingOnly = _relaySignalingStandby && !_relayCommitAuthorized;
+    if (signalingOnly) {
+      _channel = null;
+      _connectedViaRelay = false;
+      _relayConfig = null;
+      _completeRelayReady(false);
+      _resetRelayE2eState();
+      _relayReadyCompleter = null;
+      if (!_connectedViaLan &&
+          _state != ConnectionState.connecting &&
+          !_intentionalClose) {
+        _setState(ConnectionState.disconnected);
+        _scheduleReconnect();
+      }
+      return;
+    }
     final relayDroppedWhileConnected =
         _connectedViaRelay && _state == ConnectionState.connected;
     final relayDroppedRequestId = _relayLastOutboundRequestId;
     _channel = null;
+    _releaseTransportLease();
     _connectedViaRelay = false;
     _relayConfig = null;
     _resetRelayE2eState();

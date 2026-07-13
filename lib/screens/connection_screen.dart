@@ -184,6 +184,7 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     final probe = ws.WebSocketService(
       ip: StorageService.defaultHost,
       token: token,
+      storage: widget.storage,
       // WOR-64: resolve the PC's current host from the token on every connect/
       // reconnect instead of using a fixed host. [ip] stays as the fallback.
       resolveRelay: () =>
