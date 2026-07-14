@@ -347,7 +347,7 @@ void main() {
       harness.transport.send(<String, dynamic>{'type': 'get_config'}),
       isTrue,
     );
-    await pumpAsync();
+    await harness.transport.drain();
     expect(harness.channel.sent, isNotEmpty);
 
     final accepted = harness.transport.send(<String, dynamic>{
@@ -358,7 +358,7 @@ void main() {
       'turn_id': 'turn',
     });
     expect(accepted, isTrue);
-    await pumpAsync();
+    await harness.transport.drain();
     final envelope =
         jsonDecode(harness.channel.sent.last) as Map<String, dynamic>;
     final decrypted = await decryptFrame(

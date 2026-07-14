@@ -1,15 +1,14 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
 import '../l10n.dart';
 import '../motion.dart';
 import '../nav.dart';
 import '../services/audio_service.dart';
+import '../services/attachment_service.dart';
 import '../services/background_connection_service.dart';
 import '../services/connection_lifecycle_service.dart';
 import '../services/notification_service.dart';
@@ -98,6 +97,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _configSub;
   StreamSubscription? _mcpConfirmSub;
   StreamSubscription? _busySub;
+  StreamSubscription? _attachmentProtocolSub;
   String? _connError;
   // Monotonic generation for the connection-banner AnimatedSwitcher keys.
   // Bumped on every connection-state change so the error banner / placeholder
@@ -196,11 +196,13 @@ class _ChatScreenState extends State<ChatScreen> {
   // displayed conversation changing on explicit user tap alone.
   Timer? _recoveryPoll;
 
-  // Pending attachment shown as a chip in the input bar. Only sent when
-  // the user taps the send arrow (or hits enter).
-  String? _pendingFilename;
-  Uint8List? _pendingFileBytes;
-  bool _pendingIsImage = false;
+  // Staged attachment files are bounded, hashed and stored under generated
+  // app-private temporary names. User filenames are display-only.
+  final List<PreparedAttachment> _pendingAttachments = [];
+  AttachmentProgress? _attachmentProgress;
+  AttachmentCancellation? _attachmentCancellation;
+  String? _submittedAttachmentRequestId;
+  bool _clearAttachmentsWhenIdle = false;
 
   // True while we sent a turn and haven't yet seen status=done/error.
   bool _awaitingResponse = false;
@@ -331,6 +333,9 @@ class _ChatScreenState extends State<ChatScreen> {
     widget.connectionLifecycle.attach(_wsService);
 
     _connSub = _wsService.connectionStream.listen((state) {
+      if (state != ws.ConnectionState.connected) {
+        _attachmentCancellation?.cancel();
+      }
       if (mounted) {
         setState(() {
           _connState = state;
@@ -397,6 +402,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _convStreamSub = _wsService.convStreamStream.listen(_onConvStream);
     _busySub = _wsService.conversationBusyStream.listen(_onConversationBusy);
     _relayTransferSub = _wsService.relayTransferStream.listen(_onRelayTransfer);
+    _attachmentProtocolSub = _wsService.attachmentProtocolStream.listen(
+      _onAttachmentProtocol,
+    );
 
     // AI-hierarchy state arrives on its own config channel (kept off the
     // sealed-message switch). Track it so the model selector can note when
@@ -607,6 +615,9 @@ class _ChatScreenState extends State<ChatScreen> {
             _noResponse = false;
           });
           break;
+        }
+        if (_submittedAttachmentRequestId == clientRequestId) {
+          unawaited(_completeSubmittedAttachments(clientRequestId));
         }
         _noteTurnActivity(clientRequestId: clientRequestId, turnId: turnId);
         setState(() {
@@ -996,6 +1007,74 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _onAttachmentProtocol(ws.AttachmentProtocolMessage message) {
+    if (!mounted) return;
+    final data = message.data;
+    if (data['type'] != 'attachment_batch_failed') return;
+    final requestId = data['client_request_id']?.toString() ?? '';
+    if (requestId.isEmpty || requestId != _submittedAttachmentRequestId) return;
+    final pending = _pendingTurn;
+    final active = _activeConversationId;
+    if (pending != null && pending.originalDraft.isNotEmpty) {
+      _textCtrl.text = pending.originalDraft;
+      _textCtrl.selection = TextSelection.collapsed(
+        offset: _textCtrl.text.length,
+      );
+    }
+    if (active != null && active.isNotEmpty) {
+      _optimisticUser.remove(active);
+      _wsService.clearPending(active);
+      _wsService.clearConversationBusy(active);
+    } else {
+      _optimisticUserNoId = null;
+    }
+    setState(() {
+      if (_entries.isNotEmpty && _entries.last.isUser) {
+        _entries.removeLast();
+      }
+      _submittedAttachmentRequestId = null;
+      _pendingTurn = null;
+      _awaitingResponse = false;
+      _thinking = false;
+      _noResponse = false;
+      _attachmentProgress = AttachmentProgress(
+        phase: AttachmentPhase.failed,
+        totalBytes: _pendingAttachmentBytes,
+        totalFiles: _pendingAttachments.length,
+        category: data['category']?.toString() ?? 'attachment_failed',
+      );
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Attachment transfer failed. Review the files and retry.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _completeSubmittedAttachments(String requestId) async {
+    if (requestId != _submittedAttachmentRequestId) return;
+    final completed = List<PreparedAttachment>.of(_pendingAttachments);
+    if (mounted) {
+      setState(() {
+        _pendingAttachments.clear();
+        _submittedAttachmentRequestId = null;
+        _attachmentCancellation = null;
+        _attachmentProgress = const AttachmentProgress(
+          phase: AttachmentPhase.sent,
+          completedBytes: 1,
+          totalBytes: 1,
+          completedFiles: 1,
+          totalFiles: 1,
+        );
+      });
+    }
+    for (final file in completed) {
+      await file.delete();
+    }
+  }
+
   bool _isFrameForCurrentTurn({
     required String conversationId,
     required String clientRequestId,
@@ -1279,6 +1358,21 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _loadConversation(ws.Conversation conv) {
+    if (_attachmentInteractionLocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _attachmentBusy
+                ? 'Cancel the attachment upload first.'
+                : 'Wait for PC to accept the attachment turn.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (conv.id != _activeConversationId && _pendingAttachments.isNotEmpty) {
+      unawaited(_clearPendingAttachments());
+    }
     // WOR-53: free the buffer of the conversation we're leaving IF its turn has
     // finished — a still-streaming one is kept so it keeps accumulating in the
     // background and hydrates on return. This bounds the buffer map (the common
@@ -1438,6 +1532,21 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _newConversation() {
+    if (_attachmentInteractionLocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _attachmentBusy
+                ? 'Cancel the attachment upload first.'
+                : 'Wait for PC to accept the attachment turn.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (_pendingAttachments.isNotEmpty) {
+      unawaited(_clearPendingAttachments());
+    }
     _wsService.sendNewConversation();
     _cancelPendingConvLoad();
     _cancelFirstTokenTimer();
@@ -1484,6 +1593,11 @@ class _ChatScreenState extends State<ChatScreen> {
   /// clearing those methods perform.
   void _onNewChat() {
     if (!mounted) return;
+    _clearAttachmentsWhenIdle = _attachmentBusy;
+    _attachmentCancellation?.cancel();
+    if (_pendingAttachments.isNotEmpty) {
+      unawaited(_clearPendingAttachments());
+    }
     _cancelPendingConvLoad();
     _cancelFirstTokenTimer();
     _stopRecoveryPoll();
@@ -1548,6 +1662,11 @@ class _ChatScreenState extends State<ChatScreen> {
     _optimisticUser.remove(conv.id);
     final deletingActive = _activeConversationId == conv.id;
     if (deletingActive) {
+      _clearAttachmentsWhenIdle = _attachmentBusy;
+      _attachmentCancellation?.cancel();
+      if (_pendingAttachments.isNotEmpty) {
+        unawaited(_clearPendingAttachments());
+      }
       // The emptied chat must not keep a recovery poll or a retry payload for a
       // turn that belonged to the now-deleted conversation.
       _cancelFirstTokenTimer();
@@ -1760,9 +1879,38 @@ class _ChatScreenState extends State<ChatScreen> {
     return _wsService.isConversationBusy(id);
   }
 
+  int get _pendingAttachmentBytes =>
+      _pendingAttachments.fold<int>(0, (sum, file) => sum + file.byteSize);
+
+  bool get _attachmentBusy => switch (_attachmentProgress?.phase) {
+    AttachmentPhase.preparing ||
+    AttachmentPhase.hashing ||
+    AttachmentPhase.uploading ||
+    AttachmentPhase.verifying => true,
+    _ => false,
+  };
+
+  bool get _attachmentInteractionLocked =>
+      _attachmentBusy || _submittedAttachmentRequestId != null;
+
+  String? get _attachmentStatusLabel => _submittedAttachmentRequestId != null
+      ? 'Waiting for PC…'
+      : switch (_attachmentProgress?.phase) {
+          AttachmentPhase.preparing => 'Preparing files…',
+          AttachmentPhase.hashing => 'Hashing files…',
+          AttachmentPhase.uploading => 'Uploading…',
+          AttachmentPhase.verifying => 'Verifying on PC…',
+          AttachmentPhase.ready => 'Ready',
+          AttachmentPhase.sent => null,
+          AttachmentPhase.failed => 'Failed — tap send to retry',
+          AttachmentPhase.canceled => 'Canceled — tap send to retry',
+          _ => null,
+        };
+
   bool get _canSend =>
       !_activeConversationBusy &&
-      (_textCtrl.text.trim().isNotEmpty || _pendingFileBytes != null);
+      !_attachmentInteractionLocked &&
+      (_textCtrl.text.trim().isNotEmpty || _pendingAttachments.isNotEmpty);
 
   /// True when OSIA pauses to think *mid-stream*: the thinking flag is set
   /// while a streaming assistant bubble already holds some text. Mirrors the
@@ -1786,13 +1934,11 @@ class _ChatScreenState extends State<ChatScreen> {
   /// [_thinking]).
   bool get _showThinkingTrailer => _thinking && !_isThinkingMidStream;
 
-  void _sendText() {
+  Future<void> _sendText() async {
     final text = _textCtrl.text.trim();
-    final filename = _pendingFilename;
-    final bytes = _pendingFileBytes;
-    final isImage = _pendingIsImage;
-    final hasFile = filename != null && bytes != null;
-    if (text.isEmpty && !hasFile) return;
+    final attachments = List<PreparedAttachment>.of(_pendingAttachments);
+    final hasFiles = attachments.isNotEmpty;
+    if (text.isEmpty && !hasFiles || _attachmentInteractionLocked) return;
     if (_activeConversationBusy) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1802,99 +1948,145 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     final sendingConv = _activeConversationId;
-
-    final displayContent = hasFile
-        ? (text.isEmpty ? '📎 $filename' : '📎 $filename\n$text')
-        : text;
-    _addEntry(_ChatEntry(content: displayContent, isUser: true));
-
     final strings = OsiaL10n.of(context);
+    final names = attachments.map((file) => file.displayName).join(', ');
+    final allImages =
+        hasFiles &&
+        attachments.every((file) => file.detectedCategory == 'image');
     final prompt = text.isNotEmpty
         ? text
-        : (isImage
-              ? strings.analyzeImagePrompt
-              : strings.hereIsFile(filename ?? ''));
-    final clientRequestId = ws.WebSocketService.newClientRequestId();
-    var sent = true;
-    if (hasFile) {
-      sent = _wsService.sendFile(
-        filename,
-        base64Encode(bytes),
-        isImage: isImage,
-        conversationId: sendingConv ?? '',
-        clientRequestId: clientRequestId,
-        prompt: prompt,
+        : (allImages ? strings.analyzeImagePrompt : strings.hereIsFile(names));
+    final requestId = ws.WebSocketService.newClientRequestId();
+    var batchId = '';
+    var sent = false;
+
+    if (hasFiles) {
+      final cancellation = AttachmentCancellation();
+      _attachmentCancellation = cancellation;
+      setState(() {
+        _attachmentProgress = AttachmentProgress(
+          phase: AttachmentPhase.uploading,
+          totalBytes: _pendingAttachmentBytes,
+          totalFiles: attachments.length,
+        );
+      });
+      final transfer = AttachmentTransferClient(
+        sendFrame: _wsService.sendAttachmentEvent,
+        events: _wsService.attachmentProtocolStream.map(
+          (message) => message.data,
+        ),
+        transportSession: () => _wsService.attachmentTransportSession,
       );
-    }
-    if (sent && !isImage) {
+      try {
+        final result = await transfer.upload(
+          files: attachments,
+          conversationId: sendingConv ?? '',
+          clientRequestId: requestId,
+          cancellation: cancellation,
+          onProgress: (progress) {
+            if (mounted) setState(() => _attachmentProgress = progress);
+          },
+        );
+        if (!mounted) return;
+        batchId = result.batchId;
+        _submittedAttachmentRequestId = requestId;
+        sent = _wsService.sendAttachmentTurn(
+          prompt,
+          attachmentBatchId: result.batchId,
+          conversationId: sendingConv ?? '',
+          clientRequestId: requestId,
+          expectedTransportSession: result.transportSession,
+        );
+        if (!sent) {
+          _submittedAttachmentRequestId = null;
+          await transfer.cancelCommitted(
+            result,
+            conversationId: sendingConv ?? '',
+          );
+        }
+      } on AttachmentException catch (error) {
+        if (!mounted) return;
+        setState(() {
+          _attachmentCancellation = null;
+          _attachmentProgress = AttachmentProgress(
+            phase: error.category == 'canceled'
+                ? AttachmentPhase.canceled
+                : AttachmentPhase.failed,
+            totalBytes: _pendingAttachmentBytes,
+            totalFiles: _pendingAttachments.length,
+            category: error.category,
+          );
+        });
+        if (_clearAttachmentsWhenIdle) {
+          _clearAttachmentsWhenIdle = false;
+          await _clearPendingAttachments();
+          if (!mounted) return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error.category == 'canceled'
+                  ? 'Attachment upload canceled.'
+                  : 'Attachment upload failed (${error.category}). Retry explicitly.',
+            ),
+          ),
+        );
+        return;
+      }
+    } else {
       sent = _wsService.sendText(
         prompt,
         conversationId: sendingConv,
-        clientRequestId: clientRequestId,
+        clientRequestId: requestId,
       );
     }
+
     if (!sent) {
+      if (!mounted) return;
+      setState(() {
+        _attachmentCancellation = null;
+        if (hasFiles) {
+          _attachmentProgress = AttachmentProgress(
+            phase: AttachmentPhase.failed,
+            totalBytes: _pendingAttachmentBytes,
+            totalFiles: _pendingAttachments.length,
+            category: 'turn_not_sent',
+          );
+        }
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('OSIA is still working in this conversation.'),
+          content: Text(
+            'The message was not sent. Your draft and files were kept.',
+          ),
         ),
       );
       return;
     }
-    // WOR-75/WOR-53/WOR-62: mark this conversation's turn in flight at send
-    // time (when its id is known) so switching away and straight back arms the
-    // recovery poll (and, once chunks have accumulated, buffer hydration) even
-    // before the first chunk arrives. A brand-new conversation has no id yet —
-    // its first streamed chunk carries the id and marks it then.
-    if (ws.kOsiaDebugPlaceholder) {
-      debugPrint(
-        '[OSIA WOR-75] _sendText: activeConversationId='
-        '${sendingConv == null ? "null" : "id=$sendingConv"} → '
-        '${(sendingConv != null && sendingConv.isNotEmpty) ? "markPending called" : "NO markPending (empty id)"}',
-      );
-    }
+
+    final displayContent = hasFiles
+        ? (text.isEmpty ? '📎 $names' : '📎 $names\n$text')
+        : text;
+    _addEntry(_ChatEntry(content: displayContent, isUser: true));
     if (sendingConv != null && sendingConv.isNotEmpty) {
       _wsService.markPending(sendingConv);
     }
-    // Feature 1: retain the just-sent message in memory (keyed by conv id, or
-    // stashed until a brand-new conversation learns its id) so a switch-away /
-    // disconnect re-fetch re-injects it above the reply — it's never missing.
     _recordOptimisticUser(displayContent);
-
-    // Remember this exact turn so a no-response timeout can re-send it verbatim
-    // without the user retyping (see [_retryLastTurn]).
     _pendingTurn = _PendingTurn(
       prompt: prompt,
-      filename: hasFile ? filename : null,
-      fileBytes: hasFile ? bytes : null,
-      isImage: isImage,
-      clientRequestId: clientRequestId,
+      originalDraft: text,
+      attachmentBatchId: batchId,
+      clientRequestId: requestId,
     );
-
     _textCtrl.clear();
     setState(() {
-      _pendingFilename = null;
-      _pendingFileBytes = null;
-      _pendingIsImage = false;
+      _attachmentCancellation = null;
       _awaitingResponse = true;
-      // Optimistic, local thinking indicator — shown immediately, before the
-      // first token, to mask network + agent-construction latency.
       _thinking = true;
       _noResponse = false;
     });
-    // WOR-75/WOR-53/WOR-62: the user is now engaged LIVE on this conversation, so
-    // any recovery poll left over from a prior switch-back / wake stands down —
-    // the live stream renders chunks as they arrive, and if the socket later
-    // drops mid-turn the reconnect branch re-arms the poll. (Deliberately NOT
-    // started here: while the buffer is still empty pre-first-token the poll
-    // would spuriously re-fetch a reply-less history and clear the thinking
-    // indicator / cancel the no-response watchdog mid-turn.)
     _stopRecoveryPoll();
-    // Arm the 12s no-response watchdog (cancelled at the first sign of life
-    // from the server for this turn — see [_onMessage]).
     _armFirstTokenTimer();
-    // A new turn supersedes any stale read-aloud request — never let an
-    // old speak tap unlock this turn's response audio.
     _speakRequested = false;
   }
 
@@ -2233,24 +2425,18 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    var sent = true;
-    if (turn.hasFile) {
-      sent = _wsService.sendFile(
-        turn.filename!,
-        base64Encode(turn.fileBytes!),
-        isImage: turn.isImage,
-        conversationId: retryConv ?? '',
-        clientRequestId: turn.clientRequestId,
-        prompt: turn.prompt,
-      );
-    }
-    if (sent && !turn.isImage) {
-      sent = _wsService.sendText(
-        turn.prompt,
-        conversationId: retryConv,
-        clientRequestId: turn.clientRequestId,
-      );
-    }
+    final sent = turn.attachmentBatchId.isNotEmpty
+        ? _wsService.sendAttachmentTurn(
+            turn.prompt,
+            attachmentBatchId: turn.attachmentBatchId,
+            conversationId: retryConv ?? '',
+            clientRequestId: turn.clientRequestId,
+          )
+        : _wsService.sendText(
+            turn.prompt,
+            conversationId: retryConv,
+            clientRequestId: turn.clientRequestId,
+          );
     if (!sent) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -2280,13 +2466,41 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottomAnimated();
   }
 
-  void _clearPendingFile() {
+  Future<void> _removePendingAttachment(int index) async {
+    if (_attachmentInteractionLocked ||
+        index < 0 ||
+        index >= _pendingAttachments.length) {
+      return;
+    }
+    final removed = _pendingAttachments.removeAt(index);
     setState(() {
-      _pendingFilename = null;
-      _pendingFileBytes = null;
-      _pendingIsImage = false;
+      _attachmentProgress = _pendingAttachments.isEmpty
+          ? null
+          : AttachmentProgress(
+              phase: AttachmentPhase.ready,
+              completedBytes: _pendingAttachmentBytes,
+              totalBytes: _pendingAttachmentBytes,
+              completedFiles: _pendingAttachments.length,
+              totalFiles: _pendingAttachments.length,
+            );
     });
+    await removed.delete();
   }
+
+  Future<void> _clearPendingAttachments() async {
+    if (_attachmentInteractionLocked) return;
+    final removed = List<PreparedAttachment>.of(_pendingAttachments);
+    setState(() {
+      _pendingAttachments.clear();
+      _attachmentProgress = null;
+      _submittedAttachmentRequestId = null;
+    });
+    for (final file in removed) {
+      await file.delete();
+    }
+  }
+
+  void _cancelAttachmentTransfer() => _attachmentCancellation?.cancel();
 
   /// Ask the server to read one assistant message aloud (speaker button on
   /// the bubble). The server synthesizes TTS and sends the audio back to
@@ -2322,15 +2536,6 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     _speakRequested = true;
-  }
-
-  bool _isImageFilename(String filename) {
-    final lower = filename.toLowerCase();
-    return lower.endsWith('.jpg') ||
-        lower.endsWith('.jpeg') ||
-        lower.endsWith('.png') ||
-        lower.endsWith('.gif') ||
-        lower.endsWith('.webp');
   }
 
   Future<void> _toggleRecording() async {
@@ -2405,116 +2610,130 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// Request the storage / media permissions file_picker may need on
-  /// Android. On Android 13+ generic-file picks go through the Storage
-  /// Access Framework which doesn't require any of these — but media picks
-  /// do, and asking up-front sidesteps a confusing "nothing happens" UX
-  /// when the user taps a media file.
-  ///
-  /// The request is best-effort: we log each outcome and proceed regardless
-  /// of the grant state, because the SAF picker works without permissions
-  /// and we don't want to block the user.
-  Future<void> _requestAttachPermissions() async {
-    if (!Platform.isAndroid) {
-      debugPrint('[OSIA Attach] non-Android platform, skipping permissions');
+  Future<void> _onAttach() async {
+    if (_attachmentInteractionLocked ||
+        _pendingAttachments.length >= attachmentMaxFiles) {
       return;
     }
-    final perms = <Permission>[
-      Permission.storage,
-      Permission.photos,
-      Permission.videos,
-      Permission.audio,
-    ];
-    for (final p in perms) {
-      try {
-        final before = await p.status;
-        debugPrint('[OSIA Attach] $p initial status=$before');
-        if (before.isGranted || before.isLimited) continue;
-        if (before.isPermanentlyDenied) {
-          debugPrint('[OSIA Attach] $p permanently denied — skipping request');
-          continue;
-        }
-        final result = await p.request();
-        debugPrint('[OSIA Attach] $p request -> $result');
-      } catch (e) {
-        debugPrint('[OSIA Attach] $p threw on request: $e');
-      }
-    }
-  }
-
-  Future<void> _onAttach() async {
-    debugPrint('[OSIA Attach] tap → _onAttach start');
-    await _requestAttachPermissions();
-
     FilePickerResult? result;
     try {
-      debugPrint('[OSIA Attach] calling FilePicker.pickFiles(FileType.any)');
       result = await FilePicker.platform.pickFiles(
         type: FileType.any,
-        allowMultiple: false,
-        withData: true,
+        allowMultiple: true,
+        withData: false,
+        withReadStream: true,
       );
-      debugPrint(
-        '[OSIA Attach] pickFiles returned: '
-        '${result == null ? "null (user cancelled)" : "${result.files.length} file(s)"}',
-      );
-    } catch (e, stack) {
-      debugPrint('[OSIA Attach] pickFiles threw: $e\n$stack');
+    } on Object {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(OsiaL10n.of(context).filePickFailed('$e'))),
+          const SnackBar(content: Text('Unable to open the file picker.')),
         );
       }
       return;
     }
-    if (result == null || result.files.isEmpty) {
-      debugPrint('[OSIA Attach] no file picked, returning');
-      return;
+    if (result == null || result.files.isEmpty) return;
+
+    final sources = <AttachmentSource>[];
+    for (final picked in result.files) {
+      final capturedStream = picked.readStream;
+      final capturedPath = picked.path;
+      sources.add(
+        AttachmentSource(
+          displayName: picked.name,
+          declaredSize: picked.size,
+          openRead: () {
+            if (capturedStream != null) return capturedStream;
+            if (capturedPath == null || capturedPath.isEmpty) {
+              throw const AttachmentException('source_expired');
+            }
+            return File(capturedPath).openRead();
+          },
+        ),
+      );
     }
 
-    final picked = result.files.first;
-    final filename = picked.name;
-    debugPrint(
-      '[OSIA Attach] picked: name=$filename '
-      'path=${picked.path} '
-      'size=${picked.size} '
-      'bytesPresent=${picked.bytes != null}',
-    );
-
-    Uint8List? bytes = picked.bytes;
-    if (bytes == null && picked.path != null) {
-      try {
-        debugPrint('[OSIA Attach] reading bytes from path');
-        bytes = await File(picked.path!).readAsBytes();
-        debugPrint('[OSIA Attach] read ${bytes.length} bytes from disk');
-      } catch (e, stack) {
-        debugPrint('[OSIA Attach] disk read failed: $e\n$stack');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(OsiaL10n.of(context).fileReadFailed('$e'))),
-          );
+    final cancellation = AttachmentCancellation();
+    _attachmentCancellation = cancellation;
+    setState(() {
+      _attachmentProgress = AttachmentProgress(
+        phase: AttachmentPhase.preparing,
+        completedBytes: _pendingAttachmentBytes,
+        totalBytes:
+            _pendingAttachmentBytes +
+            sources.fold<int>(0, (sum, source) => sum + source.declaredSize),
+        completedFiles: _pendingAttachments.length,
+        totalFiles: _pendingAttachments.length + sources.length,
+      );
+    });
+    try {
+      final temporary = await getTemporaryDirectory();
+      final preparer = AttachmentPreparer(
+        root: Directory(
+          '${temporary.path}${Platform.pathSeparator}osia_attachment_staging',
+        ),
+      );
+      final prepared = await preparer.prepare(
+        sources,
+        existing: _pendingAttachments,
+        cancellation: cancellation,
+        onProgress: (progress) {
+          if (mounted) setState(() => _attachmentProgress = progress);
+        },
+      );
+      var duplicates = 0;
+      final unique = <PreparedAttachment>[];
+      for (final candidate in prepared) {
+        final duplicate = attachmentIsDuplicate(_pendingAttachments, candidate);
+        if (duplicate) {
+          duplicates++;
+          await candidate.delete();
+        } else {
+          unique.add(candidate);
+        }
+      }
+      if (!mounted) {
+        for (final file in unique) {
+          await file.delete();
         }
         return;
       }
-    }
-    if (bytes == null || bytes.isEmpty) {
-      debugPrint('[OSIA Attach] empty / null bytes after load');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(OsiaL10n.of(context).fileEmpty)));
+      setState(() {
+        _pendingAttachments.addAll(unique);
+        _attachmentCancellation = null;
+        _attachmentProgress = _pendingAttachments.isEmpty
+            ? null
+            : AttachmentProgress(
+                phase: AttachmentPhase.ready,
+                completedBytes: _pendingAttachmentBytes,
+                totalBytes: _pendingAttachmentBytes,
+                completedFiles: _pendingAttachments.length,
+                totalFiles: _pendingAttachments.length,
+              );
+      });
+      if (duplicates > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Duplicate selections were ignored.')),
+        );
       }
-      return;
+    } on AttachmentException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _attachmentCancellation = null;
+        _attachmentProgress = _pendingAttachments.isEmpty
+            ? null
+            : AttachmentProgress(
+                phase: AttachmentPhase.ready,
+                completedBytes: _pendingAttachmentBytes,
+                totalBytes: _pendingAttachmentBytes,
+                completedFiles: _pendingAttachments.length,
+                totalFiles: _pendingAttachments.length,
+              );
+      });
+      final name = error.displayName.isEmpty ? '' : ' (${error.displayName})';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Attachment rejected$name: ${error.category}.')),
+      );
     }
-
-    setState(() {
-      _pendingFilename = filename;
-      _pendingFileBytes = bytes;
-      _pendingIsImage = _isImageFilename(filename);
-    });
-    debugPrint(
-      '[OSIA Attach] staged ${bytes.length} bytes for $filename (image=$_pendingIsImage)',
-    );
   }
 
   Future<void> _openModelSelector() async {
@@ -2697,6 +2916,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _attachmentCancellation?.cancel();
+    for (final file in List<PreparedAttachment>.of(_pendingAttachments)) {
+      unawaited(file.delete());
+    }
     _modelLoadTimeout?.cancel();
     _convLoadRetry?.cancel();
     _firstTokenTimer?.cancel();
@@ -2714,6 +2937,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _configSub?.cancel();
     _mcpConfirmSub?.cancel();
     _busySub?.cancel();
+    _attachmentProtocolSub?.cancel();
     widget.connectionLifecycle.detach(_wsService);
     _wsService.dispose();
     _audioService.dispose();
@@ -2887,7 +3111,8 @@ class _ChatScreenState extends State<ChatScreen> {
               key: _inputBarKey,
               textController: _textCtrl,
               focusNode: _inputFocusNode,
-              enabled: !_activeConversationBusy,
+              enabled:
+                  !_activeConversationBusy && !_attachmentInteractionLocked,
               isRecording: _audioService.isRecording,
               hasText: _canSend,
               onSend: _sendText,
@@ -2897,8 +3122,22 @@ class _ChatScreenState extends State<ChatScreen> {
               onModelTap: _openModelSelector,
               onChanged: (_) => setState(() {}),
               onSubmitted: (_) => _sendText(),
-              pendingFilename: _pendingFilename,
-              onRemovePending: _clearPendingFile,
+              pendingAttachments: [
+                for (final file in _pendingAttachments)
+                  ComposerAttachment(
+                    displayName: file.displayName,
+                    byteSize: file.byteSize,
+                  ),
+              ],
+              onRemoveAttachment: (index) =>
+                  unawaited(_removePendingAttachment(index)),
+              onClearAttachments: () => unawaited(_clearPendingAttachments()),
+              attachmentStatus: _attachmentStatusLabel,
+              attachmentProgress: _attachmentProgress?.fraction ?? 0,
+              attachmentBusy: _attachmentInteractionLocked,
+              onCancelAttachment: _attachmentBusy
+                  ? _cancelAttachmentTransfer
+                  : null,
             ),
           ),
         ],
@@ -3336,20 +3575,16 @@ class _ChatEntry {
 /// prompt — without the user retyping. See [_ChatScreenState._retryLastTurn].
 class _PendingTurn {
   final String prompt;
-  final String? filename;
-  final Uint8List? fileBytes;
-  final bool isImage;
+  final String originalDraft;
+  final String attachmentBatchId;
   final String clientRequestId;
 
   const _PendingTurn({
     required this.prompt,
-    this.filename,
-    this.fileBytes,
-    this.isImage = false,
+    this.originalDraft = '',
+    this.attachmentBatchId = '',
     required this.clientRequestId,
   });
-
-  bool get hasFile => filename != null && fileBytes != null;
 }
 
 /// Carries a live, already-authenticated [ws.WebSocketService] from the

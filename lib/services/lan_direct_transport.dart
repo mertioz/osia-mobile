@@ -342,6 +342,10 @@ class LanDirectTransport {
     return true;
   }
 
+  /// Wait until all frames accepted by [send] have reached the socket writer.
+  /// Attachment uploads use this to keep their queued bytes bounded.
+  Future<void> drain() => _sendChain;
+
   Future<void> close() => _beginClose(notify: false);
 
   Future<void> _beginClose({

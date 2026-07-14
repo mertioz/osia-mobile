@@ -165,6 +165,16 @@ class RelayTransferEvent {
   final RelayTransferErrorKind? errorKind;
 }
 
+/// Attachment lifecycle traffic is deliberately kept outside the sealed
+/// [OsiaMessage] hierarchy. It is a pre-turn transaction, not chat content, and
+/// adding it to the sealed switch would couple composer upload state to every
+/// chat-message consumer.
+class AttachmentProtocolMessage {
+  final Map<String, dynamic> data;
+
+  const AttachmentProtocolMessage(this.data);
+}
+
 @visibleForTesting
 String relayErrorMessageForTest(String code) => _relayErrorMessage(code);
 
@@ -1629,6 +1639,9 @@ class WebSocketService {
   final StreamController<ConversationBusyEvent> _conversationBusyCtrl =
       StreamController<ConversationBusyEvent>.broadcast();
 
+  final StreamController<AttachmentProtocolMessage> _attachmentProtocolCtrl =
+      StreamController<AttachmentProtocolMessage>.broadcast();
+
   // ── Per-conversation stream buffers (WOR-53) ──────────────────────────
   //
   // A parallel sink to the paced [messageStream]: every streamed
@@ -1776,6 +1789,9 @@ class WebSocketService {
   /// Stream of per-conversation busy-state changes (WOR-103).
   Stream<ConversationBusyEvent> get conversationBusyStream =>
       _conversationBusyCtrl.stream;
+
+  Stream<AttachmentProtocolMessage> get attachmentProtocolStream =>
+      _attachmentProtocolCtrl.stream;
 
   /// The reply text streamed so far for conversation [id] (WOR-53), for
   /// hydrating the chat when switching to a conversation whose reply streamed
@@ -2567,6 +2583,98 @@ class WebSocketService {
     return sent;
   }
 
+  /// Accept one already-committed attachment batch as a normal text turn.
+  /// This remains a `text` application frame so turn correlation, persistence,
+  /// model routing and exactly-once handling all use the existing path.
+  bool sendAttachmentTurn(
+    String content, {
+    required String attachmentBatchId,
+    required String conversationId,
+    required String clientRequestId,
+    String? expectedTransportSession,
+  }) {
+    if (attachmentBatchId.isEmpty || clientRequestId.isEmpty) return false;
+    if (expectedTransportSession != null &&
+        attachmentTransportSession != expectedTransportSession) {
+      return false;
+    }
+    if (conversationId.isNotEmpty &&
+        isConversationBusy(conversationId) &&
+        _activeRequestByConv[conversationId] != clientRequestId) {
+      _setConversationBusy(conversationId, true);
+      return false;
+    }
+    final sent = _send(<String, dynamic>{
+      'type': 'text',
+      'content': content,
+      'conversation_id': conversationId,
+      'request_id': clientRequestId,
+      'client_request_id': clientRequestId,
+      'attachment_batch_id': attachmentBatchId,
+    });
+    if (sent) {
+      _rememberRequest(conversationId, clientRequestId);
+      if (conversationId.isNotEmpty) {
+        _setConversationBusy(conversationId, true);
+      }
+    }
+    return sent;
+  }
+
+  /// Stable identity of the active application transport. Upload callers
+  /// capture it before prepare and reject any reconnect/fallback mid-batch.
+  String get attachmentTransportSession {
+    final kind = _lastTransportKind;
+    if (_state != ConnectionState.connected ||
+        _transportLease?.active != true ||
+        kind == null) {
+      return '';
+    }
+    return '${kind.name}:$_connectGeneration:$_socketGeneration';
+  }
+
+  /// Send one bounded attachment event and wait for the selected transport's
+  /// ordered writer/backpressure chain. Existing chat protocol names and send
+  /// methods remain unchanged.
+  Future<bool> sendAttachmentEvent(
+    Map<String, dynamic> frame,
+    String expectedTransportSession,
+  ) async {
+    const allowedTypes = <String>{
+      'attachment_batch_prepare',
+      'attachment_file_begin',
+      'attachment_file_chunk',
+      'attachment_file_complete',
+      'attachment_batch_commit',
+      'attachment_batch_cancel',
+    };
+    if (!allowedTypes.contains(frame['type']) ||
+        expectedTransportSession.isEmpty ||
+        attachmentTransportSession != expectedTransportSession) {
+      return false;
+    }
+    if (!_send(frame)) return false;
+    try {
+      if (_connectedViaLan) {
+        await _lanTransport?.drain();
+        await Future<void>.delayed(const Duration(milliseconds: 4));
+      } else if (_connectedViaWebRtc) {
+        await _webRtcTransport?.drain();
+      } else if (_connectedViaRelay) {
+        await _relaySendChain;
+        // The production relay guard permits 2 MiB/s with a 12 MiB burst. A
+        // 20 KiB plaintext payload expands under JSON + AEAD/base64, so 24 ms
+        // keeps sustained traffic below the byte-rate guard without weakening it.
+        await Future<void>.delayed(const Duration(milliseconds: 24));
+      } else {
+        await Future<void>.delayed(const Duration(milliseconds: 4));
+      }
+    } on Object {
+      return false;
+    }
+    return attachmentTransportSession == expectedTransportSession;
+  }
+
   /// Send a base64-encoded WAV audio command.
   bool sendAudio(
     String base64Data, {
@@ -3006,6 +3114,7 @@ class WebSocketService {
     _mcpConfirmCtrl.close();
     _mcpOauthUrlCtrl.close();
     _conversationBusyCtrl.close();
+    _attachmentProtocolCtrl.close();
     _convStreamCtrl.close();
     _streamBuffers.clear();
     _pendingConvs.clear();
@@ -5417,6 +5526,20 @@ class WebSocketService {
           '';
       final turnId = json['turn_id']?.toString() ?? '';
       final messageId = json['message_id']?.toString() ?? '';
+
+      if (const <String>{
+        'attachment_batch_accept',
+        'attachment_batch_reject',
+        'attachment_batch_commit_ack',
+        'attachment_batch_failed',
+      }.contains(type)) {
+        if (!_attachmentProtocolCtrl.isClosed) {
+          _attachmentProtocolCtrl.add(
+            AttachmentProtocolMessage(Map<String, dynamic>.from(json)),
+          );
+        }
+        return;
+      }
 
       switch (type) {
         case 'transcript':

@@ -11,6 +11,13 @@ import '../theme.dart';
 const Duration _kBarAnimDuration = MotionDurations.medium;
 const Curve _kBarAnimCurve = MotionCurves.enter;
 
+class ComposerAttachment {
+  final String displayName;
+  final int byteSize;
+
+  const ComposerAttachment({required this.displayName, required this.byteSize});
+}
+
 /// Floating glassmorphism input bar pinned to the bottom of the chat.
 ///
 /// Two-row layout, like a modern AI chat app:
@@ -40,6 +47,13 @@ class GlassInputBar extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
   final String? pendingFilename;
   final VoidCallback? onRemovePending;
+  final List<ComposerAttachment> pendingAttachments;
+  final ValueChanged<int>? onRemoveAttachment;
+  final VoidCallback? onClearAttachments;
+  final String? attachmentStatus;
+  final double attachmentProgress;
+  final bool attachmentBusy;
+  final VoidCallback? onCancelAttachment;
 
   /// Label of the currently active model, shown in the pill.
   final String modelLabel;
@@ -63,6 +77,13 @@ class GlassInputBar extends StatelessWidget {
     this.onSubmitted,
     this.pendingFilename,
     this.onRemovePending,
+    this.pendingAttachments = const [],
+    this.onRemoveAttachment,
+    this.onClearAttachments,
+    this.attachmentStatus,
+    this.attachmentProgress = 0,
+    this.attachmentBusy = false,
+    this.onCancelAttachment,
   });
 
   @override
@@ -106,16 +127,34 @@ class GlassInputBar extends StatelessWidget {
                 duration: _kBarAnimDuration,
                 curve: _kBarAnimCurve,
                 alignment: Alignment.topCenter,
-                child: pendingFilename == null
+                child:
+                    pendingAttachments.isEmpty &&
+                        pendingFilename == null &&
+                        (attachmentStatus == null || attachmentStatus!.isEmpty)
                     ? const SizedBox(width: double.infinity)
                     : Padding(
                         padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: _PendingFileChip(
-                            filename: pendingFilename!,
-                            onRemove: onRemovePending,
-                          ),
+                        child: _PendingFilesPanel(
+                          attachments: pendingAttachments.isNotEmpty
+                              ? pendingAttachments
+                              : pendingFilename != null
+                              ? <ComposerAttachment>[
+                                  ComposerAttachment(
+                                    displayName: pendingFilename!,
+                                    byteSize: 0,
+                                  ),
+                                ]
+                              : const <ComposerAttachment>[],
+                          onRemove:
+                              onRemoveAttachment ??
+                              (onRemovePending == null
+                                  ? null
+                                  : (_) => onRemovePending!()),
+                          onClear: onClearAttachments,
+                          status: attachmentStatus,
+                          progress: attachmentProgress,
+                          busy: attachmentBusy,
+                          onCancel: onCancelAttachment,
                         ),
                       ),
               ),
@@ -166,7 +205,7 @@ class GlassInputBar extends StatelessWidget {
                 children: [
                   _GlassIconButton(
                     icon: Icons.add_rounded,
-                    onTap: onAttach,
+                    onTap: enabled && !attachmentBusy ? onAttach : null,
                     tooltip: strings.attachFile,
                   ),
                   const SizedBox(width: 2),
@@ -268,56 +307,183 @@ class _ModelPill extends StatelessWidget {
   }
 }
 
-class _PendingFileChip extends StatelessWidget {
-  final String filename;
-  final VoidCallback? onRemove;
-  const _PendingFileChip({required this.filename, this.onRemove});
+class _PendingFilesPanel extends StatelessWidget {
+  final List<ComposerAttachment> attachments;
+  final ValueChanged<int>? onRemove;
+  final VoidCallback? onClear;
+  final String? status;
+  final double progress;
+  final bool busy;
+  final VoidCallback? onCancel;
+
+  const _PendingFilesPanel({
+    required this.attachments,
+    this.onRemove,
+    this.onClear,
+    this.status,
+    this.progress = 0,
+    this.busy = false,
+    this.onCancel,
+  });
+
+  String _formatSize(int bytes) {
+    if (bytes <= 0) return '';
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KiB';
+    }
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB';
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
-      decoration: BoxDecoration(
-        color: palette.accent.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: palette.accent.withValues(alpha: 0.35),
-          width: 0.6,
+    final total = attachments.fold<int>(0, (sum, file) => sum + file.byteSize);
+    return Semantics(
+      container: true,
+      label:
+          '${attachments.length} selected attachments, ${_formatSize(total)}',
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(8, 7, 8, 7),
+        decoration: BoxDecoration(
+          color: palette.accent.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: palette.accent.withValues(alpha: 0.35),
+            width: 0.6,
+          ),
         ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.attach_file_rounded, size: 16, color: palette.accent),
-          const SizedBox(width: 6),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 220),
-            child: Text(
-              filename,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13,
-                color: palette.textPrimary.withValues(alpha: 0.9),
-                fontWeight: FontWeight.w500,
-              ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.attach_file_rounded,
+                  size: 16,
+                  color: palette.accent,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '${attachments.length}/10 • ${_formatSize(total)} / 20 MiB',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: palette.textMuted,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (!busy && attachments.length > 1 && onClear != null)
+                  TextButton(
+                    onPressed: onClear,
+                    style: TextButton.styleFrom(
+                      minimumSize: Size.zero,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('Clear', style: TextStyle(fontSize: 11)),
+                  ),
+              ],
             ),
-          ),
-          const SizedBox(width: 4),
-          InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: onRemove,
-            child: Padding(
-              padding: const EdgeInsets.all(4),
-              child: Icon(
-                Icons.close_rounded,
-                size: 16,
-                color: palette.textMuted,
+            for (var index = 0; index < attachments.length; index++)
+              Semantics(
+                label:
+                    '${attachments[index].displayName}, ${_formatSize(attachments[index].byteSize)}',
+                child: Row(
+                  children: [
+                    const SizedBox(width: 22),
+                    Expanded(
+                      child: Text(
+                        attachments[index].displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: palette.textPrimary.withValues(alpha: 0.9),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _formatSize(attachments[index].byteSize),
+                      style: TextStyle(fontSize: 11, color: palette.textMuted),
+                    ),
+                    if (!busy)
+                      Semantics(
+                        button: true,
+                        label: 'Remove ${attachments[index].displayName}',
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: onRemove == null
+                              ? null
+                              : () => onRemove!(index),
+                          child: Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Icon(
+                              Icons.close_rounded,
+                              size: 16,
+                              color: palette.textMuted,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
-            ),
-          ),
-        ],
+            if (status != null && status!.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: Semantics(
+                      liveRegion: true,
+                      label: status,
+                      value:
+                          '${(progress.clamp(0.0, 1.0) * 100).round()} percent',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            status!,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: palette.accent,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          LinearProgressIndicator(
+                            value: progress > 0
+                                ? progress.clamp(0.0, 1.0)
+                                : null,
+                            minHeight: 3,
+                            color: palette.accent,
+                            backgroundColor: palette.border.withValues(
+                              alpha: 0.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (busy && onCancel != null)
+                    TextButton(
+                      onPressed: onCancel,
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -325,7 +491,7 @@ class _PendingFileChip extends StatelessWidget {
 
 class _GlassIconButton extends StatelessWidget {
   final IconData icon;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final String? tooltip;
   const _GlassIconButton({
     required this.icon,

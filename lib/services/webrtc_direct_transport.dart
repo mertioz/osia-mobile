@@ -662,6 +662,10 @@ class WebRtcDirectTransport {
     return true;
   }
 
+  /// Wait for the ordered DataChannel send chain, including its bufferedAmount
+  /// high/low-water backpressure, to drain.
+  Future<void> drain() => _sendChain;
+
   void _observeInboundApplicationFrame(Map<String, dynamic> frame) {
     if (_state != WebRtcDirectState.activeTurn) return;
     final requestId =
