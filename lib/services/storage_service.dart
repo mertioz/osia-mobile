@@ -38,6 +38,9 @@ class StorageService {
       'osia_background_connection_enabled';
   static const _keyShownNotificationIds = 'osia_shown_notification_ids';
   static const _keyLanPairings = 'osia_lan_pairings_v1';
+  static const _keyAcceptedTermsVersion = 'osia_accepted_terms_version';
+  static const _keyAcceptedTermsAt = 'osia_accepted_terms_at';
+  static const _keySeenPrivacyVersion = 'osia_seen_privacy_version';
 
   /// Default/fallback server host. Normal connections resolve the current
   /// quick-tunnel host through rendezvous; only the token is asked for.
@@ -306,6 +309,31 @@ class StorageService {
 
   Future<void> clearSelectedModel() async {
     await _storage.delete(key: _keySelectedModel);
+  }
+
+  Future<String?> getAcceptedTermsVersion() =>
+      _safeRead(_keyAcceptedTermsVersion);
+
+  Future<DateTime?> getAcceptedTermsAt() async {
+    final value = await _safeRead(_keyAcceptedTermsAt);
+    return value == null ? null : DateTime.tryParse(value)?.toUtc();
+  }
+
+  Future<String?> getSeenPrivacyVersion() => _safeRead(_keySeenPrivacyVersion);
+
+  Future<void> recordTermsAcceptance(
+    String version,
+    DateTime acceptedAt,
+  ) async {
+    await _storage.write(key: _keyAcceptedTermsVersion, value: version);
+    await _storage.write(
+      key: _keyAcceptedTermsAt,
+      value: acceptedAt.toUtc().toIso8601String(),
+    );
+  }
+
+  Future<void> recordPrivacySeen(String version) async {
+    await _storage.write(key: _keySeenPrivacyVersion, value: version);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────

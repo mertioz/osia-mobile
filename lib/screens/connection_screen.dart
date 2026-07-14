@@ -11,6 +11,7 @@ import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 import 'chat_screen.dart' show ChatHandoff;
+import 'legal_screen.dart';
 
 /// Minimal, premium connection screen — the first thing the user sees on
 /// first launch (and after disconnecting).
@@ -388,6 +389,27 @@ class _ConnectionScreenState extends State<ConnectionScreen>
                       _buildError(palette),
                       const SizedBox(height: 12),
                       _buildConnectButton(palette, strings),
+                      const SizedBox(height: 18),
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 4,
+                        children: [
+                          TextButton(
+                            key: const Key('onboarding-terms-link'),
+                            onPressed: () =>
+                                _openLegal(LegalDocument.termsOfService),
+                            child: Text(strings.termsOfService),
+                          ),
+                          Text('·', style: TextStyle(color: palette.textMuted)),
+                          TextButton(
+                            key: const Key('onboarding-privacy-link'),
+                            onPressed: () =>
+                                _openLegal(LegalDocument.privacyPolicy),
+                            child: Text(strings.privacyPolicy),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -396,6 +418,12 @@ class _ConnectionScreenState extends State<ConnectionScreen>
           ),
         ),
       ),
+    );
+  }
+
+  void _openLegal(LegalDocument document) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => LegalScreen(document: document)),
     );
   }
 

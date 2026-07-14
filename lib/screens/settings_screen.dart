@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n.dart';
+import '../legal_manifest.dart';
 import '../motion.dart';
 import '../nav.dart';
 import '../services/background_connection_service.dart';
@@ -508,6 +509,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _NavTile(
                       icon: Icons.description_outlined,
                       title: strings.termsOfService,
+                      subtitle: currentLegalManifest.termsVersion,
                       onTap: () => _openLegal(LegalDocument.termsOfService),
                       palette: palette,
                     ),
@@ -519,6 +521,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _NavTile(
                       icon: Icons.privacy_tip_outlined,
                       title: strings.privacyPolicy,
+                      subtitle: currentLegalManifest.privacyVersion,
                       onTap: () => _openLegal(LegalDocument.privacyPolicy),
                       palette: palette,
                     ),
@@ -1073,11 +1076,13 @@ class _SoonPill extends StatelessWidget {
 class _NavTile extends StatelessWidget {
   final IconData icon;
   final String title;
+  final String? subtitle;
   final VoidCallback onTap;
   final OsiaPalette palette;
   const _NavTile({
     required this.icon,
     required this.title,
+    this.subtitle,
     required this.onTap,
     required this.palette,
   });
@@ -1097,9 +1102,19 @@ class _NavTile extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                title,
-                style: TextStyle(fontSize: 14, color: palette.textPrimary),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(fontSize: 14, color: palette.textPrimary),
+                  ),
+                  if (subtitle != null)
+                    Text(
+                      subtitle!,
+                      style: TextStyle(fontSize: 11, color: palette.textMuted),
+                    ),
+                ],
               ),
             ),
             Icon(

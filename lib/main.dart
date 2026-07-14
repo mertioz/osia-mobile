@@ -1,9 +1,11 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'l10n.dart';
+import 'legal_manifest.dart';
 import 'nav.dart';
 import 'screens/chat_screen.dart';
 import 'screens/connection_screen.dart';
+import 'screens/legal_screen.dart';
 import 'services/background_connection_service.dart';
 import 'services/connection_lifecycle_service.dart';
 import 'services/storage_service.dart';
@@ -40,6 +42,10 @@ class _OsiaAppState extends State<OsiaApp> {
 
   bool? _configured;
   bool _loading = true;
+  LegalStartupDecision _legalDecision = const LegalStartupDecision(
+    requiresTermsAcceptance: false,
+    showsPrivacyUpdate: false,
+  );
 
   @override
   void initState() {
@@ -92,6 +98,26 @@ class _OsiaAppState extends State<OsiaApp> {
       );
     } catch (_) {
       configured = false;
+    }
+
+    try {
+      _legalDecision = legalStartupDecision(
+        currentLegalManifest,
+        LegalAcceptanceState(
+          acceptedTermsVersion: await _storage.getAcceptedTermsVersion(),
+          acceptedTermsAt: await _storage.getAcceptedTermsAt(),
+          seenPrivacyVersion: await _storage.getSeenPrivacyVersion(),
+        ),
+      );
+    } catch (_) {
+      // Safe offline fallback: an approved manifest would require the gate;
+      // the bundled review draft intentionally requires no acceptance.
+      _legalDecision = LegalStartupDecision(
+        requiresTermsAcceptance:
+            currentLegalManifest.isApproved &&
+            currentLegalManifest.termsAcceptanceRequired,
+        showsPrivacyUpdate: false,
+      );
     }
 
     if (mounted) {
@@ -169,6 +195,42 @@ class _OsiaAppState extends State<OsiaApp> {
       return Scaffold(
         backgroundColor: palette.background,
         body: Center(child: CircularProgressIndicator(color: palette.accent)),
+      );
+    }
+    if (_legalDecision.requiresTermsAcceptance) {
+      return LegalGateScreen(
+        privacyUpdateOnly: false,
+        onAccepted: () async {
+          await _storage.recordTermsAcceptance(
+            currentLegalManifest.termsVersion,
+            DateTime.now().toUtc(),
+          );
+          await _storage.recordPrivacySeen(currentLegalManifest.privacyVersion);
+          if (mounted) {
+            setState(() {
+              _legalDecision = const LegalStartupDecision(
+                requiresTermsAcceptance: false,
+                showsPrivacyUpdate: false,
+              );
+            });
+          }
+        },
+      );
+    }
+    if (_legalDecision.showsPrivacyUpdate) {
+      return LegalGateScreen(
+        privacyUpdateOnly: true,
+        onAccepted: () async {
+          await _storage.recordPrivacySeen(currentLegalManifest.privacyVersion);
+          if (mounted) {
+            setState(() {
+              _legalDecision = const LegalStartupDecision(
+                requiresTermsAcceptance: false,
+                showsPrivacyUpdate: false,
+              );
+            });
+          }
+        },
       );
     }
     if (_configured == true) {
