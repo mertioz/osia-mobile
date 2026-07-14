@@ -2437,7 +2437,9 @@ class WebSocketService {
 
     final alreadyConnected =
         _state == ConnectionState.connected &&
-        (_channel != null || _lanTransport?.active == true);
+        (_channel != null ||
+            _lanTransport?.active == true ||
+            _webRtcTransport?.active == true);
     if (alreadyConnected && !forceReconnect) {
       return Future<void>.value();
     }

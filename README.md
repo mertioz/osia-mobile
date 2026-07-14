@@ -1,79 +1,88 @@
 # OSIA Mobile
 
-Compagnon mobile de l'assistant vocal local **OSIA**.
+OSIA Mobile is the paired companion for the OSIA desktop assistant on Windows,
+macOS, and Linux. Text, audio, streaming responses, tool results, and TTS remain
+end-to-end protected between the paired phone and PC.
 
-OSIA Mobile vous permet d'interagir avec votre assistant OSIA à distance,
-via le réseau Tailscale. Envoyez des commandes texte ou vocales depuis
-votre téléphone : le traitement (STT, agent IA, TTS) se fait sur votre PC,
-et la réponse audio est lue directement sur le téléphone.
+## Production transport behavior
 
-## Architecture
+Every official installation selects one authoritative application transport in
+this order:
 
-```
-Téléphone (Flutter)  ←─ WebSocket (Tailscale) ─→  PC serveur (FastAPI)
-     │                                                    │
-     ├─ Texte / Audio (WAV base64) ──────────────────────→│
-     │                                                    ├─ STT (faster-whisper)
-     │                                                    ├─ Agent OSIA (Ollama)
-     │                                                    └─ TTS (Kokoro)
-     │                                                    │
-     ←── Réponse texte + Audio (MP3 base64) ──────────────┘
-```
+1. pinned-TLS/E2E LAN direct, discovered through `_osia._tcp.local.`;
+2. direct data-only WebRTC over an ordered reliable DataChannel;
+3. the endpoint-encrypted OSIA relay.
 
-## Prérequis
+LAN and WebRTC are enabled automatically by the official release helper. The PC
+sends the trusted STUN-only ICE configuration to the mobile app only inside the
+authenticated E2E control session. The APK contains no PC host, IP, certificate
+pin, pairing alias, STUN-resolved address, token, TURN credential, or other
+installation identity.
 
-- Un PC sous Linux avec le projet [OSIA](https://github.com/mertioz/osia-project) installé
-- [Tailscale](https://tailscale.com/) installé sur le PC et le téléphone
-- Flutter 3.x installé sur la machine de build
+Direct WebRTC cannot cross every NAT or firewall. "Enabled for everyone" means
+every installation attempts WebRTC automatically after LAN fails; bounded
+failure safely commits the relay. OSIA never resends or changes transport during
+an active turn.
 
-## Lancement du serveur PC
+## Build
 
-Depuis le dossier du projet OSIA :
+From the repository root:
 
-```bash
-cd /home/OSIA/code/osia-project
-source venv/bin/activate
-python -m osia.server.server
-```
-
-Au premier démarrage, un token d'authentification est généré dans
-`config/mobile_token.txt`. Copiez ce token pour la configuration mobile.
-
-Le serveur écoute sur `0.0.0.0:8765`.
-
-## Configuration de l'application mobile
-
-1. Ouvrez l'application OSIA Mobile
-2. Remplissez l'**adresse IP Tailscale** de votre PC (ex: `100.64.0.42`)
-3. Collez le **token** affiché dans `config/mobile_token.txt` sur le PC
-4. Appuyez sur **Se connecter**
-
-## Build de l'application
-
-```bash
-cd osia-mobile
+```powershell
 flutter pub get
-dart run tool/build_release.dart    # Android release (LAN direct enabled)
-flutter build ios --release    # iOS
+dart run tool/build_release.dart
 ```
 
-The release helper always supplies both direct-transport feature flags. WebRTC
-activation is fail-closed until an OSIA-controlled or explicitly approved
-production STUN endpoint is configured on the PC. Once that operational
-dependency is approved, export `OSIA_PRODUCTION_STUN_APPROVED=1` in the build
-environment (PowerShell: `$env:OSIA_PRODUCTION_STUN_APPROVED='1'`), then run
-`dart run tool/build_release.dart --enable-webrtc`.
-No ICE address, pairing identity, certificate pin, or credential is embedded in
-the APK.
+That is the official Android release path. It validates the machine-readable
+`assets/production_capabilities.json` policy and always supplies:
+
+```text
+lan_direct_v1=true
+webrtc_direct_v1=true
+relay_fallback_v1=true
+```
+
+The same policy drives the future iOS release path on macOS:
+
+```bash
+dart run tool/build_release.dart --platform=ios
+```
+
+Use `dart run tool/build_release.dart --validate-only` for a non-building policy
+gate. The helper rejects missing/false production capabilities, unknown
+arguments, extra manifest fields, static endpoint identity, and a missing
+authenticated runtime ICE-consumption path.
+
+Diagnostic development builds stay distinct and may explicitly disable a path,
+for example:
+
+```powershell
+flutter run --dart-define=lan_direct_v1=false --dart-define=webrtc_direct_v1=false
+```
+
+Do not use an ad-hoc `flutter build` command for an official release.
+
+## Platform permissions
+
+Android uses Internet and Wi-Fi multicast state for relay/WebRTC and LAN DNS-SD.
+iOS declares local-network and Bonjour access for `_osia._tcp`. Voice commands
+retain the existing microphone permission. WebRTC is data-only and adds no
+camera permission.
+
+## Pairing and upgrades
+
+Pair once through the app's existing secure pairing flow. Upgrading with the
+official artifact preserves secure storage, the paired PC identity, certificate
+pin, conversations, and relay route. Production capabilities come from the new
+binary and the authenticated PC configuration; users do not enter an IP, pin,
+or STUN URL manually.
 
 ## Design
 
-- Fond noir profond `#0D0B12`
-- Accent violet `#C4B5F5` / `#7C3AED`
-- Bulles de chat avec glassmorphism
-- Indicateur de réflexion animé (violet, jamais orange)
-- Animations fluides sur les interactions
+- background `#0d0b12`;
+- violet accent `#c4b5f5`;
+- glass chat surfaces and correlated ordered streaming.
 
-## Licence
+## License
 
-Projet privé — Tous droits réservés.
+Private project — all rights reserved.

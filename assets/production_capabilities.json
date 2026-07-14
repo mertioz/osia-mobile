@@ -1,0 +1,11 @@
+{
+  "build_type": "production",
+  "lan_capability": true,
+  "webrtc_capability": true,
+  "relay_capability": true,
+  "transport_protocol_versions": {
+    "lan": 1,
+    "webrtc": 1,
+    "relay": 2
+  }
+}
