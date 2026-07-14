@@ -56,3 +56,38 @@ android/app/build/
 .flutter-plugins
 
 build_osia_mobile.py
+
+# Local credentials, signing material, and service configuration
+.env
+.env.*
+!.env.example
+!.env.*.example
+**/key.properties
+**/signing.properties
+**/*.keystore
+**/*.jks
+**/*.p12
+**/*.pfx
+**/*.mobileprovision
+**/*.provisionprofile
+**/ExportOptions.plist
+**/google-services.json
+**/GoogleService-Info.plist
+**/*.pem
+**/*.key
+
+# Device-local state and test evidence
+**/secure_storage_export*
+**/secure-storage-export*
+**/device-screenshots/
+**/test-evidence/
+**/test-results/
+*.apk
+*.aab
+*.ipa
+*.dump
+*.sqlite
+*.sqlite-*
+**/xcuserdata/
+Thumbs.db
+.vscode/

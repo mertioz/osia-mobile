@@ -1,0 +1,17 @@
+title = "OSIA Mobile secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public deterministic relay vectors; only their key-material fields trigger generic entropy detection."
+targetRules = ["generic-api-key"]
+paths = ['''(^|[\/])test[\/]fixtures[\/]relay_(e2e|v2)_vectors\.json$''']
+
+[[allowlists]]
+description = "Protocol domain-separation label, constrained to the exact constant and source path."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|[\/])lib[\/]services[\/]relay_crypto_service\.dart$''']
+regexTarget = "line"
+regexes = ['''const\s+String\s+_legacyPairSecretLabel\s*=''']
