@@ -1,4 +1,4 @@
-enum ApplicationTransportKind { lan, relay, legacy }
+enum ApplicationTransportKind { lan, webrtc, relay, legacy }
 
 class ApplicationTransportLease {
   ApplicationTransportLease._(this._coordinator, this.kind, this.owner);

@@ -53,9 +53,18 @@ Le serveur écoute sur `0.0.0.0:8765`.
 ```bash
 cd osia-mobile
 flutter pub get
-flutter build apk --release    # Android
+dart run tool/build_release.dart    # Android release (LAN direct enabled)
 flutter build ios --release    # iOS
 ```
+
+The release helper always supplies both direct-transport feature flags. WebRTC
+activation is fail-closed until an OSIA-controlled or explicitly approved
+production STUN endpoint is configured on the PC. Once that operational
+dependency is approved, export `OSIA_PRODUCTION_STUN_APPROVED=1` in the build
+environment (PowerShell: `$env:OSIA_PRODUCTION_STUN_APPROVED='1'`), then run
+`dart run tool/build_release.dart --enable-webrtc`.
+No ICE address, pairing identity, certificate pin, or credential is embedded in
+the APK.
 
 ## Design
 

@@ -14,6 +14,8 @@ import 'relay_crypto_service.dart';
 import 'relay_service.dart';
 import 'storage_service.dart';
 import 'transport_coordinator.dart';
+import 'webrtc_direct_transport.dart';
+import 'webrtc_signaling.dart';
 
 // ── WOR-75 diagnostic flag ────────────────────────────────────────────────
 
@@ -27,6 +29,7 @@ const bool kOsiaDebugPlaceholder = false;
 const bool kAllowLegacyRendezvousFallback = bool.fromEnvironment(
   'OSIA_ALLOW_LEGACY_RENDEZVOUS_FALLBACK',
 );
+const bool kWebRtcDirectV1 = bool.fromEnvironment('webrtc_direct_v1');
 const Set<String> _relayControlFields = <String>{
   'v',
   'type',
@@ -1542,7 +1545,9 @@ class WebSocketService {
 
   WebSocketChannel? _channel;
   LanDirectTransport? _lanTransport;
+  WebRtcDirectTransport? _webRtcTransport;
   bool _connectedViaLan = false;
+  bool _connectedViaWebRtc = false;
   final ApplicationTransportCoordinator _transportCoordinator =
       applicationTransportCoordinator;
   ApplicationTransportLease? _transportLease;
@@ -1863,7 +1868,7 @@ class WebSocketService {
       _busyConvs.contains(id);
 
   bool _acceptCanonicalApplicationEvent(Map<String, dynamic> json) {
-    if (!lanDirectV1) return true;
+    if (!_directFirstEnabled) return true;
     final type = json['type']?.toString() ?? '';
     final canonicalTypes = <String>{
       'transcript',
@@ -2120,7 +2125,7 @@ class WebSocketService {
           clientRequestId: reqId,
           turnId: turnId,
           messageId: messageId,
-          keepMediaPhase: lanDirectV1 && status == 'done',
+          keepMediaPhase: _directFirstEnabled && status == 'done',
         );
       } else {
         if (_shouldIgnoreConversationFrame(
@@ -2301,6 +2306,7 @@ class WebSocketService {
   final Future<RelayConnectionConfig> Function()? resolveRelay;
   final bool allowLegacyRendezvousFallback;
   final bool lanDirectV1;
+  final bool webRtcDirectV1;
   final LanDirectConfig? lanDirectConfig;
   final StorageService? storage;
   final LanDiscoveryService lanDiscoveryService;
@@ -2334,6 +2340,9 @@ class WebSocketService {
   bool _relaySignalingStandby = false;
   bool _relayPcRequiresCommit = false;
   Completer<LanPairingIdentity?>? _lanProvisioningCompleter;
+  Completer<WebRtcCapability?>? _webRtcCapabilityCompleter;
+  WebRtcCapability? _webRtcCapability;
+  int _webRtcAttemptGeneration = 0;
   bool _relayBlocksLegacyFallback = false;
   String? _relayHandshakeFailure;
   int _relayWorkerChunkVersion = 0;
@@ -2355,12 +2364,15 @@ class WebSocketService {
     this.resolveRelay,
     this.allowLegacyRendezvousFallback = kAllowLegacyRendezvousFallback,
     this.lanDirectV1 = kLanDirectV1,
+    this.webRtcDirectV1 = kWebRtcDirectV1,
     this.lanDirectConfig,
     this.storage,
     LanDiscoveryService? lanDiscoveryService,
     this.connectAttemptForTest,
   }) : lanDiscoveryService = lanDiscoveryService ?? LanDiscoveryService() {
-    debugPrint('[OSIA LAN] capability enabled=$lanDirectV1');
+    debugPrint(
+      '[OSIA Direct] LAN enabled=$lanDirectV1 WebRTC enabled=$webRtcDirectV1',
+    );
     _relayChunkReassembler = RelayE2eChunkReassembler(
       onTimeout: _handleRelayChunkTimeout,
     );
@@ -2456,7 +2468,9 @@ class WebSocketService {
         if (!_isCurrentConnect(connectGeneration)) return;
         Future<void> closeBeforeConnect = _transportCleanup;
         if (forceReconnect &&
-            (_channel != null || _lanTransport?.active == true)) {
+            (_channel != null ||
+                _lanTransport?.active == true ||
+                _webRtcTransport?.active == true)) {
           closeBeforeConnect = _closeCurrentChannel(
             reason: 'force reconnect: $reason',
             emitDisconnected: false,
@@ -2490,14 +2504,18 @@ class WebSocketService {
     _reconnectTimer = null;
     _reconnectAttempt = 0;
     final lanTransport = _lanTransport;
+    final webRtcTransport = _webRtcTransport;
     final channel = _channel;
     final lease = _transportLease;
     _lanTransport = null;
+    _webRtcTransport = null;
     _connectedViaLan = false;
+    _connectedViaWebRtc = false;
     _channel = null;
     _transportLease = null;
     _transportCleanup = () async {
       if (lanTransport != null) await lanTransport.close();
+      if (webRtcTransport != null) await webRtcTransport.close();
       if (channel != null) {
         try {
           await channel.sink.close();
@@ -2659,7 +2677,7 @@ class WebSocketService {
     required String sourceTurnId,
     required String messageId,
   }) {
-    if (!lanDirectV1) {
+    if (!_directFirstEnabled) {
       if (text.isEmpty) return false;
       return _send({'type': 'speak', 'text': text});
     }
@@ -3028,6 +3046,8 @@ class WebSocketService {
       _unboundRequestIds.isNotEmpty ||
       _mediaByConversation.isNotEmpty;
 
+  bool get _directFirstEnabled => lanDirectV1 || webRtcDirectV1;
+
   bool _isCurrentConnect(int generation) =>
       !_disposed && !_intentionalClose && generation == _connectGeneration;
 
@@ -3111,6 +3131,12 @@ class WebSocketService {
     _relayCommitAuthorized = false;
     _relaySignalingStandby = false;
     _relayPcRequiresCommit = false;
+    final capabilityCompleter = _webRtcCapabilityCompleter;
+    if (capabilityCompleter != null && !capabilityCompleter.isCompleted) {
+      capabilityCompleter.complete(null);
+    }
+    _webRtcCapabilityCompleter = null;
+    _webRtcCapability = null;
     _lanProvisioningCompleter = null;
     _relayWorkerChunkVersion = 0;
     _relayWorkerChunkMaxFrameBytes = 0;
@@ -3220,7 +3246,7 @@ class WebSocketService {
         _relayPcReady &&
         _relayPeerE2eReady &&
         _relayE2eKeys != null) {
-      if (!lanDirectV1) {
+      if (!_directFirstEnabled) {
         _markConnected();
         _completeRelayReady(true);
         return;
@@ -3311,6 +3337,7 @@ class WebSocketService {
   }) async {
     final channel = _channel;
     final lanTransport = _lanTransport;
+    final webRtcTransport = _webRtcTransport;
     _socketGeneration++;
     _clearChatGptEphemeralLogin();
     // This close path invalidates the socket callback itself, so any one-shot
@@ -3319,7 +3346,9 @@ class WebSocketService {
     _suppressReconnectOnce = false;
     _channel = null;
     _lanTransport = null;
+    _webRtcTransport = null;
     _connectedViaLan = false;
+    _connectedViaWebRtc = false;
     _connectedViaRelay = false;
     _relayConfig = null;
     _completeRelayReady(false);
@@ -3334,6 +3363,7 @@ class WebSocketService {
       }
     }
     if (lanTransport != null) await lanTransport.close();
+    if (webRtcTransport != null) await webRtcTransport.close();
     _releaseTransportLease();
     if (emitDisconnected) _setState(ConnectionState.disconnected);
   }
@@ -3579,7 +3609,7 @@ class WebSocketService {
     required String turnId,
     required String messageId,
   }) {
-    if (!lanDirectV1) return true;
+    if (!_directFirstEnabled) return true;
     final expected = _mediaByConversation[conversationId];
     if (expected == null ||
         expected.requestId != clientRequestId ||
@@ -3629,6 +3659,17 @@ class WebSocketService {
         return false;
       }
       return lanTransport.send(json);
+    }
+    final webRtcTransport = _webRtcTransport;
+    if (_connectedViaWebRtc && webRtcTransport != null) {
+      if (_transportLease?.active != true) {
+        debugPrint(
+          '[OSIA WebRTC] Send DROPPED (application lease inactive): '
+          'type=${json['type']}',
+        );
+        return false;
+      }
+      return webRtcTransport.send(json);
     }
     // Surface dropped sends loudly — a null channel means the socket is
     // down and the message silently goes nowhere otherwise.
@@ -3748,6 +3789,105 @@ class WebSocketService {
     _scheduleReconnect();
   }
 
+  Future<bool> _tryWebRtcConnect(
+    WebRtcCapability capability,
+    int connectGeneration,
+  ) async {
+    if (!webRtcDirectV1 || !capability.enabled || _hasActiveApplicationTurn) {
+      return false;
+    }
+    ApplicationTransportLease? authorizedLease;
+    var retainLease = false;
+    late final WebRtcDirectTransport transport;
+    transport = WebRtcDirectTransport(
+      capability: capability,
+      token: token,
+      pairId: RelayService.derivePairCredentials(token).pairId,
+      sendSignal: (frame) => _sendRelayEncryptedFrame(
+        frame.cast<String, dynamic>(),
+        priorityOverride: relayPriorityCritical,
+        finalOverride: frame['terminal'] == true,
+      ),
+      authorizeCommit: () {
+        if (_transportLease?.active == true) return false;
+        final lease = _transportCoordinator.tryAcquire(
+          ApplicationTransportKind.webrtc,
+          this,
+        );
+        if (lease == null) return false;
+        authorizedLease = lease;
+        _transportLease = lease;
+        return true;
+      },
+      onFrame: (frame) {
+        if (identical(_webRtcTransport, transport)) _onData(frame);
+      },
+      onClosed: (info) => _onWebRtcTransportClosed(transport, info),
+    );
+    _webRtcTransport = transport;
+    try {
+      debugPrint('[OSIA WebRTC] preparing data-only direct transport');
+      final ready = await transport.connect(
+        attemptGeneration: ++_webRtcAttemptGeneration,
+      );
+      if (!_isCurrentConnect(connectGeneration) || !ready) {
+        await transport.close();
+        return false;
+      }
+      if (authorizedLease?.active != true) {
+        await transport.close();
+        return false;
+      }
+      _connectedViaWebRtc = true;
+      _lastTransportKind = ApplicationTransportKind.webrtc;
+      retainLease = true;
+      _markConnected();
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
+      _reconnectAttempt = 0;
+      debugPrint('[OSIA WebRTC] authenticated direct bridge selected');
+      return true;
+    } catch (error) {
+      debugPrint('[OSIA WebRTC] activation failed: ${error.runtimeType}');
+      await transport.close();
+      return false;
+    } finally {
+      if (!retainLease) {
+        if (identical(_webRtcTransport, transport)) _webRtcTransport = null;
+        if (identical(_transportLease, authorizedLease)) {
+          _transportLease = null;
+        }
+        authorizedLease?.release();
+      }
+    }
+  }
+
+  void _onWebRtcTransportClosed(
+    WebRtcDirectTransport transport,
+    WebRtcCloseInfo info,
+  ) {
+    if (!identical(_webRtcTransport, transport)) return;
+    final hadActiveTurn = info.hadActiveTurn || _hasActiveApplicationTurn;
+    _webRtcTransport = null;
+    _connectedViaWebRtc = false;
+    _clearChatGptEphemeralLogin();
+    _releaseTransportLease();
+    _setState(ConnectionState.disconnected);
+    debugPrint('[OSIA WebRTC] closed category=${info.category}');
+    if (_intentionalClose) return;
+    if (hadActiveTurn) {
+      _failActiveApplicationTurns();
+      if (!_errorCtrl.isClosed) {
+        _errorCtrl.add(
+          'Secure WebRTC connection closed during an active request. '
+          'Automatic transport switching is disabled.',
+        );
+      }
+      return;
+    }
+    _scheduleReconnect();
+  }
+
   Future<LanDirectConfig?> _discoverLanConfig(
     LanPairingIdentity identity,
   ) async {
@@ -3821,7 +3961,12 @@ class WebSocketService {
       _resetRelayE2eState();
       if (standbyOnly) {
         _relaySignalingStandby = true;
-        _lanProvisioningCompleter = Completer<LanPairingIdentity?>();
+        if (lanDirectV1) {
+          _lanProvisioningCompleter = Completer<LanPairingIdentity?>();
+        }
+        if (webRtcDirectV1) {
+          _webRtcCapabilityCompleter = Completer<WebRtcCapability?>();
+        }
       }
       _relayReadyCompleter = Completer<bool>();
       _attachChannel(
@@ -4049,7 +4194,11 @@ class WebSocketService {
     return queued;
   }
 
-  bool _sendRelayEncryptedFrame(Map<String, dynamic> frame) {
+  bool _sendRelayEncryptedFrame(
+    Map<String, dynamic> frame, {
+    String? priorityOverride,
+    bool? finalOverride,
+  }) {
     final channel = _channel;
     final config = _relayConfig;
     final context = _relayE2eContext;
@@ -4069,8 +4218,8 @@ class WebSocketService {
     if (clientRequestId.isNotEmpty) {
       _relayLastOutboundRequestId = clientRequestId;
     }
-    final priority = relayFramePriority(frame);
-    final finalFrame = relayFrameIsFinal(frame);
+    final priority = priorityOverride ?? relayFramePriority(frame);
+    final finalFrame = finalOverride ?? relayFrameIsFinal(frame);
     var invalidationReported = false;
     void reportInvalidation() {
       if (invalidationReported) return;
@@ -4535,6 +4684,26 @@ class WebSocketService {
         replayKey: 'pc',
       );
       if (epoch != _relayE2eEpoch) return false;
+      if (frame['type'] == 'webrtc_capabilities') {
+        final capability = WebRtcCapability.fromFrame(frame);
+        _webRtcCapability = capability;
+        final completer = _webRtcCapabilityCompleter;
+        if (completer != null && !completer.isCompleted) {
+          completer.complete(capability);
+        }
+        debugPrint(
+          '[OSIA WebRTC] PC capability enabled=${capability.enabled} '
+          'ice_servers=${capability.iceServers.length}',
+        );
+        return true;
+      }
+      if (webRtcSignalEventTypes.contains(frame['event_type'])) {
+        final transport = _webRtcTransport;
+        if (transport != null) {
+          await transport.handleSignal(frame);
+        }
+        return true;
+      }
       if (frame['type'] == 'lan_provisioning') {
         if (frame.keys.toSet().difference(const <String>{
               'type',
@@ -4579,7 +4748,7 @@ class WebSocketService {
         return true;
       }
       if (frame['type'] == 'transport_committed') {
-        if (!lanDirectV1 ||
+        if (!_directFirstEnabled ||
             frame.length != 3 ||
             frame['transport'] != 'relay' ||
             frame['attempt_id'] != _relayCommitAttemptId ||
@@ -4591,7 +4760,9 @@ class WebSocketService {
         _maybeCompleteRelayReady();
         return true;
       }
-      if (lanDirectV1 && _relaySignalingStandby && !_relayCommitConfirmed) {
+      if (_directFirstEnabled &&
+          _relaySignalingStandby &&
+          !_relayCommitConfirmed) {
         _failRelayHandshake(kRelayE2eStaleSessionError);
         return false;
       }
@@ -4824,12 +4995,12 @@ class WebSocketService {
               payload.length == 2 &&
               payload['e2e'] == true &&
               payload['standby'] == true;
-          if (lanDirectV1 && !relayOnlyReady && !standbyReady) {
+          if (_directFirstEnabled && !relayOnlyReady && !standbyReady) {
             _failRelayHandshake(kRelayE2eStaleSessionError);
             break;
           }
-          _relayPcRequiresCommit = lanDirectV1 && standbyReady;
-          if (lanDirectV1 && relayOnlyReady) {
+          _relayPcRequiresCommit = _directFirstEnabled && standbyReady;
+          if (_directFirstEnabled && relayOnlyReady) {
             _relaySignalingStandby = false;
           }
           _relayPcReady = true;
@@ -4958,11 +5129,14 @@ class WebSocketService {
       return;
     }
 
-    if (lanDirectV1 &&
-        _lastTransportKind == ApplicationTransportKind.lan &&
+    if (_directFirstEnabled &&
+        const <ApplicationTransportKind>{
+          ApplicationTransportKind.lan,
+          ApplicationTransportKind.webrtc,
+        }.contains(_lastTransportKind) &&
         _hasActiveApplicationTurn) {
       debugPrint(
-        '[OSIA LAN] reconnect blocked while an application request is active',
+        '[OSIA Direct] reconnect blocked while an application request is active',
       );
       _setState(ConnectionState.disconnected);
       return;
@@ -4997,10 +5171,17 @@ class WebSocketService {
       }
     }
 
-    if (lanDirectV1 &&
+    if (_directFirstEnabled &&
         _relaySignalingStandby &&
         _channel != null &&
         !_hasActiveApplicationTurn) {
+      final capability = _webRtcCapability;
+      if (webRtcDirectV1 &&
+          capability != null &&
+          capability.enabled &&
+          await _tryWebRtcConnect(capability, connectGeneration)) {
+        return;
+      }
       if (await _commitRelayStandby(connectGeneration)) return;
       await _closeCurrentChannel(
         reason: 'existing relay standby could not be committed',
@@ -5015,10 +5196,10 @@ class WebSocketService {
         final relayReady = await _tryRelayConnect(
           relayConfig,
           connectGeneration,
-          standbyOnly: lanDirectV1,
+          standbyOnly: _directFirstEnabled,
         );
         if (!_isCurrentConnect(connectGeneration)) return;
-        if (relayReady && lanDirectV1) {
+        if (relayReady && _directFirstEnabled) {
           if (!_relaySignalingStandby) return;
           LanPairingIdentity? provisioned;
           final provisioning = _lanProvisioningCompleter;
@@ -5036,6 +5217,23 @@ class WebSocketService {
                 await _tryLanConnect(discovered, connectGeneration)) {
               return;
             }
+          }
+          WebRtcCapability? capability = _webRtcCapability;
+          final capabilityCompleter = _webRtcCapabilityCompleter;
+          if (webRtcDirectV1 &&
+              capability == null &&
+              capabilityCompleter != null) {
+            capability = await capabilityCompleter.future.timeout(
+              const Duration(seconds: 2),
+              onTimeout: () => null,
+            );
+          }
+          if (!_isCurrentConnect(connectGeneration)) return;
+          if (webRtcDirectV1 &&
+              capability != null &&
+              capability.enabled &&
+              await _tryWebRtcConnect(capability, connectGeneration)) {
+            return;
           }
           if (await _commitRelayStandby(connectGeneration)) return;
           await _closeCurrentChannel(
@@ -5233,7 +5431,7 @@ class WebSocketService {
           }
         case 'response':
           if (content != null) {
-            if (!lanDirectV1) _emit(ResponseMessage(content));
+            if (!_directFirstEnabled) _emit(ResponseMessage(content));
             // WOR-53: also replace this conversation's buffer with the
             // canonical full reply (parallel sink — no change to pacing).
             _replaceConvText(
@@ -5246,7 +5444,7 @@ class WebSocketService {
           }
         case 'response_chunk':
           if (content != null && content.isNotEmpty) {
-            if (!lanDirectV1) _emit(ResponseChunkMessage(content));
+            if (!_directFirstEnabled) _emit(ResponseChunkMessage(content));
             // WOR-53: also accrue the delta into this conversation's buffer so
             // its reply survives a screen switch and hydrates on return.
             _appendConvDelta(
@@ -5526,7 +5724,7 @@ class WebSocketService {
           }
         case 'cron_notification':
           final note = CronNotificationMessage.fromJson(json);
-          if (lanDirectV1 &&
+          if (_directFirstEnabled &&
               (note.id.isEmpty ||
                   note.requestId.isEmpty ||
                   note.turnId.isEmpty ||
@@ -5632,6 +5830,7 @@ class WebSocketService {
       _resetRelayE2eState();
       _relayReadyCompleter = null;
       if (!_connectedViaLan &&
+          !_connectedViaWebRtc &&
           _state != ConnectionState.connecting &&
           !_intentionalClose) {
         _setState(ConnectionState.disconnected);

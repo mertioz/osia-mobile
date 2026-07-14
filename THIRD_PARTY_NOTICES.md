@@ -3,6 +3,16 @@
 OSIA Mobile uses the following third-party package. This notice does not
 change OSIA's own license.
 
+## Flutter WebRTC 1.5.2
+
+- Project: https://github.com/flutter-webrtc/flutter-webrtc
+- License: MIT
+
+Its direct dependencies `dart_webrtc 1.8.1`, `webrtc_interface 1.5.1`, and
+`logger 2.7.0` are also distributed under the MIT License. Complete license
+texts are included in the corresponding packages in the Dart package cache
+and in their upstream repositories.
+
 ## multicast_dns 0.3.3+1
 
 - Project: https://github.com/flutter/core-packages/tree/main/packages/multicast_dns

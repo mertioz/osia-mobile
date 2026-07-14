@@ -1462,6 +1462,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _optimisticUserNoId = null;
     setState(() {
       _entries.clear();
+      _awaitingResponse = false;
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
@@ -1502,6 +1503,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _optimisticUserNoId = null;
     setState(() {
       _entries.clear();
+      _awaitingResponse = false;
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;

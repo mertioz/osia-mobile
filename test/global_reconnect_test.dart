@@ -123,7 +123,7 @@ void main() {
   );
 
   test(
-    'ten concurrent ensureConnected calls share one successful attempt',
+    'fifty concurrent ensureConnected calls share one successful attempt',
     () async {
       final attempts = _ControlledConnectAttempts(1);
       final service = ws.WebSocketService(
@@ -145,7 +145,7 @@ void main() {
       addTearDown(subscription.cancel);
 
       final futures = List<Future<void>>.generate(
-        10,
+        50,
         (index) => service.ensureConnected(reason: 'concurrent_$index'),
       );
 
