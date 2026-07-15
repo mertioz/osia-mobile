@@ -601,11 +601,13 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
 class SystemSettingsSection extends StatefulWidget {
   final ws.WebSocketService wsService;
   final bool showHeader;
+  final Future<bool> Function(Uri uri)? oauthUrlLauncher;
 
   const SystemSettingsSection({
     super.key,
     required this.wsService,
     this.showHeader = true,
+    this.oauthUrlLauncher,
   });
 
   @override
@@ -762,6 +764,7 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
               wsService: widget.wsService,
               config: config,
               apiKeys: _apiKeys,
+              oauthUrlLauncher: widget.oauthUrlLauncher,
             ),
           ),
         ),
@@ -6117,6 +6120,7 @@ const Set<String> _reservedGmailMcpIds = {
 class _McpScreen extends StatefulWidget {
   final ws.WebSocketService wsService;
   final ws.ConfigData config;
+  final Future<bool> Function(Uri uri)? oauthUrlLauncher;
 
   /// Real token strings keyed by provider (`mcp:<id>` → token), from the
   /// parent's `get_api_keys` pull — used to pre-fill the token field.
@@ -6126,6 +6130,7 @@ class _McpScreen extends StatefulWidget {
     required this.wsService,
     required this.config,
     required this.apiKeys,
+    this.oauthUrlLauncher,
   });
 
   @override
@@ -6166,11 +6171,17 @@ class _McpScreenState extends State<_McpScreen> {
   /// (`mcp_allow_unattended_writes`; default OFF). Same persistence as above.
   late bool _allowUnattended;
 
-  /// Native Gmail REST state from the config snapshot. Gmail auth and REST
-  /// calls stay server-side; mobile can request the safe disconnect action.
+  /// Native Gmail REST state from the config snapshot. Gmail auth, tokens and
+  /// REST calls stay server-side; Mobile only requests safe connector actions.
   ws.GmailRestConfig? _gmailRest;
+  bool _gmailRestConnecting = false;
+  bool _gmailRestAttemptExpired = false;
   bool _gmailRestDisconnecting = false;
   String? _gmailRestDisconnectError;
+  String? _pendingGmailRequestId;
+  String? _pendingGmailAttemptId;
+  Timer? _gmailRestAttemptTimer;
+  final Set<String> _openedGmailAttemptIds = <String>{};
 
   /// The connector currently shown in the panel.
   String _selectedId = _mcpCatalog.first.id;
@@ -6211,6 +6222,8 @@ class _McpScreenState extends State<_McpScreen> {
       false,
     );
     _gmailRest = widget.config.gmailRest;
+    _gmailRestConnecting = _gmailRest?.connecting == true;
+    _syncGmailAttemptTimer(_gmailRest);
 
     // Stay live while open: the parent passed a snapshot, but config / keys /
     // status can change (incl. from the PC), so subscribe to all three.
@@ -6239,16 +6252,24 @@ class _McpScreenState extends State<_McpScreen> {
         );
         final nextGmail = cfg.gmailRest;
         _gmailRest = nextGmail;
-        if (nextGmail?.connected != true) {
+        _gmailRestConnecting = nextGmail?.connecting == true;
+        _gmailRestAttemptExpired = false;
+        if (!_gmailRestConnecting) {
+          _pendingGmailRequestId = null;
+          _pendingGmailAttemptId = null;
+        }
+        if (_gmailRestDisconnecting && nextGmail?.connected != true) {
           _gmailRestDisconnecting = false;
           _gmailRestDisconnectError = null;
-        } else if ((nextGmail?.status ?? '').trim().toLowerCase() == 'failed') {
+        } else if (_gmailRestDisconnecting &&
+            (nextGmail?.status ?? '').trim().toLowerCase() == 'failed') {
           final reason = nextGmail?.reason?.trim() ?? '';
           _gmailRestDisconnecting = false;
           _gmailRestDisconnectError = reason.isEmpty
               ? OsiaL10n.of(context).mcpStatusFailed
               : reason;
         }
+        _syncGmailAttemptTimer(nextGmail);
       });
     });
     _apiKeysSub = widget.wsService.apiKeysStream.listen((msg) {
@@ -6275,6 +6296,38 @@ class _McpScreenState extends State<_McpScreen> {
     });
     _oauthSub = widget.wsService.mcpOauthUrlStream.listen((evt) {
       if (!mounted) return;
+      if (evt.id == _nativeGmailRestIntegration) {
+        final expectedRequest = _pendingGmailRequestId;
+        if (expectedRequest == null || evt.requestId != expectedRequest) {
+          return;
+        }
+        if (!_isTrustedGmailAuthorizationUrl(evt.url)) {
+          widget.wsService.sendMcpOauthCancel(
+            _nativeGmailRestIntegration,
+            requestId: ws.WebSocketService.newClientRequestId(),
+            attemptId: evt.attemptId,
+          );
+          setState(() {
+            _pendingGmailRequestId = null;
+            _pendingGmailAttemptId = null;
+            _gmailRestConnecting = false;
+            _gmailRestDisconnectError = OsiaL10n.of(context).linkOpenFailed;
+          });
+          widget.wsService.sendGetConfig();
+          return;
+        }
+        final attemptId = evt.attemptId ?? evt.url;
+        if (!_openedGmailAttemptIds.add(attemptId)) return;
+        setState(() {
+          _pendingGmailRequestId = null;
+          _pendingGmailAttemptId = evt.attemptId;
+          _gmailRestConnecting = true;
+          _gmailRestAttemptExpired = false;
+        });
+        _scheduleGmailAttemptExpiry(evt.expiresAt);
+        _openOauthUrl(evt.url);
+        return;
+      }
       // Correlate by id: only open the browser for the connector the user just
       // tapped Connect on; ignore a stale / non-matching id.
       if (evt.id != _pendingOauthId) return;
@@ -6297,6 +6350,7 @@ class _McpScreenState extends State<_McpScreen> {
     _statusSub?.cancel();
     _oauthSub?.cancel();
     _connSub?.cancel();
+    _gmailRestAttemptTimer?.cancel();
     for (final c in _tokenCtrls.values) {
       c.dispose();
     }
@@ -6306,6 +6360,39 @@ class _McpScreenState extends State<_McpScreen> {
       }
     }
     super.dispose();
+  }
+
+  void _syncGmailAttemptTimer(ws.GmailRestConfig? gmail) {
+    if (gmail?.connecting != true) {
+      _gmailRestAttemptTimer?.cancel();
+      _gmailRestAttemptTimer = null;
+      return;
+    }
+    _pendingGmailAttemptId = gmail?.attemptId ?? _pendingGmailAttemptId;
+    _scheduleGmailAttemptExpiry(gmail?.attemptExpiresAt);
+  }
+
+  void _scheduleGmailAttemptExpiry(double? expiresAt) {
+    _gmailRestAttemptTimer?.cancel();
+    if (expiresAt == null) return;
+    final expiry = DateTime.fromMillisecondsSinceEpoch(
+      (expiresAt * 1000).round(),
+      isUtc: true,
+    );
+    final delay = expiry.difference(DateTime.now().toUtc());
+    _gmailRestAttemptTimer = Timer(
+      delay.isNegative ? Duration.zero : delay + const Duration(seconds: 1),
+      () {
+        if (!mounted) return;
+        setState(() {
+          _gmailRestConnecting = false;
+          _gmailRestAttemptExpired = true;
+          _pendingGmailRequestId = null;
+          _pendingGmailAttemptId = null;
+        });
+        widget.wsService.sendGetConfig();
+      },
+    );
   }
 
   // ── Reads ──
@@ -6496,7 +6583,11 @@ class _McpScreenState extends State<_McpScreen> {
 
   String _gmailRestStatus() {
     final gmail = _gmailRest;
-    if (_gmailRestDisconnecting) return 'connecting';
+    if (_gmailRestDisconnecting ||
+        _gmailRestConnecting ||
+        (gmail?.connecting == true && !_gmailRestAttemptExpired)) {
+      return 'connecting';
+    }
     if (_gmailRestDisconnectError != null) return 'failed';
     final actionStatus =
         _statuses[_nativeGmailRestIntegration]?.status.trim().toLowerCase() ??
@@ -6641,6 +6732,63 @@ class _McpScreenState extends State<_McpScreen> {
     widget.wsService.sendGetConfig();
   }
 
+  void _connectGmailRest() {
+    final strings = OsiaL10n.of(context);
+    final gmail = _gmailRest;
+    final supported = gmail?.mobileOAuthConfigured == true;
+    final connecting =
+        _gmailRestConnecting ||
+        (gmail?.connecting == true && !_gmailRestAttemptExpired) ||
+        _pendingGmailRequestId != null;
+    final reconnecting = gmail?.connected == true;
+    if (!supported || connecting) return;
+    if (reconnecting && gmail?.canReconnect != true) return;
+    if (!reconnecting &&
+        gmail?.canConnect != true &&
+        !_gmailRestAttemptExpired) {
+      return;
+    }
+    if (widget.wsService.state != ws.ConnectionState.connected) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(strings.pcOffline)));
+      return;
+    }
+
+    final requestId = ws.WebSocketService.newClientRequestId();
+    setState(() {
+      _pendingGmailRequestId = requestId;
+      _pendingGmailAttemptId = null;
+      _gmailRestConnecting = true;
+      _gmailRestAttemptExpired = false;
+      _gmailRestDisconnectError = null;
+    });
+    widget.wsService.sendMcpConnect(
+      _nativeGmailRestIntegration,
+      requestId: requestId,
+    );
+    widget.wsService.sendGetConfig();
+  }
+
+  void _cancelGmailRestConnect() {
+    final gmail = _gmailRest;
+    if (!(_gmailRestConnecting || gmail?.connecting == true)) return;
+    final requestId = ws.WebSocketService.newClientRequestId();
+    widget.wsService.sendMcpOauthCancel(
+      _nativeGmailRestIntegration,
+      requestId: requestId,
+      attemptId: _pendingGmailAttemptId ?? gmail?.attemptId,
+    );
+    _gmailRestAttemptTimer?.cancel();
+    setState(() {
+      _gmailRestConnecting = false;
+      _gmailRestAttemptExpired = false;
+      _pendingGmailRequestId = null;
+      _pendingGmailAttemptId = null;
+    });
+    widget.wsService.sendGetConfig();
+  }
+
   void _disconnectGmailRest(_McpConnector c) {
     final strings = OsiaL10n.of(context);
     final gmail = _gmailRest;
@@ -6727,10 +6875,11 @@ class _McpScreenState extends State<_McpScreen> {
   Future<void> _openOauthUrl(String url) async {
     var opened = false;
     try {
-      opened = await launchUrl(
-        Uri.parse(url),
-        mode: LaunchMode.externalApplication,
-      );
+      final uri = Uri.parse(url);
+      final injected = widget.oauthUrlLauncher;
+      opened = injected != null
+          ? await injected(uri)
+          : await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (_) {
       opened = false;
     }
@@ -6743,6 +6892,38 @@ class _McpScreenState extends State<_McpScreen> {
         ),
       ),
     );
+  }
+
+  bool _isTrustedGmailAuthorizationUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host != 'accounts.google.com' ||
+        uri.port != 443 ||
+        uri.userInfo.isNotEmpty ||
+        uri.path != '/o/oauth2/v2/auth' ||
+        uri.fragment.isNotEmpty) {
+      return false;
+    }
+    final query = uri.queryParameters;
+    if (query['response_type'] != 'code' ||
+        query['code_challenge_method'] != 'S256' ||
+        (query['client_id'] ?? '').isEmpty ||
+        (query['state'] ?? '').isEmpty ||
+        (query['code_challenge'] ?? '').isEmpty) {
+      return false;
+    }
+    final redirect = Uri.tryParse(query['redirect_uri'] ?? '');
+    if (redirect == null ||
+        redirect.scheme != 'https' ||
+        redirect.host != 'osia-rendezvous.aymengherbi06.workers.dev' ||
+        redirect.port != 443 ||
+        redirect.userInfo.isNotEmpty ||
+        redirect.query.isNotEmpty ||
+        redirect.fragment.isNotEmpty) {
+      return false;
+    }
+    return RegExp(r'^/oauth/cb/[0-9a-f]{64}$').hasMatch(redirect.path);
   }
 
   /// Switch account on an OAuth connector: revoke AND forget the client
@@ -7014,16 +7195,33 @@ class _McpScreenState extends State<_McpScreen> {
   ) {
     final gmail = _gmailRest;
     final connected = gmail?.connected == true;
+    final connecting =
+        _gmailRestConnecting ||
+        (gmail?.connecting == true && !_gmailRestAttemptExpired) ||
+        _pendingGmailRequestId != null;
     final caps = gmail?.capabilities ?? const ws.GmailRestCapabilities();
     final email = gmail?.emailAddress?.trim() ?? '';
+    final mobileConfigured = gmail?.mobileOAuthConfigured == true;
     final disconnectBlockedByServer =
         connected &&
         gmail?.canDisconnectProvided == true &&
         gmail?.canDisconnect == false;
-    final canDisconnect = connected && !disconnectBlockedByServer;
-    final showConfigureOnPc = gmail?.configureOnPc == true || gmail == null;
+    final canConnect =
+        !connected &&
+        !connecting &&
+        mobileConfigured &&
+        (gmail?.canConnect == true || _gmailRestAttemptExpired);
+    final canReconnect =
+        connected &&
+        !connecting &&
+        mobileConfigured &&
+        gmail?.canReconnect == true;
+    final canDisconnect =
+        connected && !connecting && !disconnectBlockedByServer;
+    final showConfigureOnPc =
+        gmail == null || !mobileConfigured || gmail.configureOnPc;
     final showElevateOnPc = gmail?.elevateOnPc == true;
-    final showGuide = gmail?.guideAvailable == true;
+    final showGuide = gmail?.guideAvailable == true && showConfigureOnPc;
     final showDisconnectOnPc = disconnectBlockedByServer && !showElevateOnPc;
     final disconnectError = _gmailRestDisconnectError;
 
@@ -7081,6 +7279,15 @@ class _McpScreenState extends State<_McpScreen> {
               color: palette.textMuted,
             ),
           ),
+          const SizedBox(height: 10),
+          Text(
+            strings.gmailRestPcHostedAuth,
+            style: TextStyle(
+              fontSize: 12.5,
+              height: 1.4,
+              color: palette.textMuted,
+            ),
+          ),
           if (email.isNotEmpty) ...[
             const SizedBox(height: 12),
             Row(
@@ -7132,6 +7339,37 @@ class _McpScreenState extends State<_McpScreen> {
               ),
             ],
           ),
+          if (connecting) ...[
+            const SizedBox(height: 14),
+            _gmailRestActionButton(
+              palette,
+              strings.mcpStatusConnecting,
+              pending: true,
+              onPressed: null,
+            ),
+            const SizedBox(height: 8),
+            _gmailRestActionButton(
+              palette,
+              strings.mcpCancel,
+              onPressed: _cancelGmailRestConnect,
+            ),
+          ] else if (canConnect) ...[
+            const SizedBox(height: 14),
+            _gmailRestActionButton(
+              palette,
+              '${strings.mcpConnect} ${strings.gmailRestName}',
+              primary: true,
+              onPressed: _connectGmailRest,
+            ),
+          ] else if (canReconnect) ...[
+            const SizedBox(height: 14),
+            _gmailRestActionButton(
+              palette,
+              strings.gmailRestReconnect,
+              primary: true,
+              onPressed: _connectGmailRest,
+            ),
+          ],
           if (canDisconnect) ...[
             const SizedBox(height: 14),
             _gmailRestDisconnectButton(
@@ -7175,7 +7413,12 @@ class _McpScreenState extends State<_McpScreen> {
   }
 
   String _gmailRestDetail(OsiaStrings strings, ws.GmailRestConfig? gmail) {
-    final reason = gmail?.reason?.trim() ?? '';
+    if (gmail?.errorCategory == 'configuration_missing') {
+      return strings.gmailRestConfigureOnPc;
+    }
+    final reason = gmail?.message?.trim().isNotEmpty == true
+        ? gmail!.message!.trim()
+        : (gmail?.reason?.trim() ?? '');
     if (reason.isNotEmpty) return reason;
     final status = gmail?.status?.trim() ?? '';
     if (status.isNotEmpty &&
@@ -7215,6 +7458,51 @@ class _McpScreenState extends State<_McpScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _gmailRestActionButton(
+    OsiaPalette palette,
+    String label, {
+    bool pending = false,
+    bool primary = false,
+    required VoidCallback? onPressed,
+  }) {
+    return SizedBox(
+      height: 50,
+      child: ElevatedButton(
+        onPressed: pending ? null : onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: primary ? palette.accent : palette.surfaceElevated,
+          foregroundColor: primary ? palette.background : palette.textPrimary,
+          disabledBackgroundColor: palette.surfaceElevated,
+          disabledForegroundColor: palette.textMuted,
+          elevation: 0,
+          side: BorderSide(color: primary ? palette.accent : palette.border),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        child: pending
+            ? Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: palette.textMuted,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(label),
+                ],
+              )
+            : Text(label),
       ),
     );
   }

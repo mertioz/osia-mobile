@@ -382,6 +382,8 @@ class OsiaStrings {
   final String mcpDescGmail;
   final String gmailRestName;
   final String gmailRestTitle;
+  final String gmailRestReconnect;
+  final String gmailRestPcHostedAuth;
   final String gmailRestConfigureOnPc;
   final String gmailRestElevateOnPc;
   final String gmailRestDisconnectOnPc;
@@ -734,6 +736,8 @@ class OsiaStrings {
     required this.mcpDescGmail,
     required this.gmailRestName,
     required this.gmailRestTitle,
+    required this.gmailRestReconnect,
+    required this.gmailRestPcHostedAuth,
     required this.gmailRestConfigureOnPc,
     required this.gmailRestElevateOnPc,
     required this.gmailRestDisconnectOnPc,
@@ -1305,7 +1309,10 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   mcpDescGmail: 'Search & manage email in Gmail.',
   gmailRestName: 'Gmail',
   gmailRestTitle: 'Native Gmail REST / email search and management',
-  gmailRestConfigureOnPc: 'Configure on PC',
+  gmailRestReconnect: 'Reconnect Gmail',
+  gmailRestPcHostedAuth:
+      'Authentication and Gmail credentials stay on your PC-hosted OSIA.',
+  gmailRestConfigureOnPc: 'Configure Google OAuth on PC',
   gmailRestElevateOnPc: 'Elevate OSIA permissions on PC',
   gmailRestDisconnectOnPc: 'Disconnect on PC',
   gmailRestSetupGuideOnPc: 'Setup guide available on PC',
@@ -1688,7 +1695,10 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   mcpDescGmail: 'Rechercher et gérer les e-mails dans Gmail.',
   gmailRestName: 'Gmail',
   gmailRestTitle: 'Gmail REST natif / recherche et gestion des e-mails',
-  gmailRestConfigureOnPc: 'Configurer sur PC',
+  gmailRestReconnect: 'Reconnecter Gmail',
+  gmailRestPcHostedAuth:
+      'L’authentification et les identifiants Gmail restent sur OSIA hébergé par votre PC.',
+  gmailRestConfigureOnPc: 'Configurer Google OAuth sur PC',
   gmailRestDisconnectOnPc: 'Déconnecter sur PC',
   gmailRestElevateOnPc: 'Élever les autorisations OSIA sur PC',
   gmailRestSetupGuideOnPc: 'Guide de configuration disponible sur PC',
@@ -2048,7 +2058,9 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   mcpDescGmail: '在 Gmail 中搜索与管理电子邮件。',
   gmailRestName: 'Gmail',
   gmailRestTitle: '原生 Gmail REST / 邮件搜索与管理',
-  gmailRestConfigureOnPc: '在电脑上配置',
+  gmailRestReconnect: '重新连接 Gmail',
+  gmailRestPcHostedAuth: '身份验证和 Gmail 凭据仅保留在电脑托管的 OSIA 上。',
+  gmailRestConfigureOnPc: '在电脑上配置 Google OAuth',
   gmailRestDisconnectOnPc: '在电脑上断开连接',
   gmailRestElevateOnPc: '在电脑上提升 OSIA 权限',
   gmailRestSetupGuideOnPc: '设置指南可在电脑上查看',
@@ -2412,7 +2424,9 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   mcpDescGmail: 'Gmail のメールを検索・管理します。',
   gmailRestName: 'Gmail',
   gmailRestTitle: 'ネイティブ Gmail REST / メール検索と管理',
-  gmailRestConfigureOnPc: 'PCで設定',
+  gmailRestReconnect: 'Gmail を再接続',
+  gmailRestPcHostedAuth: '認証と Gmail の資格情報は PC 上の OSIA にのみ保持されます。',
+  gmailRestConfigureOnPc: 'PC で Google OAuth を設定',
   gmailRestDisconnectOnPc: 'PCで切断',
   gmailRestElevateOnPc: 'PCで OSIA の権限を引き上げ',
   gmailRestSetupGuideOnPc: 'セットアップガイドはPCで利用可能',
@@ -2802,7 +2816,10 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   mcpDescGmail: 'E-Mails in Gmail durchsuchen und verwalten.',
   gmailRestName: 'Gmail',
   gmailRestTitle: 'Native Gmail REST / E-Mail-Suche und -Verwaltung',
-  gmailRestConfigureOnPc: 'Am PC konfigurieren',
+  gmailRestReconnect: 'Gmail erneut verbinden',
+  gmailRestPcHostedAuth:
+      'Authentifizierung und Gmail-Zugangsdaten bleiben auf dem PC mit OSIA.',
+  gmailRestConfigureOnPc: 'Google OAuth am PC konfigurieren',
   gmailRestDisconnectOnPc: 'Am PC trennen',
   gmailRestElevateOnPc: 'OSIA-Berechtigungen am PC erweitern',
   gmailRestSetupGuideOnPc: 'Setup-Anleitung am PC verfügbar',
@@ -3186,7 +3203,10 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   mcpDescGmail: 'Buscar y gestionar el correo en Gmail.',
   gmailRestName: 'Gmail',
   gmailRestTitle: 'Gmail REST nativo / búsqueda y gestión de correo',
-  gmailRestConfigureOnPc: 'Configurar en el PC',
+  gmailRestReconnect: 'Volver a conectar Gmail',
+  gmailRestPcHostedAuth:
+      'La autenticación y las credenciales de Gmail permanecen en OSIA alojado en tu PC.',
+  gmailRestConfigureOnPc: 'Configurar Google OAuth en el PC',
   gmailRestDisconnectOnPc: 'Desconectar en el PC',
   gmailRestElevateOnPc: 'Elevar permisos de OSIA en el PC',
   gmailRestSetupGuideOnPc: 'Guía de configuración disponible en el PC',

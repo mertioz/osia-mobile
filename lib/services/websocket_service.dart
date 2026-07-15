@@ -730,26 +730,48 @@ class GmailRestCapabilities {
 /// Mirror of `config.gmail_rest`; Gmail REST itself stays server-side.
 class GmailRestConfig {
   final bool connected;
+  final bool connecting;
+  final bool canConnect;
+  final bool canCancel;
+  final bool canReconnect;
   final bool canDisconnect;
   final bool canDisconnectProvided;
+  final bool oauthClientConfigured;
+  final bool mobileOAuthConfigured;
+  final bool userActionRequired;
   final bool configureOnPc;
   final bool elevateOnPc;
   final bool guideAvailable;
   final String? status;
+  final String? errorCategory;
+  final String? message;
   final String? emailAddress;
   final String? reason;
+  final String? attemptId;
+  final double? attemptExpiresAt;
   final GmailRestCapabilities capabilities;
 
   const GmailRestConfig({
     required this.connected,
+    this.connecting = false,
+    this.canConnect = false,
+    this.canCancel = false,
+    this.canReconnect = false,
     this.canDisconnect = false,
     this.canDisconnectProvided = false,
+    this.oauthClientConfigured = false,
+    this.mobileOAuthConfigured = false,
+    this.userActionRequired = false,
     this.configureOnPc = false,
     this.elevateOnPc = false,
     this.guideAvailable = false,
     this.status,
+    this.errorCategory,
+    this.message,
     this.emailAddress,
     this.reason,
+    this.attemptId,
+    this.attemptExpiresAt,
     this.capabilities = const GmailRestCapabilities(),
   });
 
@@ -783,14 +805,27 @@ class GmailRestConfig {
 
     return GmailRestConfig(
       connected: readBool(json['connected']),
+      connecting: readBool(json['connecting']),
+      canConnect: readBool(json['canConnect']),
+      canCancel: readBool(json['canCancel']),
+      canReconnect: readBool(json['canReconnect']),
       canDisconnect: readBool(json['canDisconnect']),
       canDisconnectProvided: json.containsKey('canDisconnect'),
+      oauthClientConfigured: readBool(json['oauthClientConfigured']),
+      mobileOAuthConfigured: readBool(json['mobileOAuthConfigured']),
+      userActionRequired: readBool(json['userActionRequired']),
       configureOnPc: readBool(json['configureOnPc']),
       elevateOnPc: readBool(json['elevateOnPc']),
       guideAvailable: readBool(json['guideAvailable']),
       status: readString(json['status']),
+      errorCategory: readString(json['errorCategory']),
+      message: readString(json['message']),
       emailAddress: readString(json['emailAddress']),
       reason: readString(json['reason']),
+      attemptId: readString(json['attemptId']),
+      attemptExpiresAt: json['attemptExpiresAt'] is num
+          ? (json['attemptExpiresAt'] as num).toDouble()
+          : null,
       capabilities: capabilities,
     );
   }
@@ -1462,7 +1497,16 @@ class McpStatusMessage {
 class McpOauthUrl {
   final String id;
   final String url;
-  const McpOauthUrl({required this.id, required this.url});
+  final String? requestId;
+  final String? attemptId;
+  final double? expiresAt;
+  const McpOauthUrl({
+    required this.id,
+    required this.url,
+    this.requestId,
+    this.attemptId,
+    this.expiresAt,
+  });
 }
 
 /// A write-tool confirmation request (`mcp_confirm_request`, WOR-44 Phase 5).
@@ -2975,8 +3019,12 @@ class WebSocketService {
   /// Connect the saved MCP server [id]. The PC immediately broadcasts an
   /// optimistic `connecting` status, then the resolved status when the
   /// handshake settles — both arrive on [mcpStatusStream].
-  void sendMcpConnect(String id) {
-    _send({'type': 'mcp_connect', 'id': id});
+  void sendMcpConnect(String id, {String? requestId}) {
+    _send({
+      'type': 'mcp_connect',
+      'id': id,
+      if (requestId != null && requestId.isNotEmpty) 'request_id': requestId,
+    });
   }
 
   /// Disconnect the MCP server [id]. The resolved status arrives on
@@ -2992,8 +3040,13 @@ class WebSocketService {
   /// and does NOT change the saved `enabled` flag. (Distinct from
   /// [sendMcpDisconnect] / [sendMcpSignOut], which tear down a live connection
   /// and/or revoke the stored token.)
-  void sendMcpOauthCancel(String id) {
-    _send({'type': 'mcp_oauth_cancel', 'id': id});
+  void sendMcpOauthCancel(String id, {String? requestId, String? attemptId}) {
+    _send({
+      'type': 'mcp_oauth_cancel',
+      'id': id,
+      if (requestId != null && requestId.isNotEmpty) 'request_id': requestId,
+      if (attemptId != null && attemptId.isNotEmpty) 'attempt_id': attemptId,
+    });
   }
 
   /// Sign out of an OAuth MCP connector [id] (WOR-96 PART 2b): disconnect AND
@@ -5915,7 +5968,19 @@ class WebSocketService {
               ourl != null &&
               ourl.isNotEmpty &&
               !_mcpOauthUrlCtrl.isClosed) {
-            _mcpOauthUrlCtrl.add(McpOauthUrl(id: oid, url: ourl));
+            final requestId = (json['request_id'] ?? '').toString().trim();
+            final attemptId = (json['attempt_id'] ?? '').toString().trim();
+            _mcpOauthUrlCtrl.add(
+              McpOauthUrl(
+                id: oid,
+                url: ourl,
+                requestId: requestId.isEmpty ? null : requestId,
+                attemptId: attemptId.isEmpty ? null : attemptId,
+                expiresAt: json['expires_at'] is num
+                    ? (json['expires_at'] as num).toDouble()
+                    : null,
+              ),
+            );
           }
         case 'conversation_busy_changed':
           _handleConversationBusyFrame(json);

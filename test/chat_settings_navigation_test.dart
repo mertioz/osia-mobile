@@ -374,6 +374,23 @@ void main() {
       expect(service.mcpResponses, <(String, bool)>[('confirm-nav', false)]);
 
       service.handleIncomingFrameForTest(<String, dynamic>{
+        'type': 'mcp_confirm_request',
+        'id': 'confirm-nav-approve',
+        'server': 'gmail',
+        'tool': 'gmail_create_draft',
+        'summary': 'Create one temporary draft',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.text('Approve'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(service.mcpResponses, <(String, bool)>[
+        ('confirm-nav', false),
+        ('confirm-nav-approve', true),
+      ]);
+
+      service.handleIncomingFrameForTest(<String, dynamic>{
         'type': 'response_chunk',
         'content': 'stream survives navigation',
         'conversation_id': 'conv-nav',
