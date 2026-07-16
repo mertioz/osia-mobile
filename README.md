@@ -30,11 +30,20 @@ From the repository root:
 
 ```powershell
 flutter pub get
+flutter build apk --release
+```
+
+LAN, WebRTC, and encrypted relay fallback are enabled by default. Diagnostic
+builds can still disable direct transports explicitly with `--dart-define`.
+
+The policy-validating helper remains available for official release checks:
+
+```powershell
 dart run tool/build_release.dart
 ```
 
-That is the official Android release path. It validates the machine-readable
-`assets/production_capabilities.json` policy and always supplies:
+It validates the machine-readable `assets/production_capabilities.json` policy
+and explicitly supplies:
 
 ```text
 lan_direct_v1=true
@@ -60,7 +69,8 @@ for example:
 flutter run --dart-define=lan_direct_v1=false --dart-define=webrtc_direct_v1=false
 ```
 
-Do not use an ad-hoc `flutter build` command for an official release.
+Plain Flutter release builds and the policy-validating helper use the same
+transport defaults.
 
 ## Platform permissions
 

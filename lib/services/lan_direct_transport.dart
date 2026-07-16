@@ -8,7 +8,10 @@ import 'package:flutter/foundation.dart';
 import 'relay_crypto_service.dart';
 import 'relay_service.dart';
 
-const bool kLanDirectV1 = bool.fromEnvironment('lan_direct_v1');
+const bool kLanDirectV1 = bool.fromEnvironment(
+  'lan_direct_v1',
+  defaultValue: true,
+);
 const String _environmentLanHost = String.fromEnvironment('lan_direct_host');
 const String _environmentLanCertificateSha256 = String.fromEnvironment(
   'lan_direct_certificate_sha256',

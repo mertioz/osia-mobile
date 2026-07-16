@@ -29,7 +29,14 @@ const bool kOsiaDebugPlaceholder = false;
 const bool kAllowLegacyRendezvousFallback = bool.fromEnvironment(
   'OSIA_ALLOW_LEGACY_RENDEZVOUS_FALLBACK',
 );
-const bool kWebRtcDirectV1 = bool.fromEnvironment('webrtc_direct_v1');
+const bool kRelayFallbackV1 = bool.fromEnvironment(
+  'relay_fallback_v1',
+  defaultValue: true,
+);
+const bool kWebRtcDirectV1 = bool.fromEnvironment(
+  'webrtc_direct_v1',
+  defaultValue: true,
+);
 const Set<String> _relayControlFields = <String>{
   'v',
   'type',
@@ -2365,6 +2372,7 @@ class WebSocketService {
   final Future<String> Function()? resolveHost;
   final Future<RelayConnectionConfig> Function()? resolveRelay;
   final bool allowLegacyRendezvousFallback;
+  final bool relayFallbackV1;
   final bool lanDirectV1;
   final bool webRtcDirectV1;
   final LanDirectConfig? lanDirectConfig;
@@ -2423,6 +2431,7 @@ class WebSocketService {
     this.resolveHost,
     this.resolveRelay,
     this.allowLegacyRendezvousFallback = kAllowLegacyRendezvousFallback,
+    this.relayFallbackV1 = kRelayFallbackV1,
     this.lanDirectV1 = kLanDirectV1,
     this.webRtcDirectV1 = kWebRtcDirectV1,
     this.lanDirectConfig,
@@ -5353,7 +5362,7 @@ class WebSocketService {
       );
     }
 
-    if (resolveRelay != null) {
+    if (relayFallbackV1 && resolveRelay != null) {
       try {
         final relayConfig = await resolveRelay!();
         if (!_isCurrentConnect(connectGeneration)) return;

@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:osia_mobile/services/lan_direct_transport.dart';
+import 'package:osia_mobile/services/websocket_service.dart'
+    show kRelayFallbackV1, kWebRtcDirectV1;
 
 void main() {
   group('LAN-direct manual configuration', () {
@@ -66,7 +68,9 @@ void main() {
     );
   });
 
-  test('LAN-direct feature flag is disabled in the default test build', () {
-    expect(kLanDirectV1, isFalse);
+  test('standard builds enable all supported transports by default', () {
+    expect(kLanDirectV1, isTrue);
+    expect(kWebRtcDirectV1, isTrue);
+    expect(kRelayFallbackV1, isTrue);
   });
 }

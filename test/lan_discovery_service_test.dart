@@ -341,7 +341,7 @@ void main() {
       ).readAsStringSync();
       final transportSource = File(
         'lib/services/lan_direct_transport.dart',
-      ).readAsStringSync();
+      ).readAsStringSync().replaceAll('\r\n', '\n');
 
       expect(
         source,
@@ -357,9 +357,7 @@ void main() {
       );
       expect(
         transportSource,
-        contains(
-          "const bool kLanDirectV1 = bool.fromEnvironment('lan_direct_v1')",
-        ),
+        contains("'lan_direct_v1',\n  defaultValue: true,"),
       );
     },
   );
