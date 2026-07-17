@@ -1,0 +1,6 @@
+# Copy this file to ignored android/key.properties and replace every
+# placeholder locally. Keep the production keystore outside the repository.
+storeFile=C:/secure/path/to/osia-production.jks
+storePassword=<set-in-a-secret-store>
+keyAlias=<production-key-alias>
+keyPassword=<set-in-a-secret-store>

@@ -6,6 +6,92 @@ import 'package:flutter_test/flutter_test.dart';
 import '../tool/build_release.dart' as release;
 
 void main() {
+  test('Android release signing is production-only and fails closed', () {
+    final source = File('android/app/build.gradle.kts').readAsStringSync();
+    expect(source, contains('signingConfigs.create("release")'));
+    expect(source, contains('signingConfig = releaseSigningConfig'));
+    expect(source, isNot(contains('signingConfigs.getByName("debug")')));
+    for (final task in <String>[
+      'validateSigningRelease',
+      'packageRelease',
+      'packageReleaseBundle',
+      'signReleaseBundle',
+    ]) {
+      expect(source, contains('"$task"'));
+    }
+    expect(source, contains('OSIA production signing is not configured.'));
+    expect(source, contains('productionSigningConfigurationError'));
+  });
+
+  test(
+    'Android signing sources are ignored local config or complete CI env',
+    () {
+      final source = File('android/app/build.gradle.kts').readAsStringSync();
+      expect(source, contains('rootProject.file("key.properties")'));
+      for (final name in <String>[
+        'OSIA_ANDROID_KEYSTORE_PATH',
+        'OSIA_ANDROID_KEYSTORE_PASSWORD',
+        'OSIA_ANDROID_KEY_ALIAS',
+        'OSIA_ANDROID_KEY_PASSWORD',
+      ]) {
+        expect(source, contains(name));
+      }
+      expect(source, contains('environmentSigningComplete'));
+      expect(source, contains('environmentSigningPresent -> null'));
+
+      final ignored = Process.runSync('git', <String>[
+        'check-ignore',
+        '-q',
+        '--no-index',
+        '--',
+        'android/key.properties',
+      ]);
+      expect(ignored.exitCode, 0);
+
+      final tracked = Process.runSync('git', <String>['ls-files']);
+      expect(tracked.exitCode, 0);
+      final trackedPaths = (tracked.stdout as String).split('\n');
+      expect(
+        trackedPaths.where(
+          (path) =>
+              path == 'android/key.properties' ||
+              RegExp(
+                r'\.(?:jks|keystore|p12|pfx)$',
+                caseSensitive: false,
+              ).hasMatch(path),
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test('Android attachments use a permissionless document picker', () {
+    final manifest = File(
+      'android/app/src/main/AndroidManifest.xml',
+    ).readAsStringSync();
+    for (final permission in <String>[
+      'READ_EXTERNAL_STORAGE',
+      'WRITE_EXTERNAL_STORAGE',
+      'MANAGE_EXTERNAL_STORAGE',
+      'READ_MEDIA_IMAGES',
+      'READ_MEDIA_VIDEO',
+      'READ_MEDIA_AUDIO',
+      'READ_MEDIA_DOCUMENTS',
+      'READ_MEDIA_VISUAL_USER_SELECTED',
+    ]) {
+      expect(manifest, isNot(contains(permission)), reason: permission);
+    }
+
+    final picker = File('lib/screens/chat_screen.dart').readAsStringSync();
+    final start = picker.indexOf('Future<void> _onAttach()');
+    final end = picker.indexOf('\n  Future<', start + 1);
+    final attachFlow = picker.substring(start, end);
+    expect(attachFlow, contains('FilePicker.platform.pickFiles'));
+    expect(attachFlow, contains('type: FileType.any'));
+    expect(attachFlow, isNot(contains('Permission.')));
+    expect(attachFlow, isNot(contains('requestPermissions')));
+  });
+
   test(
     'official production capability manifest is direct-first and secret-free',
     () {
