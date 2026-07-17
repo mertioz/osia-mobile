@@ -171,6 +171,7 @@ class _StableWebSocketService extends ws.WebSocketService {
     String content, {
     String? conversationId,
     String? clientRequestId,
+    bool ttsEnabled = true,
   }) {
     sentTurns.add((content, clientRequestId ?? ''));
     return true;

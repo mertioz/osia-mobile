@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,6 +8,89 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
+
+class _QueuedPlayback {
+  const _QueuedPlayback(this.data, this.completer);
+
+  final String data;
+  final Completer<void> completer;
+}
+
+/// One bounded FIFO that serializes TTS clips and invalidates stale playback.
+class AudioPlaybackQueue {
+  AudioPlaybackQueue(this._play, this._stop, {this.maxPending = 64});
+
+  final Future<void> Function(String data) _play;
+  final Future<void> Function() _stop;
+  final int maxPending;
+  final ListQueue<_QueuedPlayback> _pending = ListQueue<_QueuedPlayback>();
+  Future<void>? _worker;
+  int _generation = 0;
+  bool _disposed = false;
+
+  int get pendingCount => _pending.length;
+  bool get workerActive => _worker != null;
+
+  Future<void> add(String data) {
+    if (_disposed) {
+      return Future<void>.error(StateError('playback queue disposed'));
+    }
+    if (_pending.length >= maxPending) {
+      return Future<void>.error(StateError('playback queue is full'));
+    }
+    final completer = Completer<void>();
+    _pending.add(_QueuedPlayback(data, completer));
+    _ensureWorker();
+    return completer.future;
+  }
+
+  void _ensureWorker() {
+    if (_worker != null || _pending.isEmpty || _disposed) return;
+    final generation = _generation;
+    late final Future<void> worker;
+    worker = _drain(generation);
+    _worker = worker;
+    unawaited(
+      worker.whenComplete(() {
+        if (identical(_worker, worker)) _worker = null;
+        if (!_disposed && _pending.isNotEmpty) _ensureWorker();
+      }),
+    );
+  }
+
+  Future<void> _drain(int generation) async {
+    while (!_disposed && generation == _generation && _pending.isNotEmpty) {
+      final item = _pending.removeFirst();
+      try {
+        await _play(item.data);
+        if (!item.completer.isCompleted) item.completer.complete();
+      } catch (error, stack) {
+        if (!item.completer.isCompleted) {
+          if (generation == _generation && !_disposed) {
+            item.completer.completeError(error, stack);
+          } else {
+            item.completer.complete();
+          }
+        }
+      }
+    }
+  }
+
+  Future<void> cancel() async {
+    _generation += 1;
+    while (_pending.isNotEmpty) {
+      final item = _pending.removeFirst();
+      if (!item.completer.isCompleted) item.completer.complete();
+    }
+    await _stop();
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    await cancel();
+  }
+}
 
 /// Service for audio recording (mic → WAV base64) and playback (MP3 base64 → speaker).
 ///
@@ -28,6 +112,7 @@ import 'package:record/record.dart';
 class AudioService {
   final AudioRecorder _recorder;
   final AudioPlayer _player;
+  late final AudioPlaybackQueue _playbackQueue;
 
   String? _recordingPath;
   bool _isRecording = false;
@@ -36,8 +121,10 @@ class AudioService {
   bool _permissionDenied = false;
 
   AudioService({AudioRecorder? recorder, AudioPlayer? player})
-      : _recorder = recorder ?? AudioRecorder(),
-        _player = player ?? AudioPlayer();
+    : _recorder = recorder ?? AudioRecorder(),
+      _player = player ?? AudioPlayer() {
+    _playbackQueue = AudioPlaybackQueue(_playMp3Now, _player.stop);
+  }
 
   // ── Permissions ────────────────────────────────────────────────────────
 
@@ -103,9 +190,7 @@ class AudioService {
     // Double-check permission
     final allowed = await ensureMicrophonePermission();
     if (!allowed) {
-      throw Exception(
-        'Microphone permission not granted.',
-      );
+      throw Exception('Microphone permission not granted.');
     }
 
     try {
@@ -155,7 +240,8 @@ class AudioService {
       final bytes = await file.readAsBytes();
       final base64 = base64Encode(bytes);
       debugPrint(
-          '[OSIA Audio] Recording stopped → ${bytes.length} bytes, base64 len=${base64.length}');
+        '[OSIA Audio] Recording stopped → ${bytes.length} bytes, base64 len=${base64.length}',
+      );
 
       // Clean up the temp file
       try {
@@ -193,49 +279,43 @@ class AudioService {
 
   /// Play MP3 audio from a base64-encoded string.
   ///
-  /// The sound plays through the phone's speaker/earpiece (platform default).
-  Future<void> playMp3(String base64Mp3) async {
+  /// Successive calls are queued and play in exact arrival order.
+  Future<void> playMp3(String base64Mp3) => _playbackQueue.add(base64Mp3);
+
+  Future<void> _playMp3Now(String base64Mp3) async {
+    File? tempFile;
     try {
       // Decode base64 and write to a temp file
       final bytes = base64Decode(base64Mp3);
       final tempDir = await getTemporaryDirectory();
-      final tempFile = File(
-          '${tempDir.path}/osia_tts_${DateTime.now().millisecondsSinceEpoch}.mp3');
+      tempFile = File(
+        '${tempDir.path}/osia_tts_${DateTime.now().microsecondsSinceEpoch}.mp3',
+      );
       await tempFile.writeAsBytes(bytes);
 
       debugPrint(
-          '[OSIA Audio] Playing MP3 → ${bytes.length} bytes from ${tempFile.path}');
-
-      // Stop any current playback
-      await _player.stop();
+        '[OSIA Audio] Playing MP3 → ${bytes.length} bytes from ${tempFile.path}',
+      );
 
       // Load and play
       await _player.setFilePath(tempFile.path);
       await _player.play();
-
-      // Clean up after playback completes. The subscription is held in a
-      // local and cancelled inside its own callback once the file is gone —
-      // otherwise every TTS play would leak a listener on the long-lived
-      // player's processingStateStream.
-      late final StreamSubscription<ProcessingState> sub;
-      sub = _player.processingStateStream.listen((state) {
-        if (state == ProcessingState.completed) {
-          try {
-            tempFile.delete();
-          } catch (_) {}
-          sub.cancel();
-        }
-      });
     } catch (e) {
       debugPrint('[OSIA Audio] playMp3 error: $e');
       rethrow;
+    } finally {
+      if (tempFile != null) {
+        try {
+          await tempFile.delete();
+        } catch (_) {}
+      }
     }
   }
 
   /// Stop any ongoing playback.
   Future<void> stopPlayback() async {
     try {
-      await _player.stop();
+      await _playbackQueue.cancel();
     } catch (e) {
       debugPrint('[OSIA Audio] stopPlayback error: $e');
     }
@@ -254,6 +334,7 @@ class AudioService {
     if (_isRecording) {
       await cancelRecording();
     }
+    await _playbackQueue.dispose();
     await _recorder.dispose();
     await _player.dispose();
   }

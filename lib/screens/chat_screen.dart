@@ -471,6 +471,20 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _initialized = true);
   }
 
+  void _playQueuedAudio(String data) {
+    unawaited(() async {
+      try {
+        await _audioService.playMp3(data);
+      } catch (error) {
+        debugPrint('[OSIA Chat] queued audio playback failed: $error');
+      }
+    }());
+  }
+
+  void _stopQueuedAudio() {
+    unawaited(_audioService.stopPlayback());
+  }
+
   void _onMessage(ws.OsiaMessage msg) {
     switch (msg) {
       case ws.TranscriptMessage(
@@ -518,7 +532,19 @@ class _ChatScreenState extends State<ChatScreen> {
         // conversation id). Kept present (no-op) so the sealed switch stays
         // exhaustive.
         break;
-      case ws.AudioMessage(:final data, :final source):
+      case ws.AudioMessage(
+        :final data,
+        :final source,
+        :final conversationId,
+        :final clientRequestId,
+      ):
+        if ((conversationId.isNotEmpty || clientRequestId.isNotEmpty) &&
+            !_isFrameForCurrentTurn(
+              conversationId: conversationId,
+              clientRequestId: clientRequestId,
+            )) {
+          break;
+        }
         // Read-aloud audio (speaker button): always play — the user
         // explicitly asked for it. Untagged frames (older server) fall
         // back to the _speakRequested flag.
@@ -529,7 +555,7 @@ class _ChatScreenState extends State<ChatScreen> {
             '[OSIA Chat] audio: source=$source → playing (read-aloud)',
           );
           _speakRequested = false;
-          _audioService.playMp3(data);
+          _playQueuedAudio(data);
           break;
         }
         // Response audio (auto-TTS path): gated by the toggle.
@@ -543,7 +569,7 @@ class _ChatScreenState extends State<ChatScreen> {
           '${_autoTts ? "playing audio" : "dropped (auto-TTS off)"}',
         );
         if (!_autoTts) break;
-        _audioService.playMp3(data);
+        _playQueuedAudio(data);
       case ws.StatusMessage(
         :final content,
         :final conversationId,
@@ -1370,6 +1396,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
+    if (conv.id != _activeConversationId) _stopQueuedAudio();
     if (conv.id != _activeConversationId && _pendingAttachments.isNotEmpty) {
       unawaited(_clearPendingAttachments());
     }
@@ -1544,6 +1571,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
+    _stopQueuedAudio();
     if (_pendingAttachments.isNotEmpty) {
       unawaited(_clearPendingAttachments());
     }
@@ -1593,6 +1621,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// clearing those methods perform.
   void _onNewChat() {
     if (!mounted) return;
+    _stopQueuedAudio();
     _clearAttachmentsWhenIdle = _attachmentBusy;
     _attachmentCancellation?.cancel();
     if (_pendingAttachments.isNotEmpty) {
@@ -1662,6 +1691,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _optimisticUser.remove(conv.id);
     final deletingActive = _activeConversationId == conv.id;
     if (deletingActive) {
+      _stopQueuedAudio();
       _clearAttachmentsWhenIdle = _attachmentBusy;
       _attachmentCancellation?.cancel();
       if (_pendingAttachments.isNotEmpty) {
@@ -1995,6 +2025,7 @@ class _ChatScreenState extends State<ChatScreen> {
           attachmentBatchId: result.batchId,
           conversationId: sendingConv ?? '',
           clientRequestId: requestId,
+          ttsEnabled: _autoTts,
           expectedTransportSession: result.transportSession,
         );
         if (!sent) {
@@ -2038,6 +2069,7 @@ class _ChatScreenState extends State<ChatScreen> {
         prompt,
         conversationId: sendingConv,
         clientRequestId: requestId,
+        ttsEnabled: _autoTts,
       );
     }
 
@@ -2064,6 +2096,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    _stopQueuedAudio();
     final displayContent = hasFiles
         ? (text.isEmpty ? '📎 $names' : '📎 $names\n$text')
         : text;
@@ -2431,11 +2464,13 @@ class _ChatScreenState extends State<ChatScreen> {
             attachmentBatchId: turn.attachmentBatchId,
             conversationId: retryConv ?? '',
             clientRequestId: turn.clientRequestId,
+            ttsEnabled: _autoTts,
           )
         : _wsService.sendText(
             turn.prompt,
             conversationId: retryConv,
             clientRequestId: turn.clientRequestId,
+            ttsEnabled: _autoTts,
           );
     if (!sent) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2445,6 +2480,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
+    _stopQueuedAudio();
     // WOR-75/WOR-53/WOR-62: re-mark the displayed conversation's turn in flight
     // (see [_sendText]) so a switch-away-and-back arms the recovery poll / buffer
     // hydration.
@@ -2553,7 +2589,11 @@ class _ChatScreenState extends State<ChatScreen> {
           setState(() {});
           return;
         }
-        if (!_wsService.sendAudio(base64Wav, conversationId: voiceConv)) {
+        if (!_wsService.sendAudio(
+          base64Wav,
+          conversationId: voiceConv,
+          ttsEnabled: _autoTts,
+        )) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('OSIA is still working in this conversation.'),
@@ -2562,6 +2602,7 @@ class _ChatScreenState extends State<ChatScreen> {
           setState(() {});
           return;
         }
+        _stopQueuedAudio();
         _awaitingResponse = true;
         // WOR-75/WOR-53/WOR-62: mark the displayed conversation's turn in flight
         // (see [_sendText]).
@@ -2899,7 +2940,10 @@ class _ChatScreenState extends State<ChatScreen> {
     // without rebuilding the connection or touching any live turn state.
     try {
       final autoTts = await widget.storage.getAutoTts();
-      if (mounted) setState(() => _autoTts = autoTts);
+      if (mounted) {
+        if (!autoTts) _stopQueuedAudio();
+        setState(() => _autoTts = autoTts);
+      }
     } catch (e) {
       debugPrint('[OSIA Chat] auto-TTS refresh failed: $e');
     }

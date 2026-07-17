@@ -2232,6 +2232,12 @@ class WebSocketService {
   }
 
   @visibleForTesting
+  void rememberRequestForTest(String conversationId, String clientRequestId) {
+    _rememberRequest(conversationId, clientRequestId);
+    if (conversationId.isNotEmpty) _pendingConvs.add(conversationId);
+  }
+
+  @visibleForTesting
   void expectAuthenticatedInitialSyncForTest() {
     _awaitingAuthenticatedInitialSync = true;
   }
@@ -2613,6 +2619,7 @@ class WebSocketService {
     String content, {
     String? conversationId,
     String? clientRequestId,
+    bool ttsEnabled = true,
   }) {
     final id = conversationId ?? '';
     final requestId = clientRequestId ?? newClientRequestId();
@@ -2628,6 +2635,7 @@ class WebSocketService {
       'conversation_id': id,
       'request_id': requestId,
       'client_request_id': requestId,
+      'tts_enabled': ttsEnabled,
     });
     if (sent) {
       _rememberRequest(id, requestId);
@@ -2644,6 +2652,7 @@ class WebSocketService {
     required String attachmentBatchId,
     required String conversationId,
     required String clientRequestId,
+    bool ttsEnabled = true,
     String? expectedTransportSession,
   }) {
     if (attachmentBatchId.isEmpty || clientRequestId.isEmpty) return false;
@@ -2664,6 +2673,7 @@ class WebSocketService {
       'request_id': clientRequestId,
       'client_request_id': clientRequestId,
       'attachment_batch_id': attachmentBatchId,
+      'tts_enabled': ttsEnabled,
     });
     if (sent) {
       _rememberRequest(conversationId, clientRequestId);
@@ -2733,6 +2743,7 @@ class WebSocketService {
     String base64Data, {
     String? conversationId,
     String? clientRequestId,
+    bool ttsEnabled = true,
   }) {
     final id = conversationId ?? '';
     final requestId = clientRequestId ?? newClientRequestId();
@@ -2749,6 +2760,7 @@ class WebSocketService {
       'conversation_id': id,
       'request_id': requestId,
       'client_request_id': requestId,
+      'tts_enabled': ttsEnabled,
     });
     if (sent) {
       _rememberRequest(id, requestId);
@@ -5645,16 +5657,19 @@ class WebSocketService {
         case 'audio':
           if (data != null) {
             final source = json['source'] as String?;
+            final mediaTerminal = json['media_terminal'] == true;
             debugPrint(
               '[OSIA WS] audio frame received: ${data.length} b64 chars, '
               'source=$source',
             );
-            final owned = _finishMediaPhase(
-              convId ?? '',
-              clientRequestId: clientRequestId,
-              turnId: turnId,
-              messageId: messageId,
-            );
+            final owned =
+                !mediaTerminal ||
+                _finishMediaPhase(
+                  convId ?? '',
+                  clientRequestId: clientRequestId,
+                  turnId: turnId,
+                  messageId: messageId,
+                );
             if (!owned) break;
             _emit(
               AudioMessage(
