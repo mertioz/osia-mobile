@@ -16,6 +16,73 @@ class _QueuedPlayback {
   final Completer<void> completer;
 }
 
+/// Wait for one player invocation to finish even when the platform's
+/// [AudioPlayer.play] future does not complete after the native track ends.
+///
+/// Android can report the terminal player-state transition while leaving that
+/// future pending, and can occasionally omit that state transition too.
+/// Listening before [play] is invoked prevents a short clip's start/end event
+/// from being missed. Decoded duration and local-file position idle are bounded
+/// fallbacks when Android omits the terminal transition.
+@visibleForTesting
+Future<void> playUntilStopped(
+  Future<void> Function() play,
+  Stream<PlayerState> playerStates, {
+  Stream<Duration>? positions,
+  Duration? expectedDuration,
+  Duration completionGrace = const Duration(milliseconds: 500),
+  Duration progressIdleGrace = const Duration(milliseconds: 750),
+}) async {
+  final stateEnded = Completer<void>();
+  var started = false;
+  var lastPosition = Duration.zero;
+  Timer? progressIdleTimer;
+  late final StreamSubscription<PlayerState> subscription;
+  StreamSubscription<Duration>? positionSubscription;
+  subscription = playerStates.listen(
+    (state) {
+      if (state.playing) started = true;
+      if (!stateEnded.isCompleted &&
+          started &&
+          (state.processingState == ProcessingState.completed ||
+              !state.playing)) {
+        stateEnded.complete();
+      }
+    },
+    onError: (Object error, StackTrace stack) {
+      if (!stateEnded.isCompleted) stateEnded.completeError(error, stack);
+    },
+  );
+  if (positions != null) {
+    positionSubscription = positions.listen(
+      (position) {
+        if (!started || position <= lastPosition) return;
+        lastPosition = position;
+        progressIdleTimer?.cancel();
+        progressIdleTimer = Timer(progressIdleGrace, () {
+          if (!stateEnded.isCompleted) stateEnded.complete();
+        });
+      },
+      onError: (Object error, StackTrace stack) {
+        if (!stateEnded.isCompleted) stateEnded.completeError(error, stack);
+      },
+    );
+  }
+  try {
+    final terminalSignals = <Future<void>>[play(), stateEnded.future];
+    if (expectedDuration != null) {
+      terminalSignals.add(
+        Future<void>.delayed(expectedDuration + completionGrace),
+      );
+    }
+    await Future.any<void>(terminalSignals);
+  } finally {
+    progressIdleTimer?.cancel();
+    await subscription.cancel();
+    await positionSubscription?.cancel();
+  }
+}
+
 /// One bounded FIFO that serializes TTS clips and invalidates stale playback.
 class AudioPlaybackQueue {
   AudioPlaybackQueue(this._play, this._stop, {this.maxPending = 64});
@@ -116,6 +183,8 @@ class AudioService {
 
   String? _recordingPath;
   bool _isRecording = false;
+  bool _playerPrimed = false;
+  int _playbackGeneration = 0;
 
   /// Whether microphone permission has been permanently denied.
   bool _permissionDenied = false;
@@ -284,6 +353,8 @@ class AudioService {
 
   Future<void> _playMp3Now(String base64Mp3) async {
     File? tempFile;
+    File? retryFile;
+    final generation = _playbackGeneration;
     try {
       // Decode base64 and write to a temp file
       final bytes = base64Decode(base64Mp3);
@@ -297,9 +368,39 @@ class AudioService {
         '[OSIA Audio] Playing MP3 → ${bytes.length} bytes from ${tempFile.path}',
       );
 
+      var playbackFile = tempFile;
+      if (!_playerPrimed) {
+        final volume = _player.volume;
+        try {
+          await _player.setVolume(0);
+          await _player.setFilePath(tempFile.path);
+          final warmup = _player.play().catchError((Object _) {});
+          await Future.any<void>(<Future<void>>[
+            warmup,
+            Future<void>.delayed(const Duration(milliseconds: 500)),
+          ]);
+        } finally {
+          await _player.stop();
+          await _player.setVolume(volume);
+        }
+        _playerPrimed = true;
+        if (generation != _playbackGeneration) return;
+        retryFile = File(
+          '${tempDir.path}/osia_tts_retry_${DateTime.now().microsecondsSinceEpoch}.mp3',
+        );
+        await retryFile.writeAsBytes(bytes);
+        playbackFile = retryFile;
+      }
+
       // Load and play
-      await _player.setFilePath(tempFile.path);
-      await _player.play();
+      final duration = await _player.setFilePath(playbackFile.path);
+      await playUntilStopped(
+        _player.play,
+        _player.playerStateStream,
+        positions: _player.positionStream,
+        expectedDuration: duration,
+      );
+      await _player.stop();
     } catch (e) {
       debugPrint('[OSIA Audio] playMp3 error: $e');
       rethrow;
@@ -309,11 +410,17 @@ class AudioService {
           await tempFile.delete();
         } catch (_) {}
       }
+      if (retryFile != null) {
+        try {
+          await retryFile.delete();
+        } catch (_) {}
+      }
     }
   }
 
   /// Stop any ongoing playback.
   Future<void> stopPlayback() async {
+    _playbackGeneration += 1;
     try {
       await _playbackQueue.cancel();
     } catch (e) {

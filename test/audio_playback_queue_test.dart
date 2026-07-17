@@ -1,9 +1,93 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:osia_mobile/services/audio_service.dart';
 
 void main() {
+  test('native stopped state releases a hanging play future', () async {
+    final states = StreamController<PlayerState>.broadcast();
+    final hangingPlay = Completer<void>();
+
+    final playback = playUntilStopped(() => hangingPlay.future, states.stream);
+    states.add(PlayerState(false, ProcessingState.ready));
+    states.add(PlayerState(true, ProcessingState.ready));
+    states.add(PlayerState(false, ProcessingState.ready));
+
+    await playback.timeout(const Duration(seconds: 1));
+    expect(hangingPlay.isCompleted, isFalse);
+    await states.close();
+  });
+
+  test('stale completed state before playback starts is ignored', () async {
+    final states = StreamController<PlayerState>.broadcast();
+    final hangingPlay = Completer<void>();
+    var finished = false;
+
+    final playback = playUntilStopped(() => hangingPlay.future, states.stream);
+    unawaited(playback.then((_) => finished = true));
+    states.add(PlayerState(false, ProcessingState.completed));
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(finished, isFalse);
+
+    states.add(PlayerState(true, ProcessingState.ready));
+    states.add(PlayerState(false, ProcessingState.completed));
+    await playback.timeout(const Duration(seconds: 1));
+    expect(finished, isTrue);
+    await states.close();
+  });
+
+  test('play future completion remains a valid terminal signal', () async {
+    final states = StreamController<PlayerState>.broadcast();
+    final playFinished = Completer<void>();
+
+    final playback = playUntilStopped(() => playFinished.future, states.stream);
+    playFinished.complete();
+
+    await playback.timeout(const Duration(seconds: 1));
+    await states.close();
+  });
+
+  test(
+    'decoded duration releases playback when all platform signals hang',
+    () async {
+      final states = StreamController<PlayerState>.broadcast();
+      final hangingPlay = Completer<void>();
+
+      final playback = playUntilStopped(
+        () => hangingPlay.future,
+        states.stream,
+        expectedDuration: const Duration(milliseconds: 1),
+        completionGrace: Duration.zero,
+      );
+
+      await playback.timeout(const Duration(seconds: 1));
+      expect(hangingPlay.isCompleted, isFalse);
+      await states.close();
+    },
+  );
+
+  test('position idle releases playback when terminal signals hang', () async {
+    final states = StreamController<PlayerState>.broadcast();
+    final positions = StreamController<Duration>.broadcast();
+    final hangingPlay = Completer<void>();
+
+    final playback = playUntilStopped(
+      () => hangingPlay.future,
+      states.stream,
+      positions: positions.stream,
+      progressIdleGrace: const Duration(milliseconds: 10),
+    );
+    states.add(PlayerState(true, ProcessingState.ready));
+    positions.add(const Duration(milliseconds: 100));
+    positions.add(const Duration(milliseconds: 200));
+
+    await playback.timeout(const Duration(seconds: 1));
+    expect(hangingPlay.isCompleted, isFalse);
+    await states.close();
+    await positions.close();
+  });
+
   test('successive clips play in exact FIFO order without overlap', () async {
     final started = <String>[];
     final gates = <String, Completer<void>>{};

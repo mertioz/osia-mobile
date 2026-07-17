@@ -663,4 +663,74 @@ void main() {
     harness.theme.dispose();
     harness.language.dispose();
   });
+
+  testWidgets(
+    'new chat rejects abandoned audio without blocking a fresh request',
+    (tester) async {
+      final harness = await _pumpChat(tester);
+      final logs = <String>[];
+      final previousDebugPrint = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null) logs.add(message);
+      };
+      try {
+        await tester.enterText(find.byType(TextField), 'abandoned response');
+        await tester.pump();
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump();
+        final requestId = harness.service.sentTurns.single.$2;
+        harness.service.handleIncomingFrameForTest(<String, dynamic>{
+          'type': 'new_chat',
+        });
+        await tester.pump();
+        harness.service.handleIncomingFrameForTest(<String, dynamic>{
+          'type': 'audio',
+          'data': 'bGF0ZQ==',
+          'source': 'response',
+          'conversation_id': 'conv-nav',
+          'client_request_id': requestId,
+        });
+        await tester.pump(const Duration(milliseconds: 20));
+        expect(
+          logs.where((line) => line.startsWith('[OSIA Chat] audio:')),
+          isEmpty,
+        );
+
+        harness.service.handleIncomingFrameForTest(<String, dynamic>{
+          'type': 'audio',
+          'data': 'ZnJlc2g=',
+          'source': 'response',
+          'conversation_id': 'conv-new',
+          'client_request_id': 'request-fresh',
+        });
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(
+          logs.where((line) => line.startsWith('[OSIA Chat] audio:')),
+          hasLength(1),
+        );
+      } finally {
+        debugPrint = previousDebugPrint;
+      }
+
+      final previousFlutterErrorHandler = FlutterError.onError;
+      FlutterError.onError = (details) {
+        final exception = details.exceptionAsString();
+        final stack = details.stack?.toString() ?? '';
+        if (exception.contains('Looking up a deactivated widget') &&
+            stack.contains('_PressableScaleState.dispose')) {
+          return;
+        }
+        previousFlutterErrorHandler?.call(details);
+      };
+      try {
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump();
+      } finally {
+        FlutterError.onError = previousFlutterErrorHandler;
+      }
+      harness.theme.dispose();
+      harness.language.dispose();
+    },
+  );
 }

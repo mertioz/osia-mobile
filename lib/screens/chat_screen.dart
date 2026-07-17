@@ -99,6 +99,8 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _busySub;
   StreamSubscription? _attachmentProtocolSub;
   String? _connError;
+  final List<String> _abandonedAudioRequestIds = <String>[];
+  String? _currentResponseAudioRequestId;
   // Monotonic generation for the connection-banner AnimatedSwitcher keys.
   // Bumped on every connection-state change so the error banner / placeholder
   // get a fresh key on each (dis)appearance. During the offline reconnect loop
@@ -485,6 +487,25 @@ class _ChatScreenState extends State<ChatScreen> {
     unawaited(_audioService.stopPlayback());
   }
 
+  void _abandonQueuedAudio() {
+    for (final requestId in <String?>[
+      _pendingTurn?.clientRequestId,
+      _currentResponseAudioRequestId,
+    ]) {
+      if (requestId == null || requestId.isEmpty) continue;
+      _abandonedAudioRequestIds.remove(requestId);
+      _abandonedAudioRequestIds.add(requestId);
+    }
+    if (_abandonedAudioRequestIds.length > 32) {
+      _abandonedAudioRequestIds.removeRange(
+        0,
+        _abandonedAudioRequestIds.length - 32,
+      );
+    }
+    _currentResponseAudioRequestId = null;
+    _stopQueuedAudio();
+  }
+
   void _onMessage(ws.OsiaMessage msg) {
     switch (msg) {
       case ws.TranscriptMessage(
@@ -538,12 +559,19 @@ class _ChatScreenState extends State<ChatScreen> {
         :final conversationId,
         :final clientRequestId,
       ):
-        if ((conversationId.isNotEmpty || clientRequestId.isNotEmpty) &&
-            !_isFrameForCurrentTurn(
-              conversationId: conversationId,
-              clientRequestId: clientRequestId,
-            )) {
-          break;
+        if (conversationId.isNotEmpty || clientRequestId.isNotEmpty) {
+          // A reset/new-chat tombstones the exact request it abandoned. Late
+          // synthesis for that request must not claim the new empty view.
+          if (source != 'speak' &&
+              _abandonedAudioRequestIds.contains(clientRequestId)) {
+            break;
+          }
+          if (!_isFrameForCurrentTurn(
+            conversationId: conversationId,
+            clientRequestId: clientRequestId,
+          )) {
+            break;
+          }
         }
         // Read-aloud audio (speaker button): always play — the user
         // explicitly asked for it. Untagged frames (older server) fall
@@ -569,6 +597,9 @@ class _ChatScreenState extends State<ChatScreen> {
           '${_autoTts ? "playing audio" : "dropped (auto-TTS off)"}',
         );
         if (!_autoTts) break;
+        if (clientRequestId.isNotEmpty) {
+          _currentResponseAudioRequestId = clientRequestId;
+        }
         _playQueuedAudio(data);
       case ws.StatusMessage(
         :final content,
@@ -1571,7 +1602,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    _stopQueuedAudio();
+    _abandonQueuedAudio();
     if (_pendingAttachments.isNotEmpty) {
       unawaited(_clearPendingAttachments());
     }
@@ -1621,7 +1652,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// clearing those methods perform.
   void _onNewChat() {
     if (!mounted) return;
-    _stopQueuedAudio();
+    _abandonQueuedAudio();
     _clearAttachmentsWhenIdle = _attachmentBusy;
     _attachmentCancellation?.cancel();
     if (_pendingAttachments.isNotEmpty) {
