@@ -29,6 +29,7 @@ Future<void> playUntilStopped(
   Future<void> Function() play,
   Stream<PlayerState> playerStates, {
   Stream<Duration>? positions,
+  Future<void>? cancellation,
   Duration? expectedDuration,
   Duration completionGrace = const Duration(milliseconds: 500),
   Duration progressIdleGrace = const Duration(milliseconds: 750),
@@ -36,6 +37,7 @@ Future<void> playUntilStopped(
   final stateEnded = Completer<void>();
   var started = false;
   var lastPosition = Duration.zero;
+  Timer? completionTimer;
   Timer? progressIdleTimer;
   late final StreamSubscription<PlayerState> subscription;
   StreamSubscription<Duration>? positionSubscription;
@@ -70,13 +72,17 @@ Future<void> playUntilStopped(
   }
   try {
     final terminalSignals = <Future<void>>[play(), stateEnded.future];
+    if (cancellation != null) terminalSignals.add(cancellation);
     if (expectedDuration != null) {
-      terminalSignals.add(
-        Future<void>.delayed(expectedDuration + completionGrace),
-      );
+      final durationEnded = Completer<void>();
+      completionTimer = Timer(expectedDuration + completionGrace, () {
+        if (!durationEnded.isCompleted) durationEnded.complete();
+      });
+      terminalSignals.add(durationEnded.future);
     }
     await Future.any<void>(terminalSignals);
   } finally {
+    completionTimer?.cancel();
     progressIdleTimer?.cancel();
     await subscription.cancel();
     await positionSubscription?.cancel();
@@ -93,6 +99,7 @@ class AudioPlaybackQueue {
   final ListQueue<_QueuedPlayback> _pending = ListQueue<_QueuedPlayback>();
   Future<void>? _worker;
   int _generation = 0;
+  int _cancellationDepth = 0;
   bool _disposed = false;
 
   int get pendingCount => _pending.length;
@@ -112,7 +119,12 @@ class AudioPlaybackQueue {
   }
 
   void _ensureWorker() {
-    if (_worker != null || _pending.isEmpty || _disposed) return;
+    if (_worker != null ||
+        _pending.isEmpty ||
+        _cancellationDepth != 0 ||
+        _disposed) {
+      return;
+    }
     final generation = _generation;
     late final Future<void> worker;
     worker = _drain(generation);
@@ -144,18 +156,265 @@ class AudioPlaybackQueue {
   }
 
   Future<void> cancel() async {
+    final activeWorker = _worker;
     _generation += 1;
+    _cancellationDepth += 1;
     while (_pending.isNotEmpty) {
       final item = _pending.removeFirst();
       if (!item.completer.isCompleted) item.completer.complete();
     }
-    await _stop();
+    Object? cancellationError;
+    StackTrace? cancellationStack;
+    try {
+      await _stop();
+    } catch (error, stack) {
+      cancellationError = error;
+      cancellationStack = stack;
+    }
+    try {
+      await activeWorker;
+    } catch (error, stack) {
+      cancellationError ??= error;
+      cancellationStack ??= stack;
+    } finally {
+      _cancellationDepth -= 1;
+      if (_cancellationDepth == 0 && !_disposed && _pending.isNotEmpty) {
+        _ensureWorker();
+      }
+    }
+    if (cancellationError != null) {
+      Error.throwWithStackTrace(cancellationError, cancellationStack!);
+    }
   }
 
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
     await cancel();
+  }
+}
+
+/// Minimal player surface used to deterministically verify native setup races.
+@visibleForTesting
+abstract interface class AudioPlaybackPlayer {
+  bool get playing;
+  double get volume;
+  Stream<PlayerState> get playerStateStream;
+  Stream<Duration> get positionStream;
+
+  Future<Duration?> setFilePath(String path);
+  Future<void> play();
+  Future<void> stop();
+  Future<void> setVolume(double volume);
+  Future<void> dispose();
+}
+
+class _JustAudioPlaybackPlayer implements AudioPlaybackPlayer {
+  _JustAudioPlaybackPlayer(this._player);
+
+  final AudioPlayer _player;
+
+  @override
+  bool get playing => _player.playing;
+
+  @override
+  double get volume => _player.volume;
+
+  @override
+  Stream<PlayerState> get playerStateStream => _player.playerStateStream;
+
+  @override
+  Stream<Duration> get positionStream => _player.positionStream;
+
+  @override
+  Future<Duration?> setFilePath(String path) => _player.setFilePath(path);
+
+  @override
+  Future<void> play() => _player.play();
+
+  @override
+  Future<void> stop() => _player.stop();
+
+  @override
+  Future<void> setVolume(double volume) => _player.setVolume(volume);
+
+  @override
+  Future<void> dispose() => _player.dispose();
+}
+
+class _PlaybackOwnership {
+  _PlaybackOwnership(this.generation, this.operation);
+
+  final int generation;
+  final int operation;
+  final Completer<void> cancelled = Completer<void>();
+}
+
+/// Serializes setup/playback and prevents a cancelled setup from owning the
+/// shared native player after a newer generation becomes eligible to start.
+@visibleForTesting
+class AudioPlaybackController {
+  AudioPlaybackController(
+    AudioPlaybackPlayer player, {
+    Future<Directory> Function()? temporaryDirectory,
+    bool playerPrimed = false,
+  }) : this._(
+         player,
+         temporaryDirectory ?? getTemporaryDirectory,
+         playerPrimed,
+       );
+
+  AudioPlaybackController._(
+    this._player,
+    this._temporaryDirectory,
+    this._playerPrimed,
+  ) {
+    _queue = AudioPlaybackQueue(_playMp3Now, _player.stop);
+  }
+
+  final AudioPlaybackPlayer _player;
+  final Future<Directory> Function() _temporaryDirectory;
+  late final AudioPlaybackQueue _queue;
+
+  bool _playerPrimed;
+  int _playbackGeneration = 0;
+  int _nextOperation = 0;
+  bool _disposed = false;
+  _PlaybackOwnership? _activeOwnership;
+
+  bool get isPlaying => _player.playing;
+  Stream<PlayerState> get playerStateStream => _player.playerStateStream;
+
+  @visibleForTesting
+  bool get workerActive => _queue.workerActive;
+
+  Future<void> playMp3(String base64Mp3) => _queue.add(base64Mp3);
+
+  bool _owns(_PlaybackOwnership ownership) =>
+      !_disposed &&
+      identical(_activeOwnership, ownership) &&
+      ownership.generation == _playbackGeneration;
+
+  void _invalidateActiveOwnership() {
+    _playbackGeneration += 1;
+    final ownership = _activeOwnership;
+    if (ownership != null && !ownership.cancelled.isCompleted) {
+      ownership.cancelled.complete();
+    }
+  }
+
+  Future<void> _playMp3Now(String base64Mp3) async {
+    File? tempFile;
+    File? retryFile;
+    final ownership = _PlaybackOwnership(_playbackGeneration, _nextOperation++);
+    _activeOwnership = ownership;
+    try {
+      if (!_owns(ownership)) return;
+      final bytes = base64Decode(base64Mp3);
+      final tempDir = await _temporaryDirectory();
+      if (!_owns(ownership)) return;
+
+      final fileSuffix =
+          '${ownership.generation}_${ownership.operation}_'
+          '${DateTime.now().microsecondsSinceEpoch}';
+      tempFile = File('${tempDir.path}/osia_tts_$fileSuffix.mp3');
+      await tempFile.writeAsBytes(bytes);
+      if (!_owns(ownership)) return;
+
+      debugPrint(
+        '[OSIA Audio] Playing MP3 → ${bytes.length} bytes from ${tempFile.path}',
+      );
+
+      var playbackFile = tempFile;
+      if (!_playerPrimed) {
+        final volume = _player.volume;
+        Timer? warmupTimer;
+        try {
+          if (!_owns(ownership)) return;
+          await _player.setVolume(0);
+          if (!_owns(ownership)) return;
+          await _player.setFilePath(tempFile.path);
+          if (!_owns(ownership)) return;
+
+          final warmup = _player.play().catchError((Object _) {});
+          final warmupTimeout = Completer<void>();
+          warmupTimer = Timer(const Duration(milliseconds: 500), () {
+            if (!warmupTimeout.isCompleted) warmupTimeout.complete();
+          });
+          await Future.any<void>(<Future<void>>[
+            warmup,
+            warmupTimeout.future,
+            ownership.cancelled.future,
+          ]);
+          if (!_owns(ownership)) return;
+        } finally {
+          warmupTimer?.cancel();
+          await _player.stop();
+          await _player.setVolume(volume);
+        }
+        if (!_owns(ownership)) return;
+        _playerPrimed = true;
+        retryFile = File('${tempDir.path}/osia_tts_retry_$fileSuffix.mp3');
+        await retryFile.writeAsBytes(bytes);
+        if (!_owns(ownership)) return;
+        playbackFile = retryFile;
+      }
+
+      if (!_owns(ownership)) return;
+      final duration = await _player.setFilePath(playbackFile.path);
+      if (!_owns(ownership)) {
+        await _player.stop();
+        return;
+      }
+      if (!_owns(ownership)) return;
+      await playUntilStopped(
+        _player.play,
+        _player.playerStateStream,
+        positions: _player.positionStream,
+        cancellation: ownership.cancelled.future,
+        expectedDuration: duration,
+      );
+      if (!_owns(ownership)) return;
+      await _player.stop();
+      if (!_owns(ownership)) return;
+    } catch (error, stack) {
+      if (_owns(ownership)) {
+        debugPrint('[OSIA Audio] playMp3 error: $error');
+        Error.throwWithStackTrace(error, stack);
+      }
+    } finally {
+      if (tempFile != null) {
+        try {
+          await tempFile.delete();
+        } catch (_) {}
+      }
+      if (retryFile != null) {
+        try {
+          await retryFile.delete();
+        } catch (_) {}
+      }
+      if (identical(_activeOwnership, ownership)) {
+        _activeOwnership = null;
+      }
+    }
+  }
+
+  Future<void> stopPlayback() async {
+    if (_disposed) return;
+    _invalidateActiveOwnership();
+    try {
+      await _queue.cancel();
+    } catch (error) {
+      debugPrint('[OSIA Audio] stopPlayback error: $error');
+    }
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    _invalidateActiveOwnership();
+    await _queue.dispose();
+    await _player.dispose();
   }
 }
 
@@ -178,22 +437,20 @@ class AudioPlaybackQueue {
 /// ```
 class AudioService {
   final AudioRecorder _recorder;
-  final AudioPlayer _player;
-  late final AudioPlaybackQueue _playbackQueue;
+  final AudioPlaybackController _playback;
 
   String? _recordingPath;
   bool _isRecording = false;
-  bool _playerPrimed = false;
-  int _playbackGeneration = 0;
+  bool _disposed = false;
 
   /// Whether microphone permission has been permanently denied.
   bool _permissionDenied = false;
 
   AudioService({AudioRecorder? recorder, AudioPlayer? player})
     : _recorder = recorder ?? AudioRecorder(),
-      _player = player ?? AudioPlayer() {
-    _playbackQueue = AudioPlaybackQueue(_playMp3Now, _player.stop);
-  }
+      _playback = AudioPlaybackController(
+        _JustAudioPlaybackPlayer(player ?? AudioPlayer()),
+      );
 
   // ── Permissions ────────────────────────────────────────────────────────
 
@@ -349,100 +606,26 @@ class AudioService {
   /// Play MP3 audio from a base64-encoded string.
   ///
   /// Successive calls are queued and play in exact arrival order.
-  Future<void> playMp3(String base64Mp3) => _playbackQueue.add(base64Mp3);
-
-  Future<void> _playMp3Now(String base64Mp3) async {
-    File? tempFile;
-    File? retryFile;
-    final generation = _playbackGeneration;
-    try {
-      // Decode base64 and write to a temp file
-      final bytes = base64Decode(base64Mp3);
-      final tempDir = await getTemporaryDirectory();
-      tempFile = File(
-        '${tempDir.path}/osia_tts_${DateTime.now().microsecondsSinceEpoch}.mp3',
-      );
-      await tempFile.writeAsBytes(bytes);
-
-      debugPrint(
-        '[OSIA Audio] Playing MP3 → ${bytes.length} bytes from ${tempFile.path}',
-      );
-
-      var playbackFile = tempFile;
-      if (!_playerPrimed) {
-        final volume = _player.volume;
-        try {
-          await _player.setVolume(0);
-          await _player.setFilePath(tempFile.path);
-          final warmup = _player.play().catchError((Object _) {});
-          await Future.any<void>(<Future<void>>[
-            warmup,
-            Future<void>.delayed(const Duration(milliseconds: 500)),
-          ]);
-        } finally {
-          await _player.stop();
-          await _player.setVolume(volume);
-        }
-        _playerPrimed = true;
-        if (generation != _playbackGeneration) return;
-        retryFile = File(
-          '${tempDir.path}/osia_tts_retry_${DateTime.now().microsecondsSinceEpoch}.mp3',
-        );
-        await retryFile.writeAsBytes(bytes);
-        playbackFile = retryFile;
-      }
-
-      // Load and play
-      final duration = await _player.setFilePath(playbackFile.path);
-      await playUntilStopped(
-        _player.play,
-        _player.playerStateStream,
-        positions: _player.positionStream,
-        expectedDuration: duration,
-      );
-      await _player.stop();
-    } catch (e) {
-      debugPrint('[OSIA Audio] playMp3 error: $e');
-      rethrow;
-    } finally {
-      if (tempFile != null) {
-        try {
-          await tempFile.delete();
-        } catch (_) {}
-      }
-      if (retryFile != null) {
-        try {
-          await retryFile.delete();
-        } catch (_) {}
-      }
-    }
-  }
+  Future<void> playMp3(String base64Mp3) => _playback.playMp3(base64Mp3);
 
   /// Stop any ongoing playback.
-  Future<void> stopPlayback() async {
-    _playbackGeneration += 1;
-    try {
-      await _playbackQueue.cancel();
-    } catch (e) {
-      debugPrint('[OSIA Audio] stopPlayback error: $e');
-    }
-  }
+  Future<void> stopPlayback() => _playback.stopPlayback();
 
   /// Whether audio is currently playing.
-  bool get isPlaying => _player.playing;
+  bool get isPlaying => _playback.isPlaying;
 
   /// Stream of playback state changes.
-  Stream<PlayerState> get playerStateStream => _player.playerStateStream;
+  Stream<PlayerState> get playerStateStream => _playback.playerStateStream;
 
   // ── Lifecycle ─────────────────────────────────────────────────────────
 
   /// Release all native resources.
   Future<void> dispose() async {
-    if (_isRecording) {
-      await cancelRecording();
-    }
-    await _playbackQueue.dispose();
+    if (_disposed) return;
+    _disposed = true;
+    final shutdown = <Future<void>>[_playback.dispose()];
+    if (_isRecording) shutdown.add(cancelRecording());
+    await Future.wait<void>(shutdown);
     await _recorder.dispose();
-    await _player.dispose();
   }
 }
