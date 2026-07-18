@@ -3,6 +3,37 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:osia_mobile/screens/providers_screen.dart';
 import 'package:osia_mobile/services/websocket_service.dart';
 
+int _canonicalSequence = 0;
+
+Map<String, dynamic> _canonicalFrame(Map<String, Object?> frame) {
+  final sequence = ++_canonicalSequence;
+  final type = frame['type']?.toString() ?? '';
+  final conversationId = frame['conversation_id']?.toString() ?? '';
+  final requestId =
+      frame['client_request_id']?.toString() ?? 'req-$conversationId';
+  final turnId = frame['turn_id']?.toString() ?? 'turn-$conversationId';
+  final eventId = type == 'cron_notification'
+      ? frame['id']?.toString() ?? ''
+      : 'event-$sequence';
+  final terminal = switch (type) {
+    'cron_notification' => true,
+    'status' => frame['content'] == 'done' || frame['content'] == 'error',
+    'conversation_busy_changed' => frame['busy'] == false,
+    _ => false,
+  };
+  return <String, dynamic>{
+    ...frame,
+    'request_id': requestId,
+    'client_request_id': requestId,
+    'turn_id': turnId,
+    'message_id': type == 'cron_notification' ? eventId : 'message-$sequence',
+    'event_id': eventId,
+    'event_type': type,
+    'sequence': sequence,
+    'terminal': terminal,
+  };
+}
+
 void main() {
   test('WebSocketService parses busy frames and refuses busy sends', () async {
     final service = WebSocketService(
@@ -51,6 +82,7 @@ void main() {
     addTearDown(sub.cancel);
 
     void startTurn(String id) {
+      service.rememberRequestForTest(id, 'req-$id');
       service.handleConversationBusyFrameForTest({
         'type': 'conversation_busy_changed',
         'conversation_id': id,
@@ -60,11 +92,11 @@ void main() {
       service.handleRelayEnvelopeForTest({
         'type': 'FRAME',
         'payload': {
-          'frame': {
+          'frame': _canonicalFrame({
             'type': 'response_chunk',
             'conversation_id': id,
             'content': 'hello',
-          },
+          }),
         },
       });
     }
@@ -72,7 +104,7 @@ void main() {
     void relayFrame(Map<String, Object?> frame) {
       service.handleRelayEnvelopeForTest({
         'type': 'FRAME',
-        'payload': {'frame': frame},
+        'payload': {'frame': _canonicalFrame(frame)},
       });
     }
 
@@ -154,7 +186,7 @@ void main() {
       final sub = service.cronNotificationStream.listen(events.add);
       addTearDown(sub.cancel);
 
-      final frame = {
+      final frame = _canonicalFrame({
         'type': 'cron_notification',
         'id': 'note-1',
         'task_id': 'cron_abc',
@@ -162,7 +194,7 @@ void main() {
         'status': 'completed',
         'conversation_id': 'conv-a',
         'created_at': '2026-07-07T12:00:00+02:00',
-      };
+      });
       service.handleIncomingFrameForTest(frame);
       service.handleIncomingFrameForTest(frame);
       await Future<void>.delayed(Duration.zero);
@@ -326,13 +358,22 @@ void main() {
       'busy': true,
     });
     service.markPending(id);
+    service.rememberRequestForTest(id, 'req-$id');
 
     service.handleRelayEnvelopeForTest({
       'type': 'BATCH',
       'payload': {
         'frames': [
-          {'type': 'response_chunk', 'conversation_id': id, 'content': 'hello'},
-          {'type': 'status', 'conversation_id': id, 'content': 'done'},
+          _canonicalFrame({
+            'type': 'response_chunk',
+            'conversation_id': id,
+            'content': 'hello',
+          }),
+          _canonicalFrame({
+            'type': 'status',
+            'conversation_id': id,
+            'content': 'done',
+          }),
         ],
       },
     });
@@ -361,13 +402,16 @@ void main() {
       final sub = service.messageStream.listen(messages.add);
       addTearDown(sub.cancel);
 
-      service.handleIncomingFrameForTest({
-        'type': 'turn_accepted',
-        'conversation_id': 'conv-ack',
-        'client_request_id': 'req-ack',
-        'turn_id': 'turn-ack',
-        'persisted': true,
-      });
+      service.rememberRequestForTest('conv-ack', 'req-ack');
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'turn_accepted',
+          'conversation_id': 'conv-ack',
+          'client_request_id': 'req-ack',
+          'turn_id': 'turn-ack',
+          'persisted': true,
+        }),
+      );
       await Future<void>.delayed(Duration.zero);
 
       expect(service.isRequestAccepted('req-ack'), isTrue);
@@ -379,13 +423,15 @@ void main() {
       expect(accepted.clientRequestId, 'req-ack');
       expect(accepted.persisted, isTrue);
 
-      service.handleIncomingFrameForTest({
-        'type': 'status',
-        'conversation_id': 'conv-ack',
-        'content': 'done',
-        'client_request_id': 'req-ack',
-        'turn_id': 'turn-ack',
-      });
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'status',
+          'conversation_id': 'conv-ack',
+          'content': 'done',
+          'client_request_id': 'req-ack',
+          'turn_id': 'turn-ack',
+        }),
+      );
       await Future<void>.delayed(Duration.zero);
 
       expect(service.isConversationBusy('conv-ack'), isFalse);
@@ -411,20 +457,25 @@ void main() {
       addTearDown(msgSub.cancel);
       addTearDown(convSub.cancel);
 
-      service.handleIncomingFrameForTest({
-        'type': 'turn_accepted',
-        'conversation_id': 'conv-long',
-        'client_request_id': 'req-long',
-        'turn_id': 'turn-long',
-        'persisted': true,
-      });
-      service.handleIncomingFrameForTest({
-        'type': 'turn_status',
-        'conversation_id': 'conv-long',
-        'client_request_id': 'req-long',
-        'turn_id': 'turn-long',
-        'status': 'working',
-      });
+      service.rememberRequestForTest('conv-long', 'req-long');
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'turn_accepted',
+          'conversation_id': 'conv-long',
+          'client_request_id': 'req-long',
+          'turn_id': 'turn-long',
+          'persisted': true,
+        }),
+      );
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'turn_status',
+          'conversation_id': 'conv-long',
+          'client_request_id': 'req-long',
+          'turn_id': 'turn-long',
+          'status': 'working',
+        }),
+      );
       await Future<void>.delayed(Duration.zero);
 
       expect(service.isConversationBusy('conv-long'), isTrue);
@@ -434,13 +485,15 @@ void main() {
         'working',
       ]);
 
-      service.handleIncomingFrameForTest({
-        'type': 'response',
-        'conversation_id': 'conv-long',
-        'client_request_id': 'req-long',
-        'turn_id': 'turn-long',
-        'content': 'final report',
-      });
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'response',
+          'conversation_id': 'conv-long',
+          'client_request_id': 'req-long',
+          'turn_id': 'turn-long',
+          'content': 'final report',
+        }),
+      );
       await Future<void>.delayed(Duration.zero);
 
       expect(service.bufferedText('conv-long'), 'final report');
@@ -450,13 +503,15 @@ void main() {
       expect(streamEvents.last.turnId, 'turn-long');
       expect(streamEvents.last.delta, 'final report');
 
-      service.handleIncomingFrameForTest({
-        'type': 'status',
-        'conversation_id': 'conv-long',
-        'client_request_id': 'req-long',
-        'turn_id': 'turn-long',
-        'content': 'done',
-      });
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'status',
+          'conversation_id': 'conv-long',
+          'client_request_id': 'req-long',
+          'turn_id': 'turn-long',
+          'content': 'done',
+        }),
+      );
       await Future<void>.delayed(Duration.zero);
 
       expect(service.isConversationBusy('conv-long'), isFalse);
@@ -481,45 +536,56 @@ void main() {
       final sub = service.convStreamStream.listen(events.add);
       addTearDown(sub.cancel);
 
-      service.handleIncomingFrameForTest({
-        'type': 'turn_accepted',
-        'conversation_id': 'conv-current',
-        'client_request_id': 'req-current',
-        'turn_id': 'turn-current',
-        'persisted': true,
-      });
+      service.rememberRequestForTest('conv-current', 'req-current');
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'turn_accepted',
+          'conversation_id': 'conv-current',
+          'client_request_id': 'req-current',
+          'turn_id': 'turn-current',
+          'persisted': true,
+        }),
+      );
       await Future<void>.delayed(Duration.zero);
 
       expect(service.isConversationBusy('conv-current'), isTrue);
       expect(service.isPending('conv-current'), isTrue);
 
-      service.handleIncomingFrameForTest({
-        'type': 'response_chunk',
-        'conversation_id': 'conv-current',
-        'client_request_id': 'req-old',
-        'turn_id': 'turn-old',
-        'content': 'old text',
-      });
-      service.handleIncomingFrameForTest({
-        'type': 'status',
-        'conversation_id': 'conv-current',
-        'client_request_id': 'req-old',
-        'turn_id': 'turn-old',
-        'content': 'error',
-      });
-      service.handleIncomingFrameForTest({
-        'type': 'response_done',
-        'conversation_id': 'conv-current',
-        'client_request_id': 'req-old',
-        'turn_id': 'turn-old',
-      });
-      service.handleIncomingFrameForTest({
-        'type': 'conversation_busy_changed',
-        'conversation_id': 'conv-current',
-        'client_request_id': 'req-old',
-        'turn_id': 'turn-old',
-        'busy': false,
-      });
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'response_chunk',
+          'conversation_id': 'conv-current',
+          'client_request_id': 'req-old',
+          'turn_id': 'turn-old',
+          'content': 'old text',
+        }),
+      );
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'status',
+          'conversation_id': 'conv-current',
+          'client_request_id': 'req-old',
+          'turn_id': 'turn-old',
+          'content': 'error',
+        }),
+      );
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'response_done',
+          'conversation_id': 'conv-current',
+          'client_request_id': 'req-old',
+          'turn_id': 'turn-old',
+        }),
+      );
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'conversation_busy_changed',
+          'conversation_id': 'conv-current',
+          'client_request_id': 'req-old',
+          'turn_id': 'turn-old',
+          'busy': false,
+        }),
+      );
       await Future<void>.delayed(Duration.zero);
 
       expect(service.bufferedText('conv-current'), isEmpty);
@@ -527,20 +593,24 @@ void main() {
       expect(service.isPending('conv-current'), isTrue);
       expect(events.where((e) => e.error || e.done), isEmpty);
 
-      service.handleIncomingFrameForTest({
-        'type': 'response_chunk',
-        'conversation_id': 'conv-current',
-        'client_request_id': 'req-current',
-        'turn_id': 'turn-current',
-        'content': 'fresh text',
-      });
-      service.handleIncomingFrameForTest({
-        'type': 'status',
-        'conversation_id': 'conv-current',
-        'client_request_id': 'req-current',
-        'turn_id': 'turn-current',
-        'content': 'done',
-      });
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'response_chunk',
+          'conversation_id': 'conv-current',
+          'client_request_id': 'req-current',
+          'turn_id': 'turn-current',
+          'content': 'fresh text',
+        }),
+      );
+      service.handleIncomingFrameForTest(
+        _canonicalFrame({
+          'type': 'status',
+          'conversation_id': 'conv-current',
+          'client_request_id': 'req-current',
+          'turn_id': 'turn-current',
+          'content': 'done',
+        }),
+      );
       await Future<void>.delayed(Duration.zero);
 
       expect(service.bufferedText('conv-current'), 'fresh text');
@@ -564,12 +634,15 @@ void main() {
     final sub = service.convStreamStream.listen(events.add);
     addTearDown(sub.cancel);
 
-    service.handleIncomingFrameForTest({
-      'type': 'turn_accepted',
-      'conversation_id': 'conv-safe',
-      'client_request_id': 'req-safe',
-      'turn_id': 'turn-safe',
-    });
+    service.rememberRequestForTest('conv-safe', 'req-safe');
+    service.handleIncomingFrameForTest(
+      _canonicalFrame({
+        'type': 'turn_accepted',
+        'conversation_id': 'conv-safe',
+        'client_request_id': 'req-safe',
+        'turn_id': 'turn-safe',
+      }),
+    );
     await Future<void>.delayed(Duration.zero);
 
     service.handleIncomingFrameForTest({'type': 'status', 'content': 'done'});
@@ -593,38 +666,47 @@ void main() {
     final sub = service.messageStream.listen(messages.add);
     addTearDown(sub.cancel);
 
-    service.handleIncomingFrameForTest({
-      'type': 'turn_accepted',
-      'conversation_id': 'conv-done-safe',
-      'client_request_id': 'req-current',
-      'turn_id': 'turn-current',
-    });
-    service.handleIncomingFrameForTest({
-      'type': 'status',
-      'conversation_id': 'conv-done-safe',
-      'client_request_id': 'req-current',
-      'turn_id': 'turn-current',
-      'content': 'done',
-    });
+    service.rememberRequestForTest('conv-done-safe', 'req-current');
+    service.handleIncomingFrameForTest(
+      _canonicalFrame({
+        'type': 'turn_accepted',
+        'conversation_id': 'conv-done-safe',
+        'client_request_id': 'req-current',
+        'turn_id': 'turn-current',
+      }),
+    );
+    service.handleIncomingFrameForTest(
+      _canonicalFrame({
+        'type': 'status',
+        'conversation_id': 'conv-done-safe',
+        'client_request_id': 'req-current',
+        'turn_id': 'turn-current',
+        'content': 'done',
+      }),
+    );
     await Future<void>.delayed(Duration.zero);
 
     expect(service.isConversationBusy('conv-done-safe'), isFalse);
     expect(service.isPending('conv-done-safe'), isFalse);
 
-    service.handleIncomingFrameForTest({
-      'type': 'turn_status',
-      'conversation_id': 'conv-done-safe',
-      'client_request_id': 'req-old',
-      'turn_id': 'turn-old',
-      'status': 'working',
-    });
-    service.handleIncomingFrameForTest({
-      'type': 'conversation_busy_changed',
-      'conversation_id': 'conv-done-safe',
-      'client_request_id': 'req-old',
-      'turn_id': 'turn-old',
-      'busy': true,
-    });
+    service.handleIncomingFrameForTest(
+      _canonicalFrame({
+        'type': 'turn_status',
+        'conversation_id': 'conv-done-safe',
+        'client_request_id': 'req-old',
+        'turn_id': 'turn-old',
+        'status': 'working',
+      }),
+    );
+    service.handleIncomingFrameForTest(
+      _canonicalFrame({
+        'type': 'conversation_busy_changed',
+        'conversation_id': 'conv-done-safe',
+        'client_request_id': 'req-old',
+        'turn_id': 'turn-old',
+        'busy': true,
+      }),
+    );
     await Future<void>.delayed(Duration.zero);
 
     expect(service.isConversationBusy('conv-done-safe'), isFalse);

@@ -386,15 +386,15 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(service.relayInflightChunksForTest(), 0);
 
-      final response = service.messageStream
-          .where((message) => message is ResponseMessage)
-          .cast<ResponseMessage>()
-          .first;
+      final response = service.convStreamStream.firstWhere(
+        (event) => event.delta == 'fresh context',
+      );
+      service.rememberRequestForTest('conv-inbound', 'req-inbound');
       await peer.sendEncryptedAppFrames(<Map<String, Object?>>[
         <String, Object?>{'type': 'response', 'content': 'fresh context'},
       ]);
       expect(
-        (await response.timeout(const Duration(seconds: 2))).content,
+        (await response.timeout(const Duration(seconds: 2))).delta,
         'fresh context',
       );
     },
@@ -479,10 +479,10 @@ void main() {
         service.relayHandshakeStateForTest().values.every((value) => value),
         isTrue,
       );
-      final response = service.messageStream
-          .where((message) => message is ResponseMessage)
-          .cast<ResponseMessage>()
-          .first;
+      final response = service.convStreamStream.firstWhere(
+        (event) => event.delta == 'newest rapid context',
+      );
+      service.rememberRequestForTest('conv-inbound', 'req-inbound');
       await peer.sendEncryptedAppFrames(<Map<String, Object?>>[
         <String, Object?>{
           'type': 'response',
@@ -490,7 +490,7 @@ void main() {
         },
       ]);
       expect(
-        (await response.timeout(const Duration(seconds: 2))).content,
+        (await response.timeout(const Duration(seconds: 2))).delta,
         'newest rapid context',
       );
     },
@@ -608,6 +608,7 @@ void main() {
     addTearDown(service.dispose);
 
     await service.ensureConnected(reason: 'large_pc_response_test');
+    service.rememberRequestForTest('conv-inbound', 'req-inbound');
     final content = 'large-pc-response-' * 4000;
     final received = service.messageStream
         .where((message) => message is TranscriptMessage)
@@ -647,6 +648,7 @@ void main() {
     addTearDown(subscription.cancel);
 
     await service.ensureConnected(reason: 'encrypted_receive_order_test');
+    service.rememberRequestForTest('conv-inbound', 'req-inbound');
     await peer.sendEncryptedAppFrames(<Map<String, Object?>>[
       <String, Object?>{'type': 'transcript', 'content': 'first'},
       <String, Object?>{'type': 'transcript', 'content': 'second'},
@@ -1056,14 +1058,36 @@ class _LocalRelayPeer {
     }
     for (final frame in frames) {
       final seq = ++connection.seq;
+      final type = frame['type']?.toString() ?? '';
+      final conversationId =
+          frame['conversation_id']?.toString() ?? 'conv-inbound';
+      final requestId =
+          frame['request_id']?.toString() ??
+          frame['client_request_id']?.toString() ??
+          'req-inbound';
+      final turnId = frame['turn_id']?.toString() ?? 'turn-inbound';
+      final canonicalFrame = <String, Object?>{
+        ...frame,
+        'conversation_id': conversationId,
+        'request_id': requestId,
+        'client_request_id': requestId,
+        'turn_id': turnId,
+        'message_id': 'message-$seq',
+        'event_id': 'event-$seq',
+        'event_type': type,
+        'sequence': seq,
+        'terminal':
+            type == 'status' &&
+            (frame['content'] == 'done' || frame['content'] == 'error'),
+      };
       final encrypted = await encryptFrame(
-        frame,
+        canonicalFrame,
         keys: keys,
         direction: RelayCryptoDirection.pcToMobile,
         pairId: context.pairId,
         role: 'pc',
-        priority: relayFramePriority(frame),
-        finalFrame: relayFrameIsFinal(frame),
+        priority: relayFramePriority(canonicalFrame),
+        finalFrame: relayFrameIsFinal(canonicalFrame),
         seq: seq,
       );
       final envelope = <String, Object?>{

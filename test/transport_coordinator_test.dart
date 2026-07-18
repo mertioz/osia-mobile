@@ -2,6 +2,32 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:osia_mobile/services/transport_coordinator.dart';
 import 'package:osia_mobile/services/websocket_service.dart';
 
+int _canonicalSequence = 0;
+
+Map<String, dynamic> _canonicalFrame(Map<String, Object?> frame) {
+  final sequence = ++_canonicalSequence;
+  final type = frame['type']?.toString() ?? '';
+  final requestId =
+      frame['request_id']?.toString() ??
+      frame['client_request_id']?.toString() ??
+      '';
+  final status = (frame['status'] ?? frame['content'])?.toString() ?? '';
+  return <String, dynamic>{
+    ...frame,
+    'request_id': requestId,
+    'client_request_id': requestId,
+    'turn_id': frame['turn_id']?.toString() ?? 'turn-$requestId',
+    'message_id': 'message-$sequence',
+    'event_id': 'event-$sequence',
+    'event_type': type,
+    'sequence': sequence,
+    'terminal':
+        type == 'status' ||
+        (type == 'turn_status' &&
+            <String>{'cancelled', 'canceled', 'rejected'}.contains(status)),
+  };
+}
+
 void main() {
   test('only one application transport lease can be active', () {
     final coordinator = ApplicationTransportCoordinator();
@@ -77,23 +103,28 @@ void main() {
       addTearDown(service.dispose);
 
       void accept(String conversationId, String requestId) {
-        service.handleIncomingFrameForTest(<String, dynamic>{
-          'type': 'turn_accepted',
-          'conversation_id': conversationId,
-          'client_request_id': requestId,
-          'turn_id': 'turn-$requestId',
-        });
+        service.rememberRequestForTest(conversationId, requestId);
+        service.handleIncomingFrameForTest(
+          _canonicalFrame(<String, Object?>{
+            'type': 'turn_accepted',
+            'conversation_id': conversationId,
+            'client_request_id': requestId,
+            'turn_id': 'turn-$requestId',
+          }),
+        );
         expect(service.isRequestAccepted(requestId), isTrue);
         expect(service.hasActiveApplicationTurnForTest, isTrue);
       }
 
       accept('conv-done', 'req-done');
-      service.handleIncomingFrameForTest(<String, dynamic>{
-        'type': 'status',
-        'conversation_id': 'conv-done',
-        'client_request_id': 'req-done',
-        'content': 'done',
-      });
+      service.handleIncomingFrameForTest(
+        _canonicalFrame(<String, Object?>{
+          'type': 'status',
+          'conversation_id': 'conv-done',
+          'client_request_id': 'req-done',
+          'content': 'done',
+        }),
+      );
       expect(service.isRequestAccepted('req-done'), isFalse);
       expect(service.hasActiveApplicationTurnForTest, isFalse);
 
@@ -110,12 +141,14 @@ void main() {
         final requestId = 'req-$status';
         final conversationId = 'conv-$status';
         accept(conversationId, requestId);
-        service.handleIncomingFrameForTest(<String, dynamic>{
-          'type': 'turn_status',
-          'conversation_id': conversationId,
-          'client_request_id': requestId,
-          'status': status,
-        });
+        service.handleIncomingFrameForTest(
+          _canonicalFrame(<String, Object?>{
+            'type': 'turn_status',
+            'conversation_id': conversationId,
+            'client_request_id': requestId,
+            'status': status,
+          }),
+        );
         expect(service.isRequestAccepted(requestId), isFalse, reason: status);
         expect(
           service.hasActiveApplicationTurnForTest,
@@ -135,13 +168,14 @@ void main() {
     addTearDown(service.dispose);
 
     Map<String, dynamic> frame(String type, String requestId, String status) =>
-        <String, dynamic>{
+        _canonicalFrame(<String, Object?>{
           'type': type,
           'conversation_id': 'conv-stale',
           'client_request_id': requestId,
           if (type == 'turn_status') 'status': status else 'content': status,
-        };
+        });
 
+    service.rememberRequestForTest('conv-stale', 'req-old');
     service.handleIncomingFrameForTest(
       frame('turn_accepted', 'req-old', 'accepted'),
     );
@@ -149,6 +183,7 @@ void main() {
     // A duplicate terminal is idempotent.
     service.handleIncomingFrameForTest(frame('status', 'req-old', 'done'));
 
+    service.rememberRequestForTest('conv-stale', 'req-new');
     service.handleIncomingFrameForTest(
       frame('turn_accepted', 'req-new', 'accepted'),
     );
@@ -160,38 +195,37 @@ void main() {
     expect(service.hasActiveApplicationTurnForTest, isTrue);
   });
 
-  test(
-    'untagged correlated terminal and disconnect clear request tracking',
-    () {
-      final service = WebSocketService(
-        ip: '127.0.0.1',
-        token: 'token',
-        autoReconnect: false,
-      );
-      addTearDown(service.dispose);
+  test('legacy untagged terminal and disconnect clear request tracking', () {
+    final service = WebSocketService(
+      ip: '127.0.0.1',
+      token: 'token',
+      autoReconnect: false,
+      lanDirectV1: false,
+      webRtcDirectV1: false,
+    );
+    addTearDown(service.dispose);
 
-      service.handleIncomingFrameForTest(<String, dynamic>{
-        'type': 'turn_accepted',
-        'client_request_id': 'req-untagged',
-        'turn_id': 'turn-untagged',
-      });
-      expect(service.hasActiveApplicationTurnForTest, isTrue);
-      service.handleIncomingFrameForTest(<String, dynamic>{
-        'type': 'status',
-        'client_request_id': 'req-untagged',
-        'content': 'done',
-      });
-      expect(service.hasActiveApplicationTurnForTest, isFalse);
+    service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'turn_accepted',
+      'client_request_id': 'req-untagged',
+      'turn_id': 'turn-untagged',
+    });
+    expect(service.hasActiveApplicationTurnForTest, isTrue);
+    service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'status',
+      'client_request_id': 'req-untagged',
+      'content': 'done',
+    });
+    expect(service.hasActiveApplicationTurnForTest, isFalse);
 
-      service.handleIncomingFrameForTest(<String, dynamic>{
-        'type': 'turn_accepted',
-        'client_request_id': 'req-disconnect',
-        'turn_id': 'turn-disconnect',
-      });
-      expect(service.hasActiveApplicationTurnForTest, isTrue);
-      service.disconnect();
-      expect(service.isRequestAccepted('req-disconnect'), isFalse);
-      expect(service.hasActiveApplicationTurnForTest, isFalse);
-    },
-  );
+    service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'turn_accepted',
+      'client_request_id': 'req-disconnect',
+      'turn_id': 'turn-disconnect',
+    });
+    expect(service.hasActiveApplicationTurnForTest, isTrue);
+    service.disconnect();
+    expect(service.isRequestAccepted('req-disconnect'), isFalse);
+    expect(service.hasActiveApplicationTurnForTest, isFalse);
+  });
 }

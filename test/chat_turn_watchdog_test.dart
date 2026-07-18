@@ -166,11 +166,18 @@ void main() {
       await tester.pump(const Duration(seconds: 6));
       // A terminal frame alone must cancel turn 1's still-armed first-token
       // watchdog; no earlier chunk or accepted frame stands it down for us.
+      service.rememberRequestForTest('conv-watchdog', firstRequestId);
       service.handleIncomingFrameForTest(<String, dynamic>{
         'type': 'status',
         'conversation_id': 'conv-watchdog',
+        'request_id': firstRequestId,
         'client_request_id': firstRequestId,
         'turn_id': 'turn-1',
+        'message_id': 'message-turn-1-done',
+        'event_id': 'event-turn-1-done',
+        'event_type': 'status',
+        'sequence': 1,
+        'terminal': true,
         'content': 'done',
       });
       await tester.pump();
