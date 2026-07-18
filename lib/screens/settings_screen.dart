@@ -95,7 +95,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.storage.getNotificationsEnabled().then((enabled) {
       if (mounted) setState(() => _notificationsEnabled = enabled);
     });
-    widget.storage.getBackgroundConnectionEnabled().then((enabled) {
+    _backgroundConnectionService.backgroundConnectionEnabled().then((enabled) {
       if (mounted) setState(() => _backgroundConnectionEnabled = enabled);
     });
     _connState = widget.wsService.state;

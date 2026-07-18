@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:osia_mobile/services/background_connection_service.dart';
@@ -29,23 +31,33 @@ class _FakeWebSocketService extends ws.WebSocketService {
   }
 }
 
-class _FakeBackgroundPlatform implements BackgroundConnectionPlatform {
+class _FakeBackgroundPlatform
+    implements
+        BackgroundConnectionPlatform,
+        BackgroundConnectionTimeoutPlatform {
   bool running = false;
   bool startResult = true;
+  bool runningAfterStart = true;
+  bool timedOut = false;
+  Completer<bool>? startGate;
+  Completer<void>? stopGate;
   int startCount = 0;
   int stopCount = 0;
   int isRunningCount = 0;
+  int consumeTimeoutCount = 0;
 
   @override
   Future<bool> start() async {
     startCount++;
-    running = startResult;
-    return startResult;
+    final result = await (startGate?.future ?? Future<bool>.value(startResult));
+    running = result && runningAfterStart;
+    return result;
   }
 
   @override
   Future<void> stop() async {
     stopCount++;
+    await (stopGate?.future ?? Future<void>.value());
     running = false;
   }
 
@@ -53,6 +65,14 @@ class _FakeBackgroundPlatform implements BackgroundConnectionPlatform {
   Future<bool> isRunning() async {
     isRunningCount++;
     return running;
+  }
+
+  @override
+  Future<bool> consumeStoppedByTimeout() async {
+    consumeTimeoutCount++;
+    final result = timedOut;
+    timedOut = false;
+    return result;
   }
 }
 
@@ -126,13 +146,14 @@ void main() {
     expect(harness.platform.startCount, 0);
   });
 
-  test('post-start relay failure remains authoritative', () async {
+  test('start checks relay once and confirms native service state', () async {
     final harness = await buildHarness();
-    harness.wsService.ensureResults.addAll(<bool>[true, false]);
+    harness.platform.runningAfterStart = false;
 
     expect(await harness.service.startBackgroundConnection(), isFalse);
     expect(harness.platform.startCount, 1);
-    expect(harness.wsService.ensureReasons, hasLength(2));
+    expect(harness.wsService.ensureReasons, hasLength(1));
+    expect(harness.platform.isRunningCount, 2);
   });
 
   test('enabling persists true and starts foreground service', () async {
@@ -171,7 +192,7 @@ void main() {
     expect(await harness.service.startBackgroundConnection(), isTrue);
 
     expect(harness.platform.startCount, 1);
-    expect(harness.platform.isRunningCount, 2);
+    expect(harness.platform.isRunningCount, 3);
   });
 
   test(
@@ -209,4 +230,81 @@ void main() {
       expect(harness.platform.stopCount, greaterThanOrEqualTo(1));
     },
   );
+
+  test(
+    'timeout disables the stored setting and stops deterministically',
+    () async {
+      final harness = await buildHarness();
+      final initialStopCount = harness.platform.stopCount;
+      await harness.storage.setBackgroundConnectionEnabled(true);
+      harness.platform.timedOut = true;
+
+      expect(
+        await harness.service.syncBackgroundConnectionSetting(
+          reason: 'timeout_reconcile',
+        ),
+        isFalse,
+      );
+
+      expect(await harness.storage.getBackgroundConnectionEnabled(), isFalse);
+      expect(harness.platform.consumeTimeoutCount, greaterThanOrEqualTo(1));
+      expect(harness.platform.stopCount, initialStopCount + 1);
+      expect(harness.wsService.ensureReasons, isEmpty);
+    },
+  );
+
+  test(
+    'stale enabled setting does not claim a stopped service is active',
+    () async {
+      final harness = await buildHarness();
+      await harness.storage.setBackgroundConnectionEnabled(true);
+      harness.platform.running = false;
+
+      expect(await harness.service.backgroundConnectionEnabled(), isFalse);
+      expect(await harness.storage.getBackgroundConnectionEnabled(), isFalse);
+    },
+  );
+
+  test('stop waits for an in-flight start and wins the transition', () async {
+    final harness = await buildHarness();
+    final initialStopCount = harness.platform.stopCount;
+    final startGate = Completer<bool>();
+    harness.platform.startGate = startGate;
+
+    final start = harness.service.startBackgroundConnection();
+    await Future<void>.delayed(Duration.zero);
+    final stop = harness.service.stopBackgroundConnection();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(harness.platform.startCount, 1);
+    expect(harness.platform.stopCount, initialStopCount);
+
+    startGate.complete(true);
+    expect(await start, isTrue);
+    await stop;
+
+    expect(harness.platform.stopCount, initialStopCount + 1);
+    expect(harness.platform.running, isFalse);
+  });
+
+  test('start waits for an in-flight stop and restores one service', () async {
+    final harness = await buildHarness();
+    final stopGate = Completer<void>();
+    harness.platform.running = true;
+    harness.platform.stopGate = stopGate;
+
+    final stop = harness.service.stopBackgroundConnection();
+    await Future<void>.delayed(Duration.zero);
+    final start = harness.service.startBackgroundConnection();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(harness.platform.startCount, 0);
+
+    stopGate.complete();
+    await stop;
+    expect(await start, isTrue);
+
+    expect(harness.platform.startCount, 1);
+    expect(harness.platform.running, isTrue);
+  });
 }

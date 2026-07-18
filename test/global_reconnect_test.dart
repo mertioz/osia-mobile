@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:osia_mobile/l10n.dart';
 import 'package:osia_mobile/screens/settings_screen.dart';
+import 'package:osia_mobile/services/background_connection_service.dart';
 import 'package:osia_mobile/services/connection_lifecycle_service.dart';
 import 'package:osia_mobile/services/storage_service.dart';
 import 'package:osia_mobile/services/websocket_service.dart' as ws;
@@ -80,6 +81,37 @@ class _ControlledConnectAttempts {
     started[index].complete();
     return results[index].future;
   }
+}
+
+class _LifecycleBackgroundPlatform implements BackgroundConnectionPlatform {
+  bool running = false;
+  int startCount = 0;
+  int stopCount = 0;
+
+  @override
+  Future<bool> start() async {
+    startCount++;
+    running = true;
+    return true;
+  }
+
+  @override
+  Future<void> stop() async {
+    stopCount++;
+    running = false;
+  }
+
+  @override
+  Future<bool> isRunning() async => running;
+}
+
+class _AllowedBackgroundNotifications
+    implements BackgroundNotificationPermissionClient {
+  @override
+  Future<bool> notificationsAllowed() async => true;
+
+  @override
+  Future<bool> requestPermission() async => true;
 }
 
 void main() {
@@ -358,6 +390,38 @@ void main() {
     expect(service.ensureReasons, ['app_lifecycle_resumed']);
     expect(service.forceReconnects, [false]);
   });
+
+  test(
+    'resume coalesces direct reconnect and background reconciliation',
+    () async {
+      final storage = StorageService();
+      final platform = _LifecycleBackgroundPlatform();
+      final background = BackgroundConnectionService(
+        storage: storage,
+        platform: platform,
+        notificationPermission: _AllowedBackgroundNotifications(),
+      );
+      final service = _FakeWebSocketService();
+      addTearDown(service.dispose);
+      final lifecycle = ConnectionLifecycleService(
+        resumeThrottle: Duration.zero,
+        backgroundConnectionService: background,
+      )..attach(service);
+      await Future<void>.delayed(Duration.zero);
+      await storage.setBackgroundConnectionEnabled(true);
+      service.emitConnection(ws.ConnectionState.connected);
+      service.ensureReasons.clear();
+
+      lifecycle.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      lifecycle.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(service.ensureReasons, ['app_lifecycle_resumed']);
+      expect(platform.startCount, 1);
+      expect(platform.running, isTrue);
+    },
+  );
 
   testWidgets(
     'Settings open ensures connection and refreshes after reconnect',

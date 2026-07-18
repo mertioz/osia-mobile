@@ -23,6 +23,10 @@ class MainActivity : FlutterActivity() {
                 "isRunning" -> result.success(
                     BackgroundConnectionForegroundService.isRunning
                 )
+                "consumeStoppedByTimeout" -> result.success(
+                    BackgroundConnectionForegroundService
+                        .consumeStoppedByTimeout(this)
+                )
                 else -> result.notImplemented()
             }
         }

@@ -20,6 +20,7 @@ class ConnectionLifecycleService with WidgetsBindingObserver {
 
   ws.WebSocketService? _service;
   DateTime? _lastResumeEnsureAt;
+  Future<void>? _resumeFuture;
 
   @visibleForTesting
   ws.WebSocketService? get currentService => _service;
@@ -40,29 +41,43 @@ class ConnectionLifecycleService with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _ensureAfterResume();
-      final background = backgroundConnectionService;
-      if (background != null) {
-        unawaited(
-          background
-              .syncBackgroundConnectionSetting(reason: 'app_lifecycle_resumed')
-              .then<void>((_) {}),
-        );
-      }
+      unawaited(_ensureAfterResume());
     }
   }
 
-  void _ensureAfterResume() {
+  Future<void> _ensureAfterResume() {
+    final inFlight = _resumeFuture;
+    if (inFlight != null) return inFlight;
+
     final service = _service;
-    if (service == null) return;
+    if (service == null) return Future<void>.value();
 
     final now = DateTime.now();
     final last = _lastResumeEnsureAt;
     if (last != null && now.difference(last) < resumeThrottle) {
-      return;
+      return Future<void>.value();
     }
     _lastResumeEnsureAt = now;
 
-    unawaited(service.ensureConnected(reason: 'app_lifecycle_resumed'));
+    late final Future<void> future;
+    future = _resume(service).whenComplete(() {
+      if (identical(_resumeFuture, future)) {
+        _resumeFuture = null;
+      }
+    });
+    _resumeFuture = future;
+    return future;
+  }
+
+  Future<void> _resume(ws.WebSocketService service) async {
+    try {
+      await service.ensureConnected(reason: 'app_lifecycle_resumed');
+    } catch (_) {
+      // The background-state reconciliation below records the failed outcome.
+    }
+    await backgroundConnectionService?.syncBackgroundConnectionSetting(
+      reason: 'app_lifecycle_resumed',
+      webSocketAlreadyEnsured: true,
+    );
   }
 }

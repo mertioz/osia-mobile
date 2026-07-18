@@ -15,8 +15,14 @@ abstract class BackgroundConnectionPlatform {
   Future<bool> isRunning();
 }
 
+abstract class BackgroundConnectionTimeoutPlatform {
+  Future<bool> consumeStoppedByTimeout();
+}
+
 class MethodChannelBackgroundConnectionPlatform
-    implements BackgroundConnectionPlatform {
+    implements
+        BackgroundConnectionPlatform,
+        BackgroundConnectionTimeoutPlatform {
   static const _channel = MethodChannel('space.osia.app/background_connection');
 
   @override
@@ -51,6 +57,19 @@ class MethodChannelBackgroundConnectionPlatform
       return false;
     } on PlatformException catch (e) {
       debugPrint('[OSIA Background] foreground service state check failed: $e');
+      return false;
+    }
+  }
+
+  @override
+  Future<bool> consumeStoppedByTimeout() async {
+    try {
+      return await _channel.invokeMethod<bool>('consumeStoppedByTimeout') ??
+          false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException catch (e) {
+      debugPrint('[OSIA Background] timeout state check failed: $e');
       return false;
     }
   }
@@ -91,11 +110,17 @@ class BackgroundConnectionService {
   final BackgroundNotificationPermissionClient _notificationPermission;
 
   ws.WebSocketService? _wsService;
-  Future<bool>? _startFuture;
-  Future<void>? _stopFuture;
+  Future<void> _transitionTail = Future<void>.value();
 
-  Future<bool> backgroundConnectionEnabled() =>
-      storage.getBackgroundConnectionEnabled();
+  Future<bool> backgroundConnectionEnabled() => _serializeTransition(() async {
+    final enabled = await storage.getBackgroundConnectionEnabled();
+    if (!enabled) return false;
+    if (await _consumeStoppedByTimeout() || !await _platform.isRunning()) {
+      await storage.setBackgroundConnectionEnabled(false);
+      return false;
+    }
+    return true;
+  });
 
   void attachWebSocketService(ws.WebSocketService service) {
     if (identical(_wsService, service)) return;
@@ -114,85 +139,82 @@ class BackgroundConnectionService {
   }
 
   Future<bool> setBackgroundConnectionEnabledFromSettings(bool enabled) async {
-    if (!enabled) {
-      await storage.setBackgroundConnectionEnabled(false);
-      await stopBackgroundConnection();
-      return false;
-    }
+    return _serializeTransition(() async {
+      if (!enabled) {
+        await storage.setBackgroundConnectionEnabled(false);
+        await _stopBackgroundConnection();
+        return false;
+      }
 
-    final allowed = await _requestNotificationPermission();
-    if (!allowed) {
-      await storage.setBackgroundConnectionEnabled(false);
-      await stopBackgroundConnection();
-      return false;
-    }
+      final allowed = await _requestNotificationPermission();
+      if (!allowed) {
+        await storage.setBackgroundConnectionEnabled(false);
+        await _stopBackgroundConnection();
+        return false;
+      }
 
-    final started = await startBackgroundConnection(
-      reason: 'background_connection_enabled',
-    );
-    await storage.setBackgroundConnectionEnabled(started);
-    if (!started) {
-      await stopBackgroundConnection();
-    }
-    return started;
+      final started = await _startBackgroundConnection(
+        'background_connection_enabled',
+        webSocketAlreadyEnsured: false,
+      );
+      await storage.setBackgroundConnectionEnabled(started);
+      if (!started) {
+        await _stopBackgroundConnection();
+      }
+      return started;
+    });
   }
 
   Future<bool> syncBackgroundConnectionSetting({
     String reason = 'background_connection_sync',
-  }) async {
+    bool webSocketAlreadyEnsured = false,
+  }) => _serializeTransition(() async {
     final enabled = await storage.getBackgroundConnectionEnabled();
     if (!enabled) {
-      await stopBackgroundConnection();
+      await _stopBackgroundConnection();
+      return false;
+    }
+
+    if (await _consumeStoppedByTimeout()) {
+      await storage.setBackgroundConnectionEnabled(false);
+      await _stopBackgroundConnection();
       return false;
     }
 
     final allowed = await _notificationsAllowed();
     if (!allowed) {
       await storage.setBackgroundConnectionEnabled(false);
-      await stopBackgroundConnection();
+      await _stopBackgroundConnection();
       return false;
     }
 
-    final started = await startBackgroundConnection(reason: reason);
+    final started = await _startBackgroundConnection(
+      reason,
+      webSocketAlreadyEnsured: webSocketAlreadyEnsured,
+    );
     if (!started) {
       await storage.setBackgroundConnectionEnabled(false);
-      await stopBackgroundConnection();
+      await _stopBackgroundConnection();
     }
     return started;
-  }
+  });
 
   Future<bool> startBackgroundConnection({
     String reason = 'background_connection_start',
-  }) {
-    final inFlight = _startFuture;
-    if (inFlight != null) return inFlight;
+  }) => _serializeTransition(
+    () => _startBackgroundConnection(reason, webSocketAlreadyEnsured: false),
+  );
 
-    late final Future<bool> future;
-    future = _startBackgroundConnection(reason).whenComplete(() {
-      if (identical(_startFuture, future)) {
-        _startFuture = null;
-      }
-    });
-    _startFuture = future;
-    return future;
-  }
+  Future<void> stopBackgroundConnection() =>
+      _serializeTransition(_stopBackgroundConnection);
 
-  Future<void> stopBackgroundConnection() {
-    final inFlight = _stopFuture;
-    if (inFlight != null) return inFlight;
-
-    late final Future<void> future;
-    future = _platform.stop().whenComplete(() {
-      if (identical(_stopFuture, future)) {
-        _stopFuture = null;
-      }
-    });
-    _stopFuture = future;
-    return future;
-  }
-
-  Future<bool> _startBackgroundConnection(String reason) async {
-    if (!await _ensureWebSocketConnected(reason)) {
+  Future<bool> _startBackgroundConnection(
+    String reason, {
+    required bool webSocketAlreadyEnsured,
+  }) async {
+    if (webSocketAlreadyEnsured) {
+      if (_wsService?.state != ws.ConnectionState.connected) return false;
+    } else if (!await _ensureWebSocketConnected(reason)) {
       return false;
     }
 
@@ -203,7 +225,25 @@ class BackgroundConnectionService {
     final started = await _platform.start();
     if (!started) return false;
 
-    return _ensureWebSocketConnected(reason);
+    return _platform.isRunning();
+  }
+
+  Future<void> _stopBackgroundConnection() => _platform.stop();
+
+  Future<bool> _consumeStoppedByTimeout() async {
+    final platform = _platform;
+    if (platform is! BackgroundConnectionTimeoutPlatform) return false;
+    return (platform as BackgroundConnectionTimeoutPlatform)
+        .consumeStoppedByTimeout();
+  }
+
+  Future<T> _serializeTransition<T>(Future<T> Function() action) {
+    final next = _transitionTail.then<T>((_) => action());
+    _transitionTail = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return next;
   }
 
   Future<bool> _requestNotificationPermission() async {

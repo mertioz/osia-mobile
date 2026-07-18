@@ -1116,7 +1116,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
       'Notifications are blocked. You can enable them in system settings.',
   backgroundConnection: 'Keep OSIA connected in background',
   backgroundConnectionSubtitle:
-      'Shows a persistent notification and keeps the mobile link active.',
+      'Shows a persistent notification while OSIA is ready for messages from your PC. Android may stop it; opening OSIA reconnects normally.',
   backgroundConnectionUnavailable:
       'Background connection could not start. Check notification permission and battery settings.',
   catVoiceToVoice: 'Voice-to-voice (Live API)',
@@ -1499,7 +1499,7 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
       'Les notifications sont bloquées. Vous pouvez les autoriser dans les réglages système.',
   backgroundConnection: 'Garder OSIA connecté en arrière-plan',
   backgroundConnectionSubtitle:
-      'Affiche une notification persistante et maintient le lien mobile actif.',
+      'Affiche une notification persistante pendant qu’OSIA attend les messages du PC. Android peut l’arrêter ; ouvrir OSIA rétablit la connexion.',
   backgroundConnectionUnavailable:
       'La connexion en arrière-plan n’a pas pu démarrer. Vérifiez les notifications et la batterie.',
   catVoiceToVoice: 'Voix à voix (API Live)',
@@ -1875,7 +1875,8 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   osiaNotificationsSubtitle: '计划任务完成或失败时接收安全提醒。',
   notificationPermissionDenied: '通知已被阻止。你可以在系统设置中启用。',
   backgroundConnection: '在后台保持 OSIA 连接',
-  backgroundConnectionSubtitle: '显示常驻通知，并保持移动连接处于活动状态。',
+  backgroundConnectionSubtitle:
+      '显示常驻通知，以便 OSIA 接收来自电脑的消息。Android 可能会停止此服务；打开 OSIA 会正常重新连接。',
   backgroundConnectionUnavailable: '后台连接无法启动。请检查通知权限和电池设置。',
   catVoiceToVoice: '语音对话（实时 API）',
   catVoiceToVoiceSub: '与 OSIA 进行实时语音对话',
@@ -2233,7 +2234,8 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   osiaNotificationsSubtitle: 'スケジュールタスクの完了や失敗を安全に通知します。',
   notificationPermissionDenied: '通知がブロックされています。システム設定で有効にできます。',
   backgroundConnection: 'バックグラウンドで OSIA の接続を維持',
-  backgroundConnectionSubtitle: '常設通知を表示し、モバイル接続を維持します。',
+  backgroundConnectionSubtitle:
+      'PC からのメッセージを受信できる間は常設通知を表示します。Android が停止した場合、OSIA を開くと再接続します。',
   backgroundConnectionUnavailable:
       'バックグラウンド接続を開始できませんでした。通知権限とバッテリー設定を確認してください。',
   catVoiceToVoice: '音声対音声（ライブ API）',
@@ -2618,7 +2620,7 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
       'Benachrichtigungen sind blockiert. Du kannst sie in den Systemeinstellungen aktivieren.',
   backgroundConnection: 'OSIA im Hintergrund verbunden halten',
   backgroundConnectionSubtitle:
-      'Zeigt eine dauerhafte Benachrichtigung und hält die mobile Verbindung aktiv.',
+      'Zeigt eine dauerhafte Benachrichtigung, während OSIA für Nachrichten vom PC bereit ist. Android kann den Dienst beenden; beim Öffnen verbindet sich OSIA neu.',
   backgroundConnectionUnavailable:
       'Die Hintergrundverbindung konnte nicht gestartet werden. Prüfe Benachrichtigungen und Akku-Einstellungen.',
   catVoiceToVoice: 'Sprache-zu-Sprache (Live-API)',
@@ -3007,7 +3009,7 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
       'Las notificaciones están bloqueadas. Puedes activarlas en los ajustes del sistema.',
   backgroundConnection: 'Mantener OSIA conectado en segundo plano',
   backgroundConnectionSubtitle:
-      'Muestra una notificación permanente y mantiene activo el enlace móvil.',
+      'Muestra una notificación permanente mientras OSIA espera mensajes del PC. Android puede detenerlo; al abrir OSIA se reconecta normalmente.',
   backgroundConnectionUnavailable:
       'No se pudo iniciar la conexión en segundo plano. Revisa los permisos de notificación y batería.',
   catVoiceToVoice: 'Voz a voz (API Live)',

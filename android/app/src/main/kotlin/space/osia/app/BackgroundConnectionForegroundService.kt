@@ -12,26 +12,52 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 
-class BackgroundConnectionForegroundService : Service() {
+open class BackgroundConnectionForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (running) {
+            markRunning(this)
+            return START_NOT_STICKY
+        }
+
         return try {
             createNotificationChannel()
             startForegroundCompat(buildNotification())
-            isRunning = true
+            markRunning(this)
             START_NOT_STICKY
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start foreground service", e)
-            isRunning = false
-            stopSelf()
+            stopForegroundAndSelf()
             START_NOT_STICKY
         }
     }
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "Foreground service timed out; stopping cleanly")
+        markTimedOut(this)
+        stopForegroundAndSelf()
+    }
+
     override fun onDestroy() {
-        isRunning = false
+        removeForegroundNotification()
+        markStopped()
         super.onDestroy()
+    }
+
+    private fun stopForegroundAndSelf() {
+        removeForegroundNotification()
+        markStopped()
+        stopSelf()
+    }
+
+    private fun removeForegroundNotification() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
     }
 
     private fun createNotificationChannel() {
@@ -85,11 +111,11 @@ class BackgroundConnectionForegroundService : Service() {
     }
 
     private fun startForegroundCompat(notification: Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
                 NOTIFICATION_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
@@ -101,16 +127,29 @@ class BackgroundConnectionForegroundService : Service() {
         private const val CHANNEL_ID = "osia_background_connection"
         private const val CHANNEL_NAME = "OSIA background connection"
         private const val CHANNEL_DESCRIPTION =
-            "Persistent notification while OSIA keeps its mobile connection active."
+            "Persistent notification while OSIA is ready for messages from your PC."
         private const val NOTIFICATION_ID = 110
-        private const val NOTIFICATION_TITLE = "OSIA connected"
-        private const val NOTIFICATION_TEXT = "Keeping the mobile connection active."
+        private const val NOTIFICATION_TITLE = "OSIA background connection active"
+        private const val NOTIFICATION_TEXT = "Ready for messages from your PC."
+        private const val STATE_PREFERENCES = "osia_background_connection_state"
+        private const val TIMED_OUT_KEY = "stopped_by_timeout"
+        private val stateLock = Any()
 
         @Volatile
-        var isRunning: Boolean = false
-            private set
+        private var running = false
+
+        @Volatile
+        private var startRequested = false
+
+        val isRunning: Boolean
+            get() = running || startRequested
 
         fun start(context: Context): Boolean {
+            synchronized(stateLock) {
+                if (isRunning) return true
+                startRequested = true
+            }
+
             return try {
                 val intent = Intent(
                     context,
@@ -124,17 +163,64 @@ class BackgroundConnectionForegroundService : Service() {
                 true
             } catch (e: Exception) {
                 Log.e(TAG, "Unable to request foreground service start", e)
+                markStopped()
                 false
             }
         }
 
         fun stop(context: Context) {
+            clearTimedOut(context)
+            markStopped()
             val intent = Intent(
                 context,
                 BackgroundConnectionForegroundService::class.java
             )
             context.stopService(intent)
-            isRunning = false
+        }
+
+        fun consumeStoppedByTimeout(context: Context): Boolean {
+            val preferences = context.getSharedPreferences(
+                STATE_PREFERENCES,
+                Context.MODE_PRIVATE
+            )
+            val timedOut = preferences.getBoolean(TIMED_OUT_KEY, false)
+            if (timedOut) {
+                preferences.edit().putBoolean(TIMED_OUT_KEY, false).apply()
+            }
+            return timedOut
+        }
+
+        private fun markRunning(context: Context) {
+            synchronized(stateLock) {
+                running = true
+                startRequested = false
+            }
+            clearTimedOut(context)
+        }
+
+        private fun markStopped() {
+            synchronized(stateLock) {
+                running = false
+                startRequested = false
+            }
+        }
+
+        private fun markTimedOut(context: Context) {
+            val persisted = context
+                .getSharedPreferences(STATE_PREFERENCES, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(TIMED_OUT_KEY, true)
+                .commit()
+            if (!persisted) {
+                Log.e(TAG, "Unable to persist foreground timeout state")
+            }
+        }
+
+        private fun clearTimedOut(context: Context) {
+            context.getSharedPreferences(STATE_PREFERENCES, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(TIMED_OUT_KEY, false)
+                .apply()
         }
     }
 }

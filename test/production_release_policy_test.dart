@@ -92,6 +92,40 @@ void main() {
     expect(attachFlow, isNot(contains('requestPermissions')));
   });
 
+  test('Android background service is bounded remote messaging', () {
+    final manifest = File(
+      'android/app/src/main/AndroidManifest.xml',
+    ).readAsStringSync();
+    expect(
+      manifest,
+      contains('android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING'),
+    );
+    expect(
+      manifest,
+      contains('android:foregroundServiceType="remoteMessaging"'),
+    );
+    expect(manifest, contains('android:exported="false"'));
+    expect(manifest, isNot(contains('FOREGROUND_SERVICE_DATA_SYNC')));
+    expect(
+      manifest,
+      isNot(contains('android:foregroundServiceType="dataSync"')),
+    );
+
+    final service = File(
+      'android/app/src/main/kotlin/space/osia/app/'
+      'BackgroundConnectionForegroundService.kt',
+    ).readAsStringSync();
+    expect(service, contains('override fun onTimeout('));
+    expect(service, contains('Build.VERSION_CODES.UPSIDE_DOWN_CAKE'));
+    expect(service, contains('FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING'));
+    expect(service, contains('stopForeground(STOP_FOREGROUND_REMOVE)'));
+    expect(service, contains('stopSelf()'));
+    expect(service, contains('START_NOT_STICKY'));
+    expect(service, isNot(contains('START_STICKY')));
+    expect(service, isNot(contains('Timer(')));
+    expect(service, isNot(contains('WakeLock')));
+  });
+
   test(
     'official production capability manifest is direct-first and secret-free',
     () {
