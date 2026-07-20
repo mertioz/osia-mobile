@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:osia_mobile/services/background_connection_service.dart';
@@ -99,6 +100,17 @@ class _FakeNotificationPermission
 void main() {
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
+  });
+
+  test('method-channel foreground service is disabled on iOS', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final platform = MethodChannelBackgroundConnectionPlatform();
+
+    expect(await platform.start(), isFalse);
+    await platform.stop();
+    expect(await platform.isRunning(), isFalse);
+    expect(await platform.consumeStoppedByTimeout(), isFalse);
   });
 
   Future<

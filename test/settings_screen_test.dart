@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -367,6 +368,20 @@ void main() {
 
     expect(await harness.storage.getBackgroundConnectionEnabled(), isFalse);
     expect(find.text(osiaStringsForCode('en').backgroundConnection), findsOne);
+  });
+
+  testWidgets('background connection control is hidden on iOS', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      await pumpSettings(tester);
+
+      expect(
+        find.text(osiaStringsForCode('en').backgroundConnection),
+        findsNothing,
+      );
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('enabling background connection persists and starts service', (

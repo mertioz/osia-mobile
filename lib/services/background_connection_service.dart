@@ -24,9 +24,11 @@ class MethodChannelBackgroundConnectionPlatform
         BackgroundConnectionPlatform,
         BackgroundConnectionTimeoutPlatform {
   static const _channel = MethodChannel('space.osia.app/background_connection');
+  bool get _isSupported => defaultTargetPlatform == TargetPlatform.android;
 
   @override
   Future<bool> start() async {
+    if (!_isSupported) return false;
     try {
       return await _channel.invokeMethod<bool>('start') ?? false;
     } on MissingPluginException catch (e) {
@@ -40,6 +42,7 @@ class MethodChannelBackgroundConnectionPlatform
 
   @override
   Future<void> stop() async {
+    if (!_isSupported) return;
     try {
       await _channel.invokeMethod<void>('stop');
     } on MissingPluginException catch (e) {
@@ -51,6 +54,7 @@ class MethodChannelBackgroundConnectionPlatform
 
   @override
   Future<bool> isRunning() async {
+    if (!_isSupported) return false;
     try {
       return await _channel.invokeMethod<bool>('isRunning') ?? false;
     } on MissingPluginException {
@@ -63,6 +67,7 @@ class MethodChannelBackgroundConnectionPlatform
 
   @override
   Future<bool> consumeStoppedByTimeout() async {
+    if (!_isSupported) return false;
     try {
       return await _channel.invokeMethod<bool>('consumeStoppedByTimeout') ??
           false;

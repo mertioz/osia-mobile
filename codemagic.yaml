@@ -1,0 +1,84 @@
+workflows:
+  ios-testflight-internal:
+    name: OSIA iOS - TestFlight internal
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    integrations:
+      app_store_connect: osia-testflight
+    environment:
+      groups:
+        - osia_app_store
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: space.osia.app
+      flutter: 3.44.1
+      xcode: 26.4
+      cocoapods: 1.16.2
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - name: Verify pinned Apple toolchain
+        script: |
+          set -e
+          flutter --version
+          xcodebuild -version
+          echo "iOS SDK $(xcrun --sdk iphoneos --show-sdk-version)"
+          pod --version
+      - name: Configure Flutter dependencies
+        script: |
+          set -e
+          flutter config --enable-swift-package-manager
+          flutter pub get
+      - name: Analyze Flutter source
+        script: flutter analyze
+      - name: Run Flutter tests
+        script: flutter test
+      - name: Install CocoaPods dependencies
+        script: |
+          set -e
+          cd ios
+          pod install --repo-update
+      - name: Select next App Store Connect build number
+        script: |
+          set -e
+          if [ -z "${APP_STORE_APPLE_ID:-}" ]; then
+            echo "APP_STORE_APPLE_ID is required in Codemagic group osia_app_store."
+            exit 1
+          fi
+          queried="$(app-store-connect get-latest-testflight-build-number \
+            "$APP_STORE_APPLE_ID" --platform IOS)"
+          case "$queried" in
+            '') latest=0 ;;
+            *[!0-9]*)
+              echo "Could not determine the latest App Store Connect build number."
+              exit 1
+              ;;
+            *) latest="$queried" ;;
+          esac
+          next=$((latest + 1))
+          echo "IOS_BUILD_NUMBER=$next" >> "$CM_ENV"
+          echo "Selected iOS build number $next"
+      - name: Apply App Store signing profile
+        script: |
+          xcode-project use-profiles \
+            --custom-export-options='{"testFlightInternalTestingOnly": true}'
+      - name: Build signed IPA
+        script: |
+          set -e
+          flutter build ipa --release \
+            --build-name=1.0.0 \
+            --build-number="$IOS_BUILD_NUMBER" \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/Runner.xcarchive/dSYMs/*.dSYM
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        beta_groups:
+          - OSIA Internal
+        submit_to_app_store: false

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -378,21 +379,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           : _onToggleNotifications,
                       palette: palette,
                     ),
-                    Divider(
-                      height: 1,
-                      color: palette.border.withValues(alpha: 0.5),
-                      indent: 56,
-                    ),
-                    _ToggleTile(
-                      icon: Icons.sync_rounded,
-                      title: strings.backgroundConnection,
-                      subtitle: strings.backgroundConnectionSubtitle,
-                      value: _backgroundConnectionEnabled,
-                      onChanged: _backgroundConnectionBusy
-                          ? null
-                          : _onToggleBackgroundConnection,
-                      palette: palette,
-                    ),
+                    if (defaultTargetPlatform == TargetPlatform.android) ...[
+                      Divider(
+                        height: 1,
+                        color: palette.border.withValues(alpha: 0.5),
+                        indent: 56,
+                      ),
+                      _ToggleTile(
+                        icon: Icons.sync_rounded,
+                        title: strings.backgroundConnection,
+                        subtitle: strings.backgroundConnectionSubtitle,
+                        value: _backgroundConnectionEnabled,
+                        onChanged: _backgroundConnectionBusy
+                            ? null
+                            : _onToggleBackgroundConnection,
+                        palette: palette,
+                      ),
+                    ],
                     Divider(
                       height: 1,
                       color: palette.border.withValues(alpha: 0.5),
