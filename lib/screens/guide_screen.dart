@@ -1,9 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../guide_content.dart';
 import '../guide_progress.dart';
+import '../motion.dart';
 import '../services/storage_service.dart';
 import '../theme.dart';
+
+const Duration guidePageTransitionDuration = MotionDurations.medium;
+const Duration guideContentTransitionDuration = MotionDurations.fast;
+const Duration guideProgressTransitionDuration = MotionDurations.medium;
+const Curve guidePageTransitionCurve = MotionCurves.enter;
+const Curve guideContentTransitionCurve = MotionCurves.enter;
+const Curve guideProgressTransitionCurve = MotionCurves.loop;
 
 class GuideScreen extends StatefulWidget {
   const GuideScreen({
@@ -29,12 +39,22 @@ class _GuideScreenState extends State<GuideScreen> {
   late final GuideProgressService _progressService;
   GuideProgress? _progress;
   GuideLesson? _currentLesson;
+  PageController? _pageController;
+  Future<void> _persistenceQueue = Future<void>.value();
   String _selectedCategoryId = guideEssentialCategoryId;
+  int _pageIndex = 0;
+  bool _showTableOfContents = false;
+  bool _transitioning = false;
   bool _saving = false;
   bool _closing = false;
 
   bool get _isFrench => widget.languageCode == 'fr';
   String _text(GuideText value) => value.resolve(widget.languageCode);
+
+  bool _reducedMotion(BuildContext context) {
+    final media = MediaQuery.of(context);
+    return Motion.reduced(context) || media.accessibleNavigation;
+  }
 
   @override
   void initState() {
@@ -43,14 +63,24 @@ class _GuideScreenState extends State<GuideScreen> {
     _initialize();
   }
 
+  @override
+  void dispose() {
+    _pageController?.dispose();
+    super.dispose();
+  }
+
   Future<void> _initialize() async {
     final progress = widget.initialProgress ?? await _progressService.load();
     if (!mounted) return;
-    final initial = widget.automatic
-        ? guideLessonById(progress.currentLessonId) ??
-              guideLessonsForCategory(guideEssentialCategoryId).first
-        : null;
     final savedLesson = guideLessonById(progress.currentLessonId);
+    final initial = widget.automatic
+        ? savedLesson ?? guideLessonsForCategory(guideEssentialCategoryId).first
+        : null;
+    if (initial != null) {
+      final lessons = guideLessonsForCategory(initial.categoryId);
+      _pageIndex = lessons.indexWhere((lesson) => lesson.id == initial.id);
+      _pageController = PageController(initialPage: _pageIndex);
+    }
     setState(() {
       _progress = progress;
       _currentLesson = initial;
@@ -61,90 +91,138 @@ class _GuideScreenState extends State<GuideScreen> {
     });
   }
 
-  Future<void> _selectLesson(GuideLesson lesson) async {
-    final progress = _progress;
-    if (progress == null || _saving) return;
-    setState(() {
-      _saving = true;
-      _selectedCategoryId = lesson.categoryId;
-      _currentLesson = lesson;
-    });
-    final next = await _progressService.selectLesson(progress, lesson.id);
-    if (!mounted) return;
-    setState(() {
-      _progress = next;
-      _saving = false;
-    });
-  }
-
-  void _selectCategory(String categoryId) {
+  void _openCategory(String categoryId) {
     setState(() {
       _selectedCategoryId = categoryId;
       _currentLesson = null;
+      _showTableOfContents = true;
     });
   }
 
-  Future<void> _goTo(int index) async {
+  void _openHome() {
+    setState(() {
+      _currentLesson = null;
+      _showTableOfContents = false;
+    });
+  }
+
+  void _openContents() {
+    setState(() {
+      _currentLesson = null;
+      _showTableOfContents = true;
+    });
+  }
+
+  Future<void> _openLesson(GuideLesson lesson) async {
+    if (_progress == null || _saving) return;
+    await _persistenceQueue;
+    final latest = _progress;
+    if (latest == null) return;
+    final selected = await _progressService.selectLesson(latest, lesson.id);
+    if (!mounted) return;
+    final lessons = guideLessonsForCategory(lesson.categoryId);
+    final index = lessons.indexWhere((item) => item.id == lesson.id);
+    _pageController?.dispose();
+    _pageController = PageController(initialPage: index);
+    setState(() {
+      _progress = selected;
+      _selectedCategoryId = lesson.categoryId;
+      _currentLesson = lesson;
+      _pageIndex = index;
+      _showTableOfContents = false;
+    });
+  }
+
+  void _onPageChanged(int index) {
     final lessons = guideLessonsForCategory(_selectedCategoryId);
-    if (index < 0 || index >= lessons.length) return;
-    await _selectLesson(lessons[index]);
+    if (index < 0 || index >= lessons.length || index == _pageIndex) return;
+    final previousIndex = _pageIndex;
+    final lesson = lessons[index];
+    setState(() {
+      _pageIndex = index;
+      _currentLesson = lesson;
+    });
+
+    _persistenceQueue = _persistenceQueue.then((_) async {
+      var progress = _progress;
+      if (progress == null) return;
+      GuideProgress nextProgress = progress;
+      if (index > previousIndex) {
+        for (var i = previousIndex; i < index; i++) {
+          nextProgress = await _progressService.completeLesson(
+            nextProgress,
+            lessons[i],
+          );
+        }
+      }
+      nextProgress = await _progressService.selectLesson(
+        nextProgress,
+        lesson.id,
+      );
+      if (mounted) setState(() => _progress = nextProgress);
+    });
+  }
+
+  Future<void> _animateToPage(int index) async {
+    final controller = _pageController;
+    final lessons = guideLessonsForCategory(_selectedCategoryId);
+    if (controller == null ||
+        _transitioning ||
+        index < 0 ||
+        index >= lessons.length) {
+      return;
+    }
+    setState(() => _transitioning = true);
+    try {
+      if (_reducedMotion(context)) {
+        controller.jumpToPage(index);
+      } else {
+        await controller.animateToPage(
+          index,
+          duration: guidePageTransitionDuration,
+          curve: guidePageTransitionCurve,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _transitioning = false);
+    }
   }
 
   Future<void> _next() async {
     final progress = _progress;
     final lesson = _currentLesson;
-    if (progress == null || lesson == null || _saving) return;
-    setState(() => _saving = true);
-    final completed = await _progressService.completeLesson(progress, lesson);
+    if (progress == null || lesson == null || _saving || _transitioning) return;
     final lessons = guideLessonsForCategory(lesson.categoryId);
-    final index = lessons.indexWhere((item) => item.id == lesson.id);
-    if (!mounted) return;
-    if (index < lessons.length - 1) {
-      final nextLesson = lessons[index + 1];
-      final selected = await _progressService.selectLesson(
-        completed,
-        nextLesson.id,
-      );
-      if (!mounted) return;
-      setState(() {
-        _progress = selected;
-        _currentLesson = nextLesson;
-        _saving = false;
-      });
+    if (_pageIndex < lessons.length - 1) {
+      await _animateToPage(_pageIndex + 1);
       return;
     }
 
+    setState(() => _saving = true);
+    await _persistenceQueue;
+    var updated = await _progressService.completeLesson(_progress!, lesson);
     if (lesson.categoryId == guideEssentialCategoryId) {
-      final finished = await _progressService.markFinished(completed);
-      if (!mounted) return;
-      setState(() {
-        _progress = finished;
-        _saving = false;
-      });
+      updated = await _progressService.markFinished(updated);
     } else {
-      setState(() {
-        _progress = completed.copyWith(outcome: 'completed');
-        _saving = false;
-      });
-      await _progressService.save(_progress!);
+      updated = updated.copyWith(outcome: 'completed');
+      await _progressService.save(updated);
     }
+    if (!mounted) return;
+    setState(() {
+      _progress = updated;
+      _saving = false;
+    });
     await _close(markClosed: false);
   }
 
-  Future<void> _previous() async {
-    final lesson = _currentLesson;
-    if (lesson == null) return;
-    final lessons = guideLessonsForCategory(lesson.categoryId);
-    final index = lessons.indexWhere((item) => item.id == lesson.id);
-    if (index <= 0) return;
-    await _goTo(index - 1);
-  }
+  Future<void> _previous() => _animateToPage(_pageIndex - 1);
 
   Future<void> _skip() async {
     final progress = _progress;
     if (progress == null || _saving) return;
     setState(() => _saving = true);
-    final skipped = await _progressService.markSkipped(progress);
+    await _persistenceQueue;
+    final skipped = await _progressService.markSkipped(_progress!);
     if (!mounted) return;
     setState(() {
       _progress = skipped;
@@ -156,6 +234,7 @@ class _GuideScreenState extends State<GuideScreen> {
   Future<void> _close({bool markClosed = true}) async {
     if (_closing) return;
     _closing = true;
+    await _persistenceQueue;
     final progress = _progress;
     if (markClosed && progress != null) {
       await _progressService.markClosed(progress);
@@ -172,38 +251,43 @@ class _GuideScreenState extends State<GuideScreen> {
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
     final progress = _progress;
+    final reduceMotion = _reducedMotion(context);
     return PopScope(
       canPop: !widget.automatic,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) {
           final current = _progress;
-          if (current != null) {
-            _progressService.markClosed(current);
-          }
+          if (current != null) unawaited(_progressService.markClosed(current));
         } else {
-          _close();
+          unawaited(_close());
         }
       },
       child: Scaffold(
         key: const Key('guide-screen'),
         backgroundColor: palette.background,
         appBar: AppBar(
+          toolbarHeight: 52,
           automaticallyImplyLeading: false,
           backgroundColor: palette.background,
-          titleSpacing: 20,
+          titleSpacing: 16,
           title: Row(
             children: [
               Image.asset(
                 'assets/osia_logo_mark.png',
-                width: 30,
-                height: 30,
+                width: 26,
+                height: 26,
                 semanticLabel: _isFrench ? 'Logo OSIA' : 'OSIA logo',
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 9),
               Expanded(
                 child: Text(
                   _isFrench ? 'Guide OSIA Mobile' : 'OSIA Mobile guide',
                   overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
@@ -215,7 +299,7 @@ class _GuideScreenState extends State<GuideScreen> {
               onPressed: _closing ? null : _close,
               icon: const Icon(Icons.close_rounded),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
           ],
         ),
         body: SafeArea(
@@ -223,34 +307,182 @@ class _GuideScreenState extends State<GuideScreen> {
               ? Center(child: CircularProgressIndicator(color: palette.accent))
               : FocusTraversalGroup(
                   policy: ReadingOrderTraversalPolicy(),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final wide = constraints.maxWidth >= 840;
-                      if (wide) {
-                        return Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            SizedBox(
-                              width: 310,
-                              child: _buildContentsPane(palette, progress),
-                            ),
-                            VerticalDivider(width: 1, color: palette.border),
-                            Expanded(
-                              child: _currentLesson == null
-                                  ? _buildGuideHome(palette, progress)
-                                  : _buildLesson(palette, progress),
-                            ),
-                          ],
-                        );
-                      }
-                      return _currentLesson == null
-                          ? _buildGuideHome(palette, progress)
-                          : _buildLesson(palette, progress);
-                    },
-                  ),
+                  child: _currentLesson != null
+                      ? _buildJourney(palette, progress, reduceMotion)
+                      : AnimatedSwitcher(
+                          key: const Key('guide-shell-transition'),
+                          duration: reduceMotion
+                              ? Duration.zero
+                              : guideContentTransitionDuration,
+                          switchInCurve: guideContentTransitionCurve,
+                          switchOutCurve: MotionCurves.exit,
+                          child: _buildHomeOrContents(palette, progress),
+                        ),
                 ),
         ),
       ),
+    );
+  }
+
+  Widget _buildHomeOrContents(OsiaPalette palette, GuideProgress progress) {
+    if (_showTableOfContents) {
+      return KeyedSubtree(
+        key: ValueKey<String>('guide-toc-$_selectedCategoryId'),
+        child: _buildTableOfContents(palette, progress),
+      );
+    }
+    return KeyedSubtree(
+      key: const ValueKey<String>('guide-home-shell'),
+      child: _buildGuideHome(palette, progress),
+    );
+  }
+
+  Widget _buildGuideHome(OsiaPalette palette, GuideProgress progress) {
+    return ListView(
+      key: const Key('guide-home'),
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 28),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  _isFrench
+                      ? 'Choisissez votre parcours'
+                      : 'Choose your journey',
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 27,
+                    height: 1.12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _isFrench
+                      ? 'Commencez simplement ou approfondissez un sujet à votre rythme.'
+                      : 'Start simply or explore one subject in depth at your own pace.',
+                  style: TextStyle(
+                    color: palette.textMuted,
+                    fontSize: 14.5,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                for (var i = 0; i < guideCategories.length; i++) ...[
+                  _CategoryCard(
+                    key: Key('guide-category-${guideCategories[i].id}'),
+                    category: guideCategories[i],
+                    languageCode: widget.languageCode,
+                    palette: palette,
+                    completed: _completedCount(progress, guideCategories[i].id),
+                    total: guideLessonsForCategory(
+                      guideCategories[i].id,
+                    ).length,
+                    resumable:
+                        guideLessonById(progress.currentLessonId)?.categoryId ==
+                        guideCategories[i].id,
+                    onTap: () => _openCategory(guideCategories[i].id),
+                  ),
+                  if (i != guideCategories.length - 1)
+                    const SizedBox(height: 14),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTableOfContents(OsiaPalette palette, GuideProgress progress) {
+    final category = guideCategories.firstWhere(
+      (item) => item.id == _selectedCategoryId,
+    );
+    final lessons = guideLessonsForCategory(_selectedCategoryId);
+    final saved = guideLessonById(progress.currentLessonId);
+    return ListView(
+      key: const Key('guide-table-of-contents'),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      key: const Key('guide-home-back'),
+                      tooltip: _isFrench ? 'Accueil du guide' : 'Guide home',
+                      onPressed: _openHome,
+                      icon: const Icon(Icons.arrow_back_rounded),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(child: _buildCategorySelector(palette)),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  _text(category.title),
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 25,
+                    height: 1.15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  _text(category.summary),
+                  style: TextStyle(
+                    color: palette.textMuted,
+                    fontSize: 14,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 15),
+                _StaticProgress(
+                  completed: _completedCount(progress, category.id),
+                  total: lessons.length,
+                  languageCode: widget.languageCode,
+                  palette: palette,
+                ),
+                if (saved?.categoryId == category.id) ...[
+                  const SizedBox(height: 14),
+                  FilledButton.icon(
+                    key: const Key('guide-resume'),
+                    onPressed: () => _openLesson(saved!),
+                    icon: const Icon(Icons.play_arrow_rounded),
+                    label: Text(_isFrench ? 'Reprendre' : 'Resume'),
+                  ),
+                ],
+                const SizedBox(height: 18),
+                Text(
+                  _isFrench ? 'Écrans du guide' : 'Guide slides',
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 9),
+                for (final lesson in lessons)
+                  _LessonTile(
+                    lesson: lesson,
+                    languageCode: widget.languageCode,
+                    completed: _isCompleted(progress, lesson),
+                    palette: palette,
+                    onTap: () => _openLesson(lesson),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -259,27 +491,28 @@ class _GuideScreenState extends State<GuideScreen> {
       container: true,
       label: _isFrench ? 'Catégories du guide' : 'Guide categories',
       child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
+        spacing: 8,
+        runSpacing: 8,
         children: [
           for (final category in guideCategories)
             ChoiceChip(
               key: Key('guide-category-${category.id}'),
               selected: _selectedCategoryId == category.id,
-              onSelected: (_) => _selectCategory(category.id),
+              onSelected: (_) => _openCategory(category.id),
               label: Text(_text(category.title)),
-              selectedColor: palette.accent.withValues(alpha: 0.2),
+              selectedColor: palette.accent.withValues(alpha: 0.18),
               backgroundColor: palette.surface,
               side: BorderSide(
                 color: _selectedCategoryId == category.id
-                    ? palette.accent
+                    ? palette.accent.withValues(alpha: 0.75)
                     : palette.border,
               ),
               labelStyle: TextStyle(
                 color: _selectedCategoryId == category.id
                     ? palette.accent
                     : palette.textPrimary,
-                fontWeight: FontWeight.w600,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
               ),
             ),
         ],
@@ -287,378 +520,191 @@ class _GuideScreenState extends State<GuideScreen> {
     );
   }
 
-  Widget _buildGuideHome(OsiaPalette palette, GuideProgress progress) {
+  Widget _buildJourney(
+    OsiaPalette palette,
+    GuideProgress progress,
+    bool reduceMotion,
+  ) {
+    final lessons = guideLessonsForCategory(_selectedCategoryId);
     final category = guideCategories.firstWhere(
       (item) => item.id == _selectedCategoryId,
     );
-    final lessons = guideLessonsForCategory(_selectedCategoryId);
-    return ListView(
-      key: const Key('guide-home'),
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-      children: [
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _buildCategorySelector(palette),
-              const SizedBox(height: 24),
-              Text(
-                _text(category.title),
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 28,
-                  height: 1.15,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                _text(category.summary),
-                style: TextStyle(
-                  color: palette.textMuted,
-                  fontSize: 15,
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 20),
-              _buildProgressBar(palette, progress, lessons),
-              const SizedBox(height: 18),
-              if (progress.currentLessonId != null &&
-                  guideLessonById(progress.currentLessonId)?.categoryId ==
-                      _selectedCategoryId)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: OutlinedButton.icon(
-                    key: const Key('guide-resume'),
-                    onPressed: () => _selectLesson(
-                      guideLessonById(progress.currentLessonId)!,
-                    ),
-                    icon: const Icon(Icons.play_arrow_rounded),
-                    label: Text(_isFrench ? 'Reprendre' : 'Resume'),
-                  ),
-                ),
-              Text(
-                _isFrench ? 'Table des matières' : 'Table of contents',
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 10),
-              for (final lesson in lessons)
-                _LessonTile(
-                  lesson: lesson,
-                  languageCode: widget.languageCode,
-                  completed: _isCompleted(progress, lesson),
-                  selected: false,
-                  palette: palette,
-                  onTap: () => _selectLesson(lesson),
-                ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildContentsPane(OsiaPalette palette, GuideProgress progress) {
-    final lessons = guideLessonsForCategory(_selectedCategoryId);
-    return ListView(
-      key: const Key('guide-contents-pane'),
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-      children: [
-        _buildCategorySelector(palette),
-        const SizedBox(height: 18),
-        _buildProgressBar(palette, progress, lessons),
-        const SizedBox(height: 12),
-        for (final lesson in lessons)
-          _LessonTile(
-            lesson: lesson,
-            languageCode: widget.languageCode,
-            completed: _isCompleted(progress, lesson),
-            selected: lesson.id == _currentLesson?.id,
-            palette: palette,
-            onTap: () => _selectLesson(lesson),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildProgressBar(
-    OsiaPalette palette,
-    GuideProgress progress,
-    List<GuideLesson> lessons,
-  ) {
-    final completed = lessons
-        .where((lesson) => _isCompleted(progress, lesson))
-        .length;
-    final value = lessons.isEmpty ? 0.0 : completed / lessons.length;
-    return Semantics(
-      label: _isFrench
-          ? 'Progression : $completed sur ${lessons.length}'
-          : 'Progress: $completed of ${lessons.length}',
-      value: '${(value * 100).round()}%',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          LinearProgressIndicator(
-            value: value,
-            minHeight: 6,
-            borderRadius: BorderRadius.circular(99),
-            backgroundColor: palette.surfaceElevated,
-            color: palette.accent,
-          ),
-          const SizedBox(height: 6),
-          Text(
-            _isFrench
-                ? '$completed chapitre${completed > 1 ? 's' : ''} sur ${lessons.length}'
-                : '$completed of ${lessons.length} chapters',
-            style: TextStyle(color: palette.textMuted, fontSize: 12),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLesson(OsiaPalette palette, GuideProgress progress) {
-    final lesson = _currentLesson!;
-    final lessons = guideLessonsForCategory(lesson.categoryId);
-    final index = lessons.indexWhere((item) => item.id == lesson.id);
-    final last = index == lessons.length - 1;
     return Column(
       children: [
-        if (MediaQuery.sizeOf(context).width < 840)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            decoration: BoxDecoration(
-              color: palette.background,
-              border: Border(bottom: BorderSide(color: palette.border)),
-            ),
-            child: Row(
-              children: [
-                Expanded(child: _buildCategorySelector(palette)),
-                const SizedBox(width: 8),
-                IconButton(
-                  key: const Key('guide-toc'),
-                  tooltip: _isFrench
-                      ? 'Table des matières'
-                      : 'Table of contents',
-                  onPressed: () => setState(() => _currentLesson = null),
-                  icon: const Icon(Icons.list_alt_rounded),
-                ),
-              ],
-            ),
-          ),
-        Expanded(
-          child: ListView(
-            key: Key('guide-lesson-${lesson.id}'),
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 8, 8),
+          child: Row(
             children: [
-              Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 720),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        _isFrench
-                            ? 'Chapitre ${index + 1} sur ${lessons.length}'
-                            : 'Chapter ${index + 1} of ${lessons.length}',
-                        style: TextStyle(
-                          color: palette.accent,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.5,
-                        ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _text(category.title),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: palette.accent,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.45,
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _text(lesson.title),
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontSize: 28,
-                          height: 1.15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        _text(lesson.introduction),
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontSize: 16,
-                          height: 1.55,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      for (final paragraph in lesson.paragraphs) ...[
-                        const SizedBox(height: 14),
-                        Text(
-                          _text(paragraph),
-                          style: TextStyle(
-                            color: palette.textPrimary.withValues(alpha: 0.86),
-                            fontSize: 15,
-                            height: 1.55,
-                          ),
-                        ),
-                      ],
-                      if (lesson.asset != null) ...[
-                        const SizedBox(height: 22),
-                        _buildImage(palette, lesson),
-                      ],
-                      const SizedBox(height: 22),
-                      _GuideCallout(
-                        icon: Icons.lightbulb_outline_rounded,
-                        title: _text(lesson.exampleTitle),
-                        body: _text(lesson.example),
-                        palette: palette,
-                      ),
-                      if (lesson.remember != null) ...[
-                        const SizedBox(height: 12),
-                        _GuideCallout(
-                          icon: Icons.bookmark_outline_rounded,
-                          title: _isFrench ? 'À retenir' : 'Remember',
-                          body: _text(lesson.remember!),
-                          palette: palette,
-                          accent: true,
-                        ),
-                      ],
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      _isFrench
+                          ? 'Écran ${_pageIndex + 1} sur ${lessons.length}'
+                          : 'Slide ${_pageIndex + 1} of ${lessons.length}',
+                      style: TextStyle(color: palette.textMuted, fontSize: 12),
+                    ),
+                  ],
                 ),
+              ),
+              IconButton(
+                key: const Key('guide-toc'),
+                tooltip: _isFrench ? 'Table des matières' : 'Table of contents',
+                onPressed: _openContents,
+                icon: const Icon(Icons.grid_view_rounded),
               ),
             ],
           ),
         ),
-        Container(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-          decoration: BoxDecoration(
-            color: palette.background,
-            border: Border(top: BorderSide(color: palette.border)),
-          ),
-          child: SafeArea(
-            top: false,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final previous = OutlinedButton(
-                  key: const Key('guide-previous'),
-                  onPressed: index > 0 && !_saving ? _previous : null,
-                  child: Text(_isFrench ? 'Précédent' : 'Previous'),
-                );
-                final next = FilledButton(
-                  key: Key(last ? 'guide-finish' : 'guide-next'),
-                  onPressed: _saving ? null : _next,
-                  child: Text(
-                    last
-                        ? (_isFrench ? 'Terminer' : 'Finish')
-                        : (_isFrench ? 'Suivant' : 'Next'),
-                  ),
-                );
-                final skip = widget.automatic
-                    ? TextButton(
-                        key: const Key('guide-skip'),
-                        onPressed: _saving ? null : _skip,
-                        child: Text(_isFrench ? 'Passer' : 'Skip'),
-                      )
-                    : null;
-                if (constraints.maxWidth < 500) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (skip != null)
-                        Align(alignment: Alignment.centerLeft, child: skip),
-                      Row(
-                        children: [
-                          Expanded(child: previous),
-                          const SizedBox(width: 10),
-                          Expanded(child: next),
-                        ],
-                      ),
-                    ],
-                  );
-                }
-                return Row(
-                  children: [
-                    ?skip,
-                    const Spacer(),
-                    previous,
-                    const SizedBox(width: 10),
-                    next,
-                  ],
-                );
-              },
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Semantics(
+            label: _isFrench
+                ? 'Progression : écran ${_pageIndex + 1} sur ${lessons.length}'
+                : 'Progress: slide ${_pageIndex + 1} of ${lessons.length}',
+            value: '${(((_pageIndex + 1) / lessons.length) * 100).round()}%',
+            child: TweenAnimationBuilder<double>(
+              key: const Key('guide-slide-progress'),
+              tween: Tween<double>(end: (_pageIndex + 1) / lessons.length),
+              duration: reduceMotion
+                  ? Duration.zero
+                  : guideProgressTransitionDuration,
+              curve: guideProgressTransitionCurve,
+              builder: (context, value, _) => LinearProgressIndicator(
+                value: value,
+                minHeight: 4,
+                borderRadius: BorderRadius.circular(99),
+                backgroundColor: palette.surfaceElevated,
+                color: palette.accent,
+              ),
             ),
           ),
         ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: PageView.builder(
+            key: const Key('guide-page-view'),
+            controller: _pageController,
+            itemCount: lessons.length,
+            allowImplicitScrolling: true,
+            physics: const PageScrollPhysics(parent: ClampingScrollPhysics()),
+            onPageChanged: _onPageChanged,
+            itemBuilder: (context, index) => _GuideSlide(
+              key: Key('guide-lesson-${lessons[index].id}'),
+              lesson: lessons[index],
+              languageCode: widget.languageCode,
+              palette: palette,
+              reduceMotion: reduceMotion,
+            ),
+          ),
+        ),
+        _buildBottomNavigation(palette, lessons.length),
       ],
     );
   }
 
-  Widget _buildImage(OsiaPalette palette, GuideLesson lesson) {
-    final alt = _text(lesson.altText!);
-    return Semantics(
-      image: true,
-      label: alt,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: palette.surface,
-                border: Border.all(color: palette.border),
+  Widget _buildBottomNavigation(OsiaPalette palette, int lessonCount) {
+    final last = _pageIndex == lessonCount - 1;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: palette.background,
+        border: Border(top: BorderSide(color: palette.border)),
+      ),
+      child: SafeArea(
+        top: false,
+        minimum: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final textScale = MediaQuery.textScalerOf(context).scale(1);
+            final skip = widget.automatic
+                ? TextButton(
+                    key: const Key('guide-skip'),
+                    onPressed: _saving ? null : _skip,
+                    child: Text(_isFrench ? 'Passer' : 'Skip'),
+                  )
+                : null;
+            final previous = OutlinedButton.icon(
+              key: const Key('guide-previous'),
+              onPressed: _pageIndex > 0 && !_saving && !_transitioning
+                  ? _previous
+                  : null,
+              icon: const Icon(Icons.arrow_back_rounded, size: 18),
+              label: Text(_isFrench ? 'Précédent' : 'Previous'),
+            );
+            final next = FilledButton.icon(
+              key: Key(last ? 'guide-finish' : 'guide-next'),
+              onPressed: _saving || _transitioning ? null : _next,
+              iconAlignment: IconAlignment.end,
+              icon: Icon(
+                last ? Icons.check_rounded : Icons.arrow_forward_rounded,
+                size: 18,
               ),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 600),
-                child: Image.asset(
-                  lesson.asset!,
-                  fit: BoxFit.contain,
-                  filterQuality: FilterQuality.medium,
-                  excludeFromSemantics: true,
-                  errorBuilder: (context, _, _) => Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.image_not_supported_outlined,
-                            color: palette.textMuted,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            _isFrench
-                                ? 'Capture indisponible. Le texte du chapitre reste complet.'
-                                : 'Screenshot unavailable. The chapter text remains complete.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: palette.textMuted),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+              label: Text(
+                last
+                    ? (_isFrench ? 'Terminer' : 'Finish')
+                    : (_isFrench ? 'Suivant' : 'Next'),
               ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _text(lesson.caption!),
-            style: TextStyle(
-              color: palette.textMuted,
-              fontSize: 12,
-              height: 1.4,
-              fontStyle: FontStyle.italic,
-            ),
-          ),
-        ],
+            );
+
+            if (constraints.maxWidth < 360 || textScale >= 1.8) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (skip != null)
+                    Align(alignment: Alignment.centerLeft, child: skip),
+                  previous,
+                  const SizedBox(height: 7),
+                  next,
+                ],
+              );
+            }
+            final pageButtons = Row(
+              children: [
+                Expanded(child: previous),
+                const SizedBox(width: 10),
+                Expanded(child: next),
+              ],
+            );
+            if (constraints.maxWidth < 500 || textScale >= 1.3) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (skip != null)
+                    Align(alignment: Alignment.centerLeft, child: skip),
+                  pageButtons,
+                ],
+              );
+            }
+            return Row(
+              children: [
+                ?skip,
+                if (skip != null) const SizedBox(width: 8),
+                Expanded(child: pageButtons),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
+
+  int _completedCount(GuideProgress progress, String categoryId) =>
+      guideLessonsForCategory(
+        categoryId,
+      ).where((lesson) => _isCompleted(progress, lesson)).length;
 
   bool _isCompleted(GuideProgress progress, GuideLesson lesson) =>
       lesson.categoryId == guideEssentialCategoryId
@@ -666,12 +712,197 @@ class _GuideScreenState extends State<GuideScreen> {
       : progress.advancedCompleted.contains(lesson.id);
 }
 
+class _CategoryCard extends StatelessWidget {
+  const _CategoryCard({
+    super.key,
+    required this.category,
+    required this.languageCode,
+    required this.palette,
+    required this.completed,
+    required this.total,
+    required this.resumable,
+    required this.onTap,
+  });
+
+  final GuideCategory category;
+  final String languageCode;
+  final OsiaPalette palette;
+  final int completed;
+  final int total;
+  final bool resumable;
+  final VoidCallback onTap;
+
+  bool get _isFrench => languageCode == 'fr';
+
+  @override
+  Widget build(BuildContext context) {
+    final advanced = category.id == guideAdvancedCategoryId;
+    return Semantics(
+      button: true,
+      label: category.title.resolve(languageCode),
+      value: _isFrench
+          ? '$completed sur $total écrans terminés'
+          : '$completed of $total slides completed',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(22),
+          child: Ink(
+            padding: const EdgeInsets.all(19),
+            decoration: BoxDecoration(
+              color: advanced
+                  ? palette.surface
+                  : palette.accent.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: advanced
+                    ? palette.border
+                    : palette.accent.withValues(alpha: 0.36),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.16),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: palette.accent.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        advanced
+                            ? Icons.auto_awesome_rounded
+                            : Icons.rocket_launch_rounded,
+                        color: palette.accent,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        category.title.resolve(languageCode),
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 19,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    Icon(Icons.arrow_forward_rounded, color: palette.accent),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  category.summary.resolve(languageCode),
+                  style: TextStyle(
+                    color: palette.textMuted,
+                    height: 1.4,
+                    fontSize: 13.5,
+                  ),
+                ),
+                const SizedBox(height: 15),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(99),
+                  child: LinearProgressIndicator(
+                    value: total == 0 ? 0 : completed / total,
+                    minHeight: 5,
+                    backgroundColor: palette.surfaceElevated,
+                    color: palette.accent,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Text(
+                      _isFrench
+                          ? '$completed / $total écrans'
+                          : '$completed / $total slides',
+                      style: TextStyle(
+                        color: palette.textMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      resumable
+                          ? (_isFrench ? 'Reprendre' : 'Resume')
+                          : (_isFrench ? 'Voir le parcours' : 'View journey'),
+                      style: TextStyle(
+                        color: palette.accent,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StaticProgress extends StatelessWidget {
+  const _StaticProgress({
+    required this.completed,
+    required this.total,
+    required this.languageCode,
+    required this.palette,
+  });
+
+  final int completed;
+  final int total;
+  final String languageCode;
+  final OsiaPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: languageCode == 'fr'
+          ? 'Progression : $completed sur $total'
+          : 'Progress: $completed of $total',
+      value: '${total == 0 ? 0 : ((completed / total) * 100).round()}%',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LinearProgressIndicator(
+            value: total == 0 ? 0 : completed / total,
+            minHeight: 5,
+            borderRadius: BorderRadius.circular(99),
+            backgroundColor: palette.surfaceElevated,
+            color: palette.accent,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            languageCode == 'fr'
+                ? '$completed sur $total écrans terminés'
+                : '$completed of $total slides completed',
+            style: TextStyle(color: palette.textMuted, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _LessonTile extends StatelessWidget {
   const _LessonTile({
     required this.lesson,
     required this.languageCode,
     required this.completed,
-    required this.selected,
     required this.palette,
     required this.onTap,
   });
@@ -679,73 +910,363 @@ class _LessonTile extends StatelessWidget {
   final GuideLesson lesson;
   final String languageCode;
   final bool completed;
-  final bool selected;
   final OsiaPalette palette;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 7),
       child: Semantics(
         button: true,
-        selected: selected,
         label: lesson.title.resolve(languageCode),
-        child: InkWell(
-          key: Key('guide-toc-${lesson.id}'),
-          onTap: onTap,
+        child: Material(
+          color: palette.surface,
           borderRadius: BorderRadius.circular(14),
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 52),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: selected
-                  ? palette.accent.withValues(alpha: 0.12)
-                  : palette.surface,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: selected ? palette.accent : palette.border,
+          child: InkWell(
+            key: Key('guide-toc-${lesson.id}'),
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 52),
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: palette.border),
               ),
-            ),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 26,
-                  child: completed
-                      ? Icon(
-                          Icons.check_circle_rounded,
-                          size: 19,
-                          color: palette.accent,
-                        )
-                      : Text(
-                          '${lesson.order}',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: palette.textMuted,
-                            fontWeight: FontWeight.w700,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 28,
+                    child: completed
+                        ? Icon(
+                            Icons.check_circle_rounded,
+                            size: 19,
+                            color: palette.accent,
+                          )
+                        : Text(
+                            '${lesson.order}',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: palette.textMuted,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                        ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    lesson.title.resolve(languageCode),
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontSize: 14,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      lesson.title.resolve(languageCode),
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: palette.textMuted,
+                    size: 19,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GuideSlide extends StatelessWidget {
+  const _GuideSlide({
+    super.key,
+    required this.lesson,
+    required this.languageCode,
+    required this.palette,
+    required this.reduceMotion,
+  });
+
+  final GuideLesson lesson;
+  final String languageCode;
+  final OsiaPalette palette;
+  final bool reduceMotion;
+
+  bool get _isFrench => languageCode == 'fr';
+  String _text(GuideText value) => value.resolve(languageCode);
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final compactViewport = size.width > size.height;
+    final titleFontSize = size.width <= 360 && textScale >= 1.5
+        ? 19.5
+        : (compactViewport ? 25.0 : 28.0);
+    return SingleChildScrollView(
+      key: Key('guide-slide-scroll-${lesson.id}'),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: TweenAnimationBuilder<double>(
+            key: Key('guide-slide-motion-${lesson.id}'),
+            tween: Tween<double>(begin: reduceMotion ? 1 : 0, end: 1),
+            duration: reduceMotion
+                ? Duration.zero
+                : guideContentTransitionDuration,
+            curve: guideContentTransitionCurve,
+            builder: (context, value, child) => Opacity(
+              opacity: value,
+              child: Transform.translate(
+                offset: reduceMotion ? Offset.zero : Offset(0, 8 * (1 - value)),
+                child: Transform.scale(
+                  scale: reduceMotion ? 1 : 0.98 + (0.02 * value),
+                  alignment: Alignment.topCenter,
+                  child: child,
                 ),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  color: palette.textMuted,
-                  size: 19,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  _text(lesson.title),
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: titleFontSize,
+                    height: 1.08,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.4,
+                  ),
                 ),
+                const SizedBox(height: 16),
+                if (lesson.asset != null)
+                  _GuideImage(
+                    lesson: lesson,
+                    languageCode: languageCode,
+                    palette: palette,
+                  )
+                else
+                  _GuideVisual(
+                    lesson: lesson,
+                    languageCode: languageCode,
+                    palette: palette,
+                    compact: compactViewport,
+                  ),
+                const SizedBox(height: 18),
+                Text(
+                  _text(lesson.introduction),
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 16,
+                    height: 1.45,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                for (final paragraph in lesson.paragraphs) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    _text(paragraph),
+                    style: TextStyle(
+                      color: palette.textPrimary.withValues(alpha: 0.82),
+                      fontSize: 14.5,
+                      height: 1.48,
+                    ),
+                  ),
+                ],
+                if (lesson.bullets.isNotEmpty) ...[
+                  const SizedBox(height: 11),
+                  for (final bullet in lesson.bullets)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 7),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 5,
+                            height: 5,
+                            margin: const EdgeInsets.only(top: 8, right: 10),
+                            decoration: BoxDecoration(
+                              color: palette.accent,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              _text(bullet),
+                              style: TextStyle(
+                                color: palette.textPrimary.withValues(
+                                  alpha: 0.86,
+                                ),
+                                fontSize: 14.5,
+                                height: 1.42,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+                const SizedBox(height: 14),
+                _GuideCallout(
+                  icon: Icons.lightbulb_outline_rounded,
+                  title: _text(lesson.exampleTitle),
+                  body: _text(lesson.example),
+                  palette: palette,
+                ),
+                if (lesson.remember != null) ...[
+                  const SizedBox(height: 9),
+                  _GuideCallout(
+                    icon: Icons.bookmark_rounded,
+                    title: _isFrench ? 'À retenir' : 'Remember',
+                    body: _text(lesson.remember!),
+                    palette: palette,
+                    accent: true,
+                  ),
+                ],
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _GuideVisual extends StatelessWidget {
+  const _GuideVisual({
+    required this.lesson,
+    required this.languageCode,
+    required this.palette,
+    required this.compact,
+  });
+
+  final GuideLesson lesson;
+  final String languageCode;
+  final OsiaPalette palette;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final visualSize = compact ? 48.0 : 66.0;
+    return Semantics(
+      image: true,
+      label: lesson.title.resolve(languageCode),
+      child: Container(
+        height: compact ? 70 : 116,
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: palette.border),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.14),
+              blurRadius: 16,
+              offset: const Offset(0, 7),
+            ),
+          ],
+        ),
+        child: Center(
+          child: Container(
+            width: visualSize,
+            height: visualSize,
+            decoration: BoxDecoration(
+              color: palette.accent.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+              border: Border.all(color: palette.accent.withValues(alpha: 0.3)),
+            ),
+            child: Icon(
+              _iconForLesson(lesson.id),
+              color: palette.accent,
+              size: compact ? 23 : 30,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GuideImage extends StatelessWidget {
+  const _GuideImage({
+    required this.lesson,
+    required this.languageCode,
+    required this.palette,
+  });
+
+  final GuideLesson lesson;
+  final String languageCode;
+  final OsiaPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    final french = languageCode == 'fr';
+    return Semantics(
+      image: true,
+      label: lesson.altText!.resolve(languageCode),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            constraints: const BoxConstraints(minHeight: 170, maxHeight: 330),
+            padding: const EdgeInsets.all(9),
+            decoration: BoxDecoration(
+              color: palette.surfaceElevated,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: palette.accent.withValues(alpha: 0.22)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.20),
+                  blurRadius: 20,
+                  offset: const Offset(0, 9),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(17),
+              child: Image.asset(
+                lesson.asset!,
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.medium,
+                excludeFromSemantics: true,
+                errorBuilder: (context, _, _) => Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.image_not_supported_outlined,
+                          color: palette.textMuted,
+                        ),
+                        const SizedBox(height: 7),
+                        Text(
+                          french
+                              ? 'Capture indisponible. Le texte reste complet.'
+                              : 'Screenshot unavailable. The text remains complete.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: palette.textMuted),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            lesson.caption!.resolve(languageCode),
+            style: TextStyle(
+              color: palette.textMuted,
+              fontSize: 11.5,
+              height: 1.35,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -768,9 +1289,8 @@ class _GuideCallout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = accent ? palette.accent : palette.textMuted;
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(13, 12, 13, 12),
       decoration: BoxDecoration(
         color: accent
             ? palette.accent.withValues(alpha: 0.09)
@@ -778,15 +1298,19 @@ class _GuideCallout extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: accent
-              ? palette.accent.withValues(alpha: 0.45)
+              ? palette.accent.withValues(alpha: 0.30)
               : palette.border,
         ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 20, color: color),
-          const SizedBox(width: 12),
+          Icon(
+            icon,
+            size: 18,
+            color: accent ? palette.accent : palette.textMuted,
+          ),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -796,16 +1320,16 @@ class _GuideCallout extends StatelessWidget {
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontWeight: FontWeight.w700,
-                    fontSize: 14,
+                    fontSize: 13,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Text(
                   body,
                   style: TextStyle(
-                    color: palette.textPrimary.withValues(alpha: 0.84),
-                    fontSize: 14,
-                    height: 1.5,
+                    color: palette.textPrimary.withValues(alpha: 0.80),
+                    fontSize: 13,
+                    height: 1.4,
                   ),
                 ),
               ],
@@ -815,4 +1339,32 @@ class _GuideCallout extends StatelessWidget {
       ),
     );
   }
+}
+
+IconData _iconForLesson(String id) {
+  if (id.contains('pair') || id.contains('token') || id.contains('trust')) {
+    return Icons.key_rounded;
+  }
+  if (id.contains('lan') || id.contains('connection')) {
+    return Icons.lan_rounded;
+  }
+  if (id.contains('webrtc')) return Icons.device_hub_rounded;
+  if (id.contains('relay') || id.contains('reconnect')) {
+    return Icons.sync_rounded;
+  }
+  if (id.contains('voice') || id.contains('tts')) {
+    return Icons.graphic_eq_rounded;
+  }
+  if (id.contains('notification') || id.contains('background')) {
+    return Icons.notifications_active_rounded;
+  }
+  if (id.contains('conversation') || id.contains('message')) {
+    return Icons.forum_rounded;
+  }
+  if (id.contains('model')) return Icons.auto_awesome_rounded;
+  if (id.contains('troubleshooting')) return Icons.build_circle_rounded;
+  if (id.contains('security')) return Icons.shield_rounded;
+  if (id.contains('ready')) return Icons.check_circle_rounded;
+  if (id.contains('pages')) return Icons.grid_view_rounded;
+  return Icons.phone_android_rounded;
 }

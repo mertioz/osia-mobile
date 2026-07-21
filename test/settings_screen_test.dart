@@ -201,6 +201,7 @@ void main() {
     bool notificationsEnabled = false,
     bool backgroundEnabled = false,
     bool backgroundPermissionResult = true,
+    String languageCode = 'en',
   }) async {
     final storage = StorageService();
     await storage.setNotificationsEnabled(notificationsEnabled);
@@ -218,17 +219,20 @@ void main() {
       notificationPermission: backgroundPermission,
     );
     addTearDown(wsService.dispose);
+    final languageController = LanguageController(
+      initial: osiaStringsForCode(languageCode),
+    );
 
     await tester.pumpWidget(
       OsiaTheme(
         palette: osiaPaletteViolet,
         child: OsiaL10n(
-          strings: osiaStringsForCode('en'),
+          strings: osiaStringsForCode(languageCode),
           child: MaterialApp(
             home: SettingsScreen(
               storage: storage,
               themeController: ThemeController(),
-              languageController: LanguageController(),
+              languageController: languageController,
               wsService: wsService,
               notificationService: OsiaNotificationService(
                 storage: storage,
@@ -451,6 +455,10 @@ void main() {
     await harness.storage.setSelectedModel('demo-provider/demo-model');
     final settingsMessageCount = harness.wsService.sentTypes.length;
 
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('show-mobile-guide')),
+      300,
+    );
     await tester.tap(find.byKey(const Key('show-mobile-guide')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
@@ -471,4 +479,50 @@ void main() {
     );
     expect(harness.wsService.sentTypes, hasLength(settingsMessageCount));
   });
+
+  for (final languageCode in <String>['en', 'fr']) {
+    testWidgets(
+      'Help is unique and immediately before Connection in $languageCode',
+      (tester) async {
+        final harness = await pumpSettings(tester, languageCode: languageCode);
+        harness.wsService.emitConfig();
+        await tester.pump();
+
+        final help = find.byKey(const Key('settings-help-section'));
+        final connection = find.byKey(const Key('settings-connection-section'));
+        expect(help, findsOneWidget);
+        expect(connection, findsOneWidget);
+        expect(find.byKey(const Key('show-mobile-guide')), findsOneWidget);
+
+        final sections = tester.widget<Column>(
+          find.byKey(const Key('settings-sections')),
+        );
+        final helpIndex = sections.children.indexWhere(
+          (child) => child.key == const Key('settings-help-section'),
+        );
+        final connectionIndex = sections.children.indexWhere(
+          (child) => child.key == const Key('settings-connection-section'),
+        );
+        expect(helpIndex, greaterThan(0));
+        expect(connectionIndex, helpIndex + 2);
+
+        expect(
+          find.descendant(
+            of: help,
+            matching: find.text(languageCode == 'fr' ? 'AIDE' : 'HELP'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: connection,
+            matching: find.text(
+              languageCode == 'fr' ? 'CONNEXION' : 'CONNECTION',
+            ),
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+  }
 }

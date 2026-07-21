@@ -12,6 +12,7 @@ String _copy(Iterable<GuideLesson> lessons, String language) => lessons
         lesson.title.resolve(language),
         lesson.introduction.resolve(language),
         ...lesson.paragraphs.map((value) => value.resolve(language)),
+        ...lesson.bullets.map((value) => value.resolve(language)),
         lesson.exampleTitle.resolve(language),
         lesson.example.resolve(language),
         if (lesson.remember != null) lesson.remember!.resolve(language),
@@ -20,6 +21,18 @@ String _copy(Iterable<GuideLesson> lessons, String language) => lessons
       ],
     )
     .join('\n');
+
+int _wordCount(String text) => RegExp(
+  r"[A-Za-zÀ-ÖØ-öø-ÿ0-9]+(?:[-’'][A-Za-zÀ-ÖØ-öø-ÿ0-9]+)*",
+).allMatches(text).length;
+
+int _mainWordCount(GuideLesson lesson, String language) => _wordCount(
+  <String>[
+    lesson.introduction.resolve(language),
+    ...lesson.paragraphs.map((value) => value.resolve(language)),
+    ...lesson.bullets.map((value) => value.resolve(language)),
+  ].join(' '),
+);
 
 ({int width, int height, Set<String> chunks}) _pngInfo(List<int> bytes) {
   expect(bytes.take(8), orderedEquals(<int>[137, 80, 78, 71, 13, 10, 26, 10]));
@@ -44,7 +57,8 @@ String _copy(Iterable<GuideLesson> lessons, String language) => lessons
 }
 
 void main() {
-  test('guide has two ordered categories and unique stable lesson ids', () {
+  test('guide has two ordered categories and unique stable slide ids', () {
+    expect(guideContentSchemaVersion, 2);
     expect(guideCategories.map((category) => category.id), <String>[
       guideEssentialCategoryId,
       guideAdvancedCategoryId,
@@ -52,7 +66,7 @@ void main() {
     final ids = guideLessons.map((lesson) => lesson.id).toList();
     expect(ids.toSet(), hasLength(ids.length));
     expect(guideLessonsForCategory(guideEssentialCategoryId), hasLength(9));
-    expect(guideLessonsForCategory(guideAdvancedCategoryId), hasLength(10));
+    expect(guideLessonsForCategory(guideAdvancedCategoryId), hasLength(15));
     for (final category in guideCategories) {
       final orders = guideLessonsForCategory(
         category.id,
@@ -61,7 +75,43 @@ void main() {
     }
   });
 
-  test('every lesson contains complete English and French offline copy', () {
+  test(
+    'validated content is split without silently deleting core subjects',
+    () {
+      final ids = guideLessons.map((lesson) => lesson.id).toSet();
+      expect(
+        ids,
+        containsAll(<String>{
+          'essential.what-is-mobile',
+          'essential.before-pairing',
+          'essential.pair-token',
+          'essential.enter-token',
+          'essential.mobile-pages',
+          'essential.first-message',
+          'essential.voice',
+          'essential.notifications-background',
+          'essential.ready',
+          'advanced.pairing-trust',
+          'advanced.connection-hierarchy',
+          'advanced.lan',
+          'advanced.webrtc',
+          'advanced.relay-reconnect',
+          'advanced.android-background',
+          'advanced.ios-background',
+          'advanced.voice-tts-stt',
+          'advanced.tts',
+          'advanced.conversations-sync',
+          'advanced.models',
+          'advanced.notifications',
+          'advanced.troubleshooting',
+          'advanced.troubleshooting-media',
+          'advanced.security-privacy',
+        }),
+      );
+    },
+  );
+
+  test('every slide contains complete English and French offline copy', () {
     for (final category in guideCategories) {
       expect(category.title.en.trim(), isNotEmpty);
       expect(category.title.fr.trim(), isNotEmpty);
@@ -70,11 +120,13 @@ void main() {
     }
     for (final lesson in guideLessons) {
       expect(lesson.id, matches(RegExp(r'^(essential|advanced)\.')));
-      expect(lesson.paragraphs.length, inInclusiveRange(2, 5));
+      expect(lesson.paragraphs.length, lessThanOrEqualTo(1), reason: lesson.id);
+      expect(lesson.bullets.length, lessThanOrEqualTo(3), reason: lesson.id);
       for (final value in <GuideText>[
         lesson.title,
         lesson.introduction,
         ...lesson.paragraphs,
+        ...lesson.bullets,
         lesson.exampleTitle,
         lesson.example,
         if (lesson.remember != null) lesson.remember!,
@@ -96,7 +148,39 @@ void main() {
     expect(copy, isNot(contains('https://')));
   });
 
-  test('essential copy covers every audited beginner requirement and page', () {
+  test('mobile density is bounded and essential slides are shorter', () {
+    final essential = guideLessonsForCategory(guideEssentialCategoryId);
+    final advanced = guideLessonsForCategory(guideAdvancedCategoryId);
+    final essentialCounts = <int>[];
+    final advancedCounts = <int>[];
+    for (final lesson in essential) {
+      final count = _mainWordCount(lesson, 'en');
+      essentialCounts.add(count);
+      expect(count, inInclusiveRange(20, 68), reason: lesson.id);
+    }
+    for (final lesson in advanced) {
+      final count = _mainWordCount(lesson, 'en');
+      advancedCounts.add(count);
+      expect(count, inInclusiveRange(30, 86), reason: lesson.id);
+    }
+    final essentialAverage =
+        essentialCounts.reduce((a, b) => a + b) / essentialCounts.length;
+    final advancedAverage =
+        advancedCounts.reduce((a, b) => a + b) / advancedCounts.length;
+    expect(essentialAverage, lessThan(advancedAverage));
+    for (final lesson in guideLessons) {
+      for (final block in <GuideText>[
+        lesson.introduction,
+        ...lesson.paragraphs,
+        ...lesson.bullets,
+      ]) {
+        expect(_wordCount(block.en), lessThanOrEqualTo(55), reason: lesson.id);
+        expect(_wordCount(block.fr), lessThanOrEqualTo(65), reason: lesson.id);
+      }
+    }
+  });
+
+  test('essential copy covers every validated beginner subject and page', () {
     final copy = _copy(
       guideLessonsForCategory(guideEssentialCategoryId),
       'en',
@@ -105,6 +189,7 @@ void main() {
       'phone interface',
       'pairing token',
       'connection',
+      'connected',
       'chat',
       'conversations',
       'autonomous',
@@ -114,7 +199,7 @@ void main() {
       'first message',
       'microphone',
       'speech-to-text',
-      'reconnection',
+      'reconnect',
       'notifications',
       'background',
       'apns',
@@ -123,13 +208,14 @@ void main() {
     }
   });
 
-  test('advanced copy covers audited transports, platforms and safety', () {
+  test('advanced copy covers exact transports, platforms and safety', () {
     final copy = _copy(
       guideLessonsForCategory(guideAdvancedCategoryId),
       'en',
     ).toLowerCase();
     for (final phrase in <String>[
       'pairing and trust',
+      'connection hierarchy',
       'private-lan wss',
       'webrtc/p2p',
       'encrypted relay',

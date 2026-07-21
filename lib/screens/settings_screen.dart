@@ -357,6 +357,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
           child: Column(
+            key: const Key('settings-sections'),
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // ── Language ─────────────────────────────────────────────
@@ -370,28 +371,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: _LanguageDropdown(
                   currentCode: widget.languageController.code,
                   onChanged: _onPickLanguage,
-                  palette: palette,
-                ),
-              ),
-
-              // ── General ──────────────────────────────────────────────
-              _SectionHeader(
-                label: widget.languageController.code == 'fr' ? 'Aide' : 'Help',
-                palette: palette,
-              ),
-              _SectionCard(
-                palette: palette,
-                padding: EdgeInsets.zero,
-                child: _NavTile(
-                  key: const Key('show-mobile-guide'),
-                  icon: Icons.menu_book_rounded,
-                  title: widget.languageController.code == 'fr'
-                      ? 'Revoir le guide OSIA Mobile'
-                      : 'Show OSIA Mobile guide',
-                  subtitle: widget.languageController.code == 'fr'
-                      ? 'Hors ligne · progression conservée'
-                      : 'Offline · progress preserved',
-                  onTap: _openGuide,
                   palette: palette,
                 ),
               ),
@@ -565,8 +544,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
 
-              // ── Connection ───────────────────────────────────────────
+              // ── Help + Connection ────────────────────────────────────
               _SectionHeader(
+                key: const Key('settings-help-section'),
+                label: widget.languageController.code == 'fr' ? 'Aide' : 'Help',
+                palette: palette,
+              ),
+              _SectionCard(
+                palette: palette,
+                padding: EdgeInsets.zero,
+                child: _NavTile(
+                  key: const Key('show-mobile-guide'),
+                  icon: Icons.menu_book_rounded,
+                  title: widget.languageController.code == 'fr'
+                      ? 'Revoir le guide OSIA Mobile'
+                      : 'Show OSIA Mobile guide',
+                  subtitle: widget.languageController.code == 'fr'
+                      ? 'Hors ligne · progression conservée'
+                      : 'Offline · progress preserved',
+                  onTap: _openGuide,
+                  palette: palette,
+                ),
+              ),
+
+              _SectionHeader(
+                key: const Key('settings-connection-section'),
                 label: strings.connectionSection,
                 subtitle: strings.connectionSectionSub,
                 palette: palette,
@@ -667,6 +669,7 @@ class _SectionHeader extends StatelessWidget {
   final String? subtitle;
 
   const _SectionHeader({
+    super.key,
     required this.label,
     required this.palette,
     this.subtitle,

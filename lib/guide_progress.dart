@@ -103,15 +103,54 @@ class GuideProgress {
         guideAdvancedCategoryId,
       ).map((lesson) => lesson.id).toSet();
 
+      String migrateLessonId(String id) => switch (id) {
+        'essential.reconnection' => 'essential.notifications-background',
+        _ => id,
+      };
+
       Set<String> completed(Object? value, Set<String> allowed) {
         if (value is! List) return <String>{};
-        return value.whereType<String>().where(allowed.contains).toSet();
+        return value
+            .whereType<String>()
+            .map(migrateLessonId)
+            .where(allowed.contains)
+            .toSet();
+      }
+
+      final essentialCompleted = completed(
+        decoded['essentialCompleted'],
+        essentialIds,
+      );
+      final advancedCompleted = completed(
+        decoded['advancedCompleted'],
+        advancedIds,
+      );
+      final storedContentSchema = decoded['contentSchemaVersion'];
+      if (storedContentSchema is! int || storedContentSchema < 2) {
+        if (essentialCompleted.contains('essential.pair-token')) {
+          essentialCompleted.add('essential.enter-token');
+        }
+        if (advancedCompleted.contains('advanced.connection-hierarchy')) {
+          advancedCompleted.addAll(<String>{
+            'advanced.lan',
+            'advanced.webrtc',
+            'advanced.relay-reconnect',
+          });
+        }
+        if (advancedCompleted.contains('advanced.voice-tts-stt')) {
+          advancedCompleted.add('advanced.tts');
+        }
+        if (advancedCompleted.contains('advanced.troubleshooting')) {
+          advancedCompleted.add('advanced.troubleshooting-media');
+        }
       }
 
       final rawCurrent = decoded['currentLesson'];
-      final current =
-          rawCurrent is String && guideLessonById(rawCurrent) != null
-          ? rawCurrent
+      final migratedCurrent = rawCurrent is String
+          ? migrateLessonId(rawCurrent)
+          : null;
+      final current = guideLessonById(migratedCurrent) != null
+          ? migratedCurrent
           : null;
       const allowedOutcomes = <String>{
         'presenting',
@@ -128,11 +167,8 @@ class GuideProgress {
       return GuideProgress(
         schemaVersion: guideStateSchemaVersion,
         contentSchemaVersion: guideContentSchemaVersion,
-        essentialCompleted: completed(
-          decoded['essentialCompleted'],
-          essentialIds,
-        ),
-        advancedCompleted: completed(decoded['advancedCompleted'], advancedIds),
+        essentialCompleted: essentialCompleted,
+        advancedCompleted: advancedCompleted,
         currentLessonId: current,
         finished: decoded['finished'] == true,
         skipped: decoded['skipped'] == true,

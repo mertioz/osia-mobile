@@ -114,6 +114,52 @@ void main() {
     expect(progress.currentLessonId, isNull);
   });
 
+  test('schema-one progress expands split slides without resetting state', () {
+    final raw = jsonEncode(<String, Object?>{
+      'schemaVersion': guideStateSchemaVersion,
+      'contentSchemaVersion': 1,
+      'essentialCompleted': <String>[
+        'essential.pair-token',
+        'essential.reconnection',
+      ],
+      'advancedCompleted': <String>[
+        'advanced.connection-hierarchy',
+        'advanced.voice-tts-stt',
+        'advanced.troubleshooting',
+      ],
+      'currentLesson': 'essential.reconnection',
+      'finished': false,
+      'skipped': false,
+      'automaticPresentationHandled': true,
+      'outcome': 'closed',
+    });
+
+    final progress = GuideProgress.tryDecode(raw)!;
+    expect(progress.contentSchemaVersion, guideContentSchemaVersion);
+    expect(progress.currentLessonId, 'essential.notifications-background');
+    expect(
+      progress.essentialCompleted,
+      containsAll(<String>{
+        'essential.pair-token',
+        'essential.enter-token',
+        'essential.notifications-background',
+      }),
+    );
+    expect(
+      progress.advancedCompleted,
+      containsAll(<String>{
+        'advanced.connection-hierarchy',
+        'advanced.lan',
+        'advanced.webrtc',
+        'advanced.relay-reconnect',
+        'advanced.voice-tts-stt',
+        'advanced.tts',
+        'advanced.troubleshooting',
+        'advanced.troubleshooting-media',
+      }),
+    );
+  });
+
   test(
     'disconnect-style credential clearing preserves guide progress',
     () async {
