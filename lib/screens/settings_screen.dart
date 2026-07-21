@@ -14,6 +14,7 @@ import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 import 'legal_screen.dart';
+import 'guide_screen.dart';
 import 'memory_screen.dart';
 import 'providers_screen.dart';
 
@@ -216,6 +217,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ).push(slideFadeRoute(MemoryScreen(wsService: widget.wsService)));
   }
 
+  void _openGuide() {
+    Navigator.of(context).push(
+      slideFadeRoute(
+        GuideScreen(
+          storage: widget.storage,
+          languageCode: widget.languageController.code,
+        ),
+      ),
+    );
+  }
+
   void _restartServer() {
     if (_restartState == _RestartState.restarting) return;
     // The restart command can only be delivered over a live socket; the
@@ -363,6 +375,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
 
               // ── General ──────────────────────────────────────────────
+              _SectionHeader(
+                label: widget.languageController.code == 'fr' ? 'Aide' : 'Help',
+                palette: palette,
+              ),
+              _SectionCard(
+                palette: palette,
+                padding: EdgeInsets.zero,
+                child: _NavTile(
+                  key: const Key('show-mobile-guide'),
+                  icon: Icons.menu_book_rounded,
+                  title: widget.languageController.code == 'fr'
+                      ? 'Revoir le guide OSIA Mobile'
+                      : 'Show OSIA Mobile guide',
+                  subtitle: widget.languageController.code == 'fr'
+                      ? 'Hors ligne · progression conservée'
+                      : 'Offline · progress preserved',
+                  onTap: _openGuide,
+                  palette: palette,
+                ),
+              ),
+
               _SectionHeader(label: strings.sectionGeneral, palette: palette),
               _SectionCard(
                 palette: palette,
@@ -1083,6 +1116,7 @@ class _NavTile extends StatelessWidget {
   final VoidCallback onTap;
   final OsiaPalette palette;
   const _NavTile({
+    super.key,
     required this.icon,
     required this.title,
     this.subtitle,

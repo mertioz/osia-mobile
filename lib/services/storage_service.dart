@@ -41,6 +41,25 @@ class StorageService {
   static const _keyAcceptedTermsVersion = 'osia_accepted_terms_version';
   static const _keyAcceptedTermsAt = 'osia_accepted_terms_at';
   static const _keySeenPrivacyVersion = 'osia_seen_privacy_version';
+  static const _keyGuideState = 'osia_mobile_guide_state_v1';
+
+  static const List<String> _preGuideKeys = <String>[
+    _keyTailscaleIp,
+    _keyToken,
+    _keyThemeKey,
+    _keySelectedModel,
+    _keyLanguage,
+    _keyAutoTts,
+    _keyLiveApi,
+    _keyRelayDeviceId,
+    _keyNotificationsEnabled,
+    _keyBackgroundConnectionEnabled,
+    _keyShownNotificationIds,
+    _keyLanPairings,
+    _keyAcceptedTermsVersion,
+    _keyAcceptedTermsAt,
+    _keySeenPrivacyVersion,
+  ];
 
   /// Default/fallback server host. Normal connections resolve the current
   /// quick-tunnel host through rendezvous; only the token is asked for.
@@ -334,6 +353,25 @@ class StorageService {
 
   Future<void> recordPrivacySeen(String version) async {
     await _storage.write(key: _keySeenPrivacyVersion, value: version);
+  }
+
+  // ── Offline guide ──────────────────────────────────────────────────────
+
+  Future<String?> getGuideState() => _safeRead(_keyGuideState);
+
+  Future<void> setGuideState(String json) async {
+    await _storage.write(key: _keyGuideState, value: json);
+  }
+
+  /// True when this secure-storage profile contains evidence that an earlier
+  /// OSIA Mobile build has already run. This is checked before bootstrap writes
+  /// the detected language, so a missing guide key never opts existing users
+  /// into automatic onboarding after an update.
+  Future<bool> hasPreGuideAppState() async {
+    for (final key in _preGuideKeys) {
+      if (await _safeRead(key) != null) return true;
+    }
+    return false;
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────

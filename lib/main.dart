@@ -1,10 +1,12 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'guide_progress.dart';
 import 'l10n.dart';
 import 'legal_manifest.dart';
 import 'nav.dart';
 import 'screens/chat_screen.dart';
 import 'screens/connection_screen.dart';
+import 'screens/guide_screen.dart';
 import 'screens/legal_screen.dart';
 import 'services/background_connection_service.dart';
 import 'services/connection_lifecycle_service.dart';
@@ -42,6 +44,8 @@ class _OsiaAppState extends State<OsiaApp> {
 
   bool? _configured;
   bool _loading = true;
+  bool _showAutomaticGuide = false;
+  GuideProgress? _automaticGuideProgress;
   LegalStartupDecision _legalDecision = const LegalStartupDecision(
     requiresTermsAcceptance: false,
     showsPrivacyUpdate: false,
@@ -65,6 +69,22 @@ class _OsiaAppState extends State<OsiaApp> {
   }
 
   Future<void> _bootstrap() async {
+    // Resolve guide eligibility before this bootstrap writes the detected
+    // language. Every previously launched build has a language key, so the
+    // absence of all pre-guide keys is deterministic fresh-install evidence.
+    try {
+      final decision = await GuideProgressService(
+        _storage,
+      ).prepareLaunch().timeout(const Duration(seconds: 3));
+      _showAutomaticGuide = decision.showAutomatically;
+      _automaticGuideProgress = decision.progress;
+    } catch (_) {
+      // A storage failure must never block access to pairing or chat. Failing
+      // closed also prevents an uncertain profile from seeing automatic UI.
+      _showAutomaticGuide = false;
+      _automaticGuideProgress = null;
+    }
+
     // Restore the saved palette before the first paint so the UI doesn't
     // briefly flash the default theme.
     try {
@@ -230,6 +250,18 @@ class _OsiaAppState extends State<OsiaApp> {
               );
             });
           }
+        },
+      );
+    }
+    if (_showAutomaticGuide && _automaticGuideProgress != null) {
+      return GuideScreen(
+        storage: _storage,
+        languageCode: _languageController.code,
+        automatic: true,
+        initialProgress: _automaticGuideProgress,
+        onAutomaticClosed: () {
+          if (!mounted) return;
+          setState(() => _showAutomaticGuide = false);
         },
       );
     }

@@ -440,4 +440,35 @@ void main() {
       );
     },
   );
+
+  testWidgets('Help opens the offline guide without changing app settings', (
+    tester,
+  ) async {
+    final harness = await pumpSettings(tester, notificationsEnabled: true);
+    await harness.storage.setToken('preserved-token');
+    await harness.storage.setThemeKey('rose');
+    await harness.storage.setAutoTts(true);
+    await harness.storage.setSelectedModel('demo-provider/demo-model');
+    final settingsMessageCount = harness.wsService.sentTypes.length;
+
+    await tester.tap(find.byKey(const Key('show-mobile-guide')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byKey(const Key('guide-screen')), findsOneWidget);
+    expect(find.text('OSIA Mobile guide'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('guide-close')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    expect(await harness.storage.getToken(), 'preserved-token');
+    expect(await harness.storage.getThemeKey(), 'rose');
+    expect(await harness.storage.getAutoTts(), isTrue);
+    expect(await harness.storage.getNotificationsEnabled(), isTrue);
+    expect(
+      await harness.storage.getSelectedModel(),
+      'demo-provider/demo-model',
+    );
+    expect(harness.wsService.sentTypes, hasLength(settingsMessageCount));
+  });
 }
