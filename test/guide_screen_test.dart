@@ -1,3 +1,5 @@
+import 'dart:ui' show SemanticsAction;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -50,7 +52,7 @@ void main() {
     return storage;
   }
 
-  testWidgets('automatic guide starts on essential slide one and can skip', (
+  testWidgets('automatic guide starts on essential slide one and can close', (
     tester,
   ) async {
     var closed = 0;
@@ -66,12 +68,12 @@ void main() {
     expect(find.text('Slide 1 of 9'), findsOneWidget);
     expect(find.text('OSIA, from your phone'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('guide-skip')));
+    await tester.tap(find.byKey(const Key('guide-close')));
     await tester.pumpAndSettle();
     expect(closed, 1);
     final progress = GuideProgress.tryDecode(await storage.getGuideState())!;
-    expect(progress.skipped, isTrue);
-    expect(progress.outcome, 'skipped');
+    expect(progress.skipped, isFalse);
+    expect(progress.outcome, 'closed');
   });
 
   testWidgets('horizontal swipe directions synchronize progress and storage', (
@@ -99,38 +101,28 @@ void main() {
     expect(saved.currentLessonId, 'essential.what-is-mobile');
   });
 
-  testWidgets('Previous and Next remain synchronized with swipes', (
-    tester,
-  ) async {
+  testWidgets('visible previous and next controls are absent', (tester) async {
     await pumpGuide(
       tester,
       progress: GuideProgress.freshPresentation(),
       automatic: true,
       onAutomaticClosed: () {},
     );
-    expect(
-      tester
-          .widget<OutlinedButton>(find.byKey(const Key('guide-previous')))
-          .onPressed,
-      isNull,
-    );
-
-    await tester.tap(find.byKey(const Key('guide-next')));
-    await tester.pumpAndSettle();
-    expect(find.text('Slide 2 of 9'), findsOneWidget);
-    expect(
-      tester
-          .widget<OutlinedButton>(find.byKey(const Key('guide-previous')))
-          .onPressed,
-      isNotNull,
-    );
-
-    await tester.tap(find.byKey(const Key('guide-previous')));
-    await tester.pumpAndSettle();
-    expect(find.text('Slide 1 of 9'), findsOneWidget);
+    expect(find.byKey(const Key('guide-previous')), findsNothing);
+    expect(find.byKey(const Key('guide-next')), findsNothing);
+    expect(find.byKey(const Key('guide-finish')), findsNothing);
+    expect(find.byType(OutlinedButton), findsNothing);
+    expect(find.byKey(const Key('guide-swipe-hint')), findsOneWidget);
+    final pageBottom = tester
+        .getRect(find.byKey(const Key('guide-page-view')))
+        .bottom;
+    final screenBottom = tester
+        .getRect(find.byKey(const Key('guide-screen')))
+        .bottom;
+    expect(pageBottom, closeTo(screenBottom, 0.1));
   });
 
-  testWidgets('rapid repeated navigation cannot skip or desynchronize slides', (
+  testWidgets('semantic next and previous actions navigate without buttons', (
     tester,
   ) async {
     final storage = await pumpGuide(
@@ -139,16 +131,32 @@ void main() {
       automatic: true,
       onAutomaticClosed: () {},
     );
-    final next = find.byKey(const Key('guide-next'));
-    await tester.tap(next);
-    await tester.tap(next);
-    await tester.tap(next);
+    final semanticsHandle = tester.ensureSemantics();
+    var node = tester.getSemantics(
+      find.byKey(const Key('guide-slide-semantics')),
+    );
+    expect(node.getSemanticsData().hasAction(SemanticsAction.increase), isTrue);
+    expect(
+      node.getSemanticsData().hasAction(SemanticsAction.decrease),
+      isFalse,
+    );
+    tester.semantics.increase(
+      find.semantics.byLabel(RegExp(r'^Slide 1 of 9:')),
+    );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.text('Slide 2 of 9'), findsOneWidget);
+    node = tester.getSemantics(find.byKey(const Key('guide-slide-semantics')));
+    expect(node.getSemanticsData().hasAction(SemanticsAction.decrease), isTrue);
+    tester.semantics.decrease(
+      find.semantics.byLabel(RegExp(r'^Slide 2 of 9:')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Slide 1 of 9'), findsOneWidget);
     final saved = GuideProgress.tryDecode(await storage.getGuideState())!;
-    expect(saved.currentLessonId, 'essential.before-pairing');
+    expect(saved.currentLessonId, 'essential.what-is-mobile');
     expect(saved.essentialCompleted, <String>{'essential.what-is-mobile'});
+    semanticsHandle.dispose();
   });
 
   testWidgets('rapid repeated swipes settle on the persisted visible slide', (
@@ -178,7 +186,7 @@ void main() {
     );
   });
 
-  testWidgets('manual opening shows two cards then a compact category list', (
+  testWidgets('manual opening shows three cards then a compact category list', (
     tester,
   ) async {
     await pumpGuide(tester, progress: GuideProgress.migrated());
@@ -188,8 +196,9 @@ void main() {
       find.byKey(const Key('guide-category-getting-started')),
       findsOneWidget,
     );
+    expect(find.byKey(const Key('guide-category-master-osia')), findsOneWidget);
     expect(
-      find.byKey(const Key('guide-category-master-osia-mobile')),
+      find.byKey(const Key('guide-category-osia-advanced')),
       findsOneWidget,
     );
     expect(
@@ -205,15 +214,13 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(
-      find.byKey(const Key('guide-category-master-osia-mobile')),
-    );
+    await tester.tap(find.byKey(const Key('guide-category-master-osia')));
     await tester.pumpAndSettle();
     expect(
-      find.byKey(const Key('guide-toc-advanced.connection-hierarchy')),
+      find.byKey(const Key('guide-toc-advanced.provider-api-hierarchy')),
       findsOneWidget,
     );
-    expect(find.textContaining('15 slides'), findsWidgets);
+    expect(find.textContaining('20 slides'), findsWidgets);
   });
 
   testWidgets(
@@ -225,18 +232,16 @@ void main() {
         'osia_notifications_enabled': 'true',
       });
       final progress = GuideProgress.migrated().copyWith(
-        currentLessonId: 'advanced.models',
+        currentLessonId: 'advanced.ai-model-hierarchy',
       );
       final storage = await pumpGuide(tester, progress: progress);
 
-      await tester.tap(
-        find.byKey(const Key('guide-category-master-osia-mobile')),
-      );
+      await tester.tap(find.byKey(const Key('guide-category-master-osia')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('guide-resume')));
       await tester.pumpAndSettle();
-      expect(find.text('Slide 11 of 15'), findsOneWidget);
-      expect(find.text('Models and AI selection'), findsOneWidget);
+      expect(find.text('Slide 5 of 20'), findsOneWidget);
+      expect(find.text('Models and AI hierarchy'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('guide-close')));
       await tester.pumpAndSettle();
@@ -246,15 +251,15 @@ void main() {
     },
   );
 
-  testWidgets('finishing the last essential slide completes onboarding', (
+  testWidgets('arriving at the final slide completes without auto-closing', (
     tester,
   ) async {
     var closed = 0;
     final lessons = guideLessonsForCategory(guideEssentialCategoryId);
     final progress = GuideProgress.freshPresentation().copyWith(
-      currentLessonId: lessons.last.id,
+      currentLessonId: lessons[lessons.length - 2].id,
       essentialCompleted: lessons
-          .take(lessons.length - 1)
+          .take(lessons.length - 2)
           .map((e) => e.id)
           .toSet(),
     );
@@ -265,13 +270,17 @@ void main() {
       onAutomaticClosed: () => closed++,
     );
 
-    await tester.tap(find.byKey(const Key('guide-finish')));
+    await tester.drag(
+      find.byKey(const Key('guide-page-view')),
+      const Offset(-600, 0),
+    );
     await tester.pumpAndSettle();
     final saved = GuideProgress.tryDecode(await storage.getGuideState())!;
     expect(saved.finished, isTrue);
     expect(saved.outcome, 'completed');
     expect(saved.essentialCompleted, hasLength(lessons.length));
-    expect(closed, 1);
+    expect(closed, 0);
+    expect(find.byKey(const Key('guide-screen')), findsOneWidget);
   });
 
   testWidgets('slide content exposes only guide navigation actions', (
@@ -295,13 +304,7 @@ void main() {
         .map((element) => element.widget.key)
         .whereType<Key>()
         .toSet();
-    expect(keys, <Key>{
-      const Key('guide-close'),
-      const Key('guide-toc'),
-      const Key('guide-skip'),
-      const Key('guide-previous'),
-      const Key('guide-next'),
-    });
+    expect(keys, <Key>{const Key('guide-close'), const Key('guide-toc')});
     for (final forbidden in <String>[
       'Start pairing',
       'Connect now',
@@ -479,8 +482,9 @@ void main() {
         );
         expect(tester.takeException(), isNull, reason: testCase.name);
         expect(find.byKey(const Key('guide-close')), findsOneWidget);
-        expect(find.byKey(const Key('guide-next')), findsOneWidget);
-        expect(find.byKey(const Key('guide-previous')), findsOneWidget);
+        expect(find.byKey(const Key('guide-page-view')), findsOneWidget);
+        expect(find.byKey(const Key('guide-previous')), findsNothing);
+        expect(find.byKey(const Key('guide-next')), findsNothing);
       }
     },
   );
@@ -534,7 +538,10 @@ void main() {
       automatic: true,
       onAutomaticClosed: () {},
     );
-    await tester.tap(find.byKey(const Key('guide-next')));
+    await tester.drag(
+      find.byKey(const Key('guide-page-view')),
+      const Offset(-600, 0),
+    );
     await tester.pump(const Duration(milliseconds: 40));
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();

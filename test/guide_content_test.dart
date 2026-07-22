@@ -57,16 +57,23 @@ int _mainWordCount(GuideLesson lesson, String language) => _wordCount(
 }
 
 void main() {
-  test('guide has two ordered categories and unique stable slide ids', () {
-    expect(guideContentSchemaVersion, 2);
+  test('guide has three ordered categories and unique stable slide ids', () {
+    expect(guideContentSchemaVersion, 3);
     expect(guideCategories.map((category) => category.id), <String>[
       guideEssentialCategoryId,
+      guideMasteryCategoryId,
       guideAdvancedCategoryId,
+    ]);
+    expect(guideCategories.map((category) => category.semanticId), <String>[
+      'essential',
+      'mastery',
+      'advanced',
     ]);
     final ids = guideLessons.map((lesson) => lesson.id).toList();
     expect(ids.toSet(), hasLength(ids.length));
     expect(guideLessonsForCategory(guideEssentialCategoryId), hasLength(9));
-    expect(guideLessonsForCategory(guideAdvancedCategoryId), hasLength(15));
+    expect(guideLessonsForCategory(guideMasteryCategoryId), hasLength(20));
+    expect(guideLessonsForCategory(guideAdvancedCategoryId), hasLength(38));
     for (final category in guideCategories) {
       final orders = guideLessonsForCategory(
         category.id,
@@ -75,41 +82,117 @@ void main() {
     }
   });
 
-  test(
-    'validated content is split without silently deleting core subjects',
-    () {
-      final ids = guideLessons.map((lesson) => lesson.id).toSet();
-      expect(
-        ids,
-        containsAll(<String>{
-          'essential.what-is-mobile',
-          'essential.before-pairing',
-          'essential.pair-token',
-          'essential.enter-token',
-          'essential.mobile-pages',
-          'essential.first-message',
-          'essential.voice',
-          'essential.notifications-background',
-          'essential.ready',
-          'advanced.pairing-trust',
-          'advanced.connection-hierarchy',
-          'advanced.lan',
-          'advanced.webrtc',
-          'advanced.relay-reconnect',
-          'advanced.android-background',
-          'advanced.ios-background',
-          'advanced.voice-tts-stt',
-          'advanced.tts',
-          'advanced.conversations-sync',
-          'advanced.models',
-          'advanced.notifications',
-          'advanced.troubleshooting',
-          'advanced.troubleshooting-media',
-          'advanced.security-privacy',
-        }),
-      );
-    },
-  );
+  test('mastery and advanced semantic subject coverage is complete', () {
+    final mastery = guideLessonsForCategory(
+      guideMasteryCategoryId,
+    ).map((lesson) => lesson.subjectId).toSet();
+    expect(mastery, <String?>{
+      'mental-model',
+      'conversations-turns',
+      'providers-accounts',
+      'provider-hierarchy',
+      'model-hierarchy',
+      'reasoning',
+      'keys-quotas-security',
+      'files-images',
+      'autonomous',
+      'scheduled-tasks',
+      'connectors',
+      'memory-context',
+      'tools-computer-control',
+      'voice',
+      'pairing-connection',
+      'notifications-background',
+      'settings-tour',
+      'updates',
+      'troubleshooting',
+      'practical-workflows',
+    });
+    final advanced = guideLessonsForCategory(
+      guideAdvancedCategoryId,
+    ).map((lesson) => lesson.subjectId).toSet();
+    expect(advanced, <String?>{
+      'product-architecture',
+      'repository-topology',
+      'pc-architecture',
+      'mobile-architecture',
+      'worker-architecture',
+      'message-flow',
+      'pairing-protocol',
+      'transport-overview',
+      'lan',
+      'webrtc',
+      'ice-stun-turn',
+      'relay',
+      'e2e',
+      'handshake',
+      'correlation',
+      'attachments',
+      'vision',
+      'provider-architecture',
+      'provider-hierarchy',
+      'model-capabilities',
+      'agent-runtime',
+      'autonomous',
+      'computer-use',
+      'cron',
+      'mcp',
+      'memory-persistence',
+      'configuration-secrets',
+      'development-environment',
+      'takeover-workflow',
+      'safe-modification',
+      'testing-strategy',
+      'windows-packaging',
+      'android-packaging',
+      'worker-site-deployment',
+      'release-process',
+      'security-model',
+      'developer-troubleshooting',
+      'glossary',
+    });
+    final glossary = guideLessonsForCategory(
+      guideAdvancedCategoryId,
+    ).singleWhere((lesson) => lesson.subjectId == 'glossary');
+    expect(glossary.glossaryIds.toSet(), <String>{
+      'provider',
+      'model',
+      'api',
+      'token',
+      'context',
+      'thinking',
+      'mcp',
+      'dcr',
+      'oauth',
+      'cron',
+      'websocket',
+      'e2e',
+      'lan',
+      'p2p',
+      'webrtc',
+      'sdp',
+      'ice',
+      'stun',
+      'turn',
+      'signaling',
+      'relay',
+      'durable-object',
+      'hibernation',
+      'chunking',
+      'hash',
+      'mime',
+      'abi',
+      'apk',
+      'aab',
+      'r8',
+      'pyinstaller',
+      'inno-setup',
+      'r2',
+      'rollout',
+      'version-name',
+      'version-code',
+    });
+  });
 
   test('every slide contains complete English and French offline copy', () {
     for (final category in guideCategories) {
@@ -119,8 +202,8 @@ void main() {
       expect(category.summary.fr.trim(), isNotEmpty);
     }
     for (final lesson in guideLessons) {
-      expect(lesson.id, matches(RegExp(r'^(essential|advanced)\.')));
-      expect(lesson.paragraphs.length, lessThanOrEqualTo(1), reason: lesson.id);
+      expect(lesson.id, matches(RegExp(r'^(essential|mastery|advanced)\.')));
+      expect(lesson.paragraphs.length, lessThanOrEqualTo(5), reason: lesson.id);
       expect(lesson.bullets.length, lessThanOrEqualTo(3), reason: lesson.id);
       for (final value in <GuideText>[
         lesson.title,
@@ -150,32 +233,46 @@ void main() {
 
   test('mobile density is bounded and essential slides are shorter', () {
     final essential = guideLessonsForCategory(guideEssentialCategoryId);
+    final mastery = guideLessonsForCategory(guideMasteryCategoryId);
     final advanced = guideLessonsForCategory(guideAdvancedCategoryId);
     final essentialCounts = <int>[];
-    final advancedCounts = <int>[];
+    final detailedCounts = <int>[];
     for (final lesson in essential) {
       final count = _mainWordCount(lesson, 'en');
       essentialCounts.add(count);
       expect(count, inInclusiveRange(20, 68), reason: lesson.id);
     }
-    for (final lesson in advanced) {
+    for (final lesson in <GuideLesson>[...mastery, ...advanced]) {
       final count = _mainWordCount(lesson, 'en');
-      advancedCounts.add(count);
-      expect(count, inInclusiveRange(30, 86), reason: lesson.id);
+      detailedCounts.add(count);
+      expect(
+        count,
+        inInclusiveRange(15, lesson.subjectId == 'glossary' ? 450 : 220),
+        reason: lesson.id,
+      );
     }
     final essentialAverage =
         essentialCounts.reduce((a, b) => a + b) / essentialCounts.length;
-    final advancedAverage =
-        advancedCounts.reduce((a, b) => a + b) / advancedCounts.length;
-    expect(essentialAverage, lessThan(advancedAverage));
+    final detailedAverage =
+        detailedCounts.reduce((a, b) => a + b) / detailedCounts.length;
+    expect(essentialAverage, lessThan(detailedAverage));
     for (final lesson in guideLessons) {
       for (final block in <GuideText>[
         lesson.introduction,
         ...lesson.paragraphs,
         ...lesson.bullets,
       ]) {
-        expect(_wordCount(block.en), lessThanOrEqualTo(55), reason: lesson.id);
-        expect(_wordCount(block.fr), lessThanOrEqualTo(65), reason: lesson.id);
+        final maximum = lesson.subjectId == 'glossary' ? 420 : 145;
+        expect(
+          _wordCount(block.en),
+          lessThanOrEqualTo(maximum),
+          reason: lesson.id,
+        );
+        expect(
+          _wordCount(block.fr),
+          lessThanOrEqualTo(maximum + 20),
+          reason: lesson.id,
+        );
       }
     }
   });
@@ -206,28 +303,35 @@ void main() {
     ]) {
       expect(copy, contains(phrase), reason: phrase);
     }
+    final ready = guideLessonById('essential.ready')!;
+    expect(
+      ready.remember!.en,
+      'Finish closes this guide; Help keeps all three guide levels available.',
+    );
+    expect(
+      ready.remember!.fr,
+      'Terminer ferme ce guide ; Aide garde les trois niveaux de guide disponibles.',
+    );
   });
 
-  test('advanced copy covers exact transports, platforms and safety', () {
+  test('mastery copy covers audited user features without false promises', () {
     final copy = _copy(
-      guideLessonsForCategory(guideAdvancedCategoryId),
+      guideLessonsForCategory(guideMasteryCategoryId),
       'en',
     ).toLowerCase();
     for (final phrase in <String>[
-      'pairing and trust',
-      'connection hierarchy',
-      'private-lan wss',
-      'webrtc/p2p',
-      'encrypted relay',
-      'android background',
-      'ios background',
+      'provider and api hierarchy',
+      'models and ai hierarchy',
+      'reasoning',
+      'scheduled tasks',
+      'autonomous',
+      'mcp',
+      'memory',
+      'computer',
       'tts',
       'stt',
-      'conversations and synchronization',
-      'provider operates',
-      'notification details',
-      'troubleshooting',
-      'security and privacy',
+      'pairing',
+      'webrtc',
     ]) {
       expect(copy, contains(phrase), reason: phrase);
     }
@@ -235,16 +339,38 @@ void main() {
       'wake word is available',
       'apns push is supported',
       'works while the pc is off',
-      'available on the app store',
       'unlimited background',
     ]) {
       expect(copy, isNot(contains(unsupported)), reason: unsupported);
     }
-    expect(
-      copy,
-      contains('does not claim public testflight or app store availability'),
-    );
   });
+
+  test(
+    'advanced guide covers architecture, takeover, release and glossary',
+    () {
+      final copy = _copy(
+        guideLessonsForCategory(guideAdvancedCategoryId),
+        'en',
+      ).toLowerCase();
+      for (final phrase in <String>[
+        'durable object',
+        'private-lan wss',
+        'webrtc',
+        'stun',
+        'turn',
+        'end-to-end',
+        'dynamic client registration',
+        'pyinstaller',
+        'inno setup',
+        'versioncode',
+        'r2',
+        'twelve-step',
+      ]) {
+        expect(copy, contains(phrase), reason: phrase);
+      }
+      expect(copy, isNot(contains('works while the pc is off')));
+    },
+  );
 
   test(
     'curated screenshots are declared, decodable and metadata-free',
@@ -289,6 +415,7 @@ void main() {
     () {
       final source = <String>[
         File('lib/guide_content.dart').readAsStringSync(),
+        File('lib/guide_curriculum.g.dart').readAsStringSync(),
         File('test/guide_asset_capture_test.dart').readAsStringSync(),
       ].join('\n');
       final forbidden = <RegExp>[

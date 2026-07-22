@@ -1,8 +1,12 @@
 import 'package:flutter/foundation.dart';
 
-const int guideContentSchemaVersion = 2;
+part 'guide_curriculum.g.dart';
+
+const int guideContentSchemaVersion = 3;
 const String guideEssentialCategoryId = 'getting-started';
-const String guideAdvancedCategoryId = 'master-osia-mobile';
+const String guideMasteryCategoryId = 'master-osia';
+const String guideAdvancedCategoryId = 'osia-advanced';
+const String guideLegacyAdvancedCategoryId = 'master-osia-mobile';
 
 @immutable
 class GuideText {
@@ -18,12 +22,14 @@ class GuideText {
 class GuideCategory {
   const GuideCategory({
     required this.id,
+    required this.semanticId,
     required this.order,
     required this.title,
     required this.summary,
   });
 
   final String id;
+  final String semanticId;
   final int order;
   final GuideText title;
   final GuideText summary;
@@ -45,6 +51,8 @@ class GuideLesson {
     this.asset,
     this.caption,
     this.altText,
+    this.subjectId,
+    this.glossaryIds = const <String>[],
   });
 
   final String id;
@@ -60,11 +68,14 @@ class GuideLesson {
   final String? asset;
   final GuideText? caption;
   final GuideText? altText;
+  final String? subjectId;
+  final List<String> glossaryIds;
 }
 
 const List<GuideCategory> guideCategories = <GuideCategory>[
   GuideCategory(
     id: guideEssentialCategoryId,
+    semanticId: 'essential',
     order: 1,
     title: GuideText(en: 'Getting started', fr: 'Démarrage essentiel'),
     summary: GuideText(
@@ -73,17 +84,28 @@ const List<GuideCategory> guideCategories = <GuideCategory>[
     ),
   ),
   GuideCategory(
-    id: guideAdvancedCategoryId,
+    id: guideMasteryCategoryId,
+    semanticId: 'mastery',
     order: 2,
-    title: GuideText(en: 'Master OSIA Mobile', fr: 'Maîtriser OSIA Mobile'),
+    title: GuideText(en: 'Master OSIA', fr: 'Maîtriser OSIA'),
     summary: GuideText(
-      en: 'Understand connections, voice, models, synchronization and privacy in depth.',
-      fr: 'Comprenez en détail les connexions, la voix, les modèles, la synchronisation et la confidentialité.',
+      en: 'Every OSIA feature, explained clearly with practical examples.',
+      fr: 'Toutes les fonctions d’OSIA, expliquées clairement avec des exemples.',
+    ),
+  ),
+  GuideCategory(
+    id: guideAdvancedCategoryId,
+    semanticId: 'advanced',
+    order: 3,
+    title: GuideText(en: 'OSIA: Advanced Guide', fr: 'OSIA : Guide avancé'),
+    summary: GuideText(
+      en: 'Architecture, protocols, development, security, and project continuation.',
+      fr: 'Architecture, protocoles, développement, sécurité et reprise du projet.',
     ),
   ),
 ];
 
-const List<GuideLesson> guideLessons = <GuideLesson>[
+const List<GuideLesson> _legacyGuideLessons = <GuideLesson>[
   GuideLesson(
     id: 'essential.what-is-mobile',
     categoryId: guideEssentialCategoryId,
@@ -377,8 +399,8 @@ const List<GuideLesson> guideLessons = <GuideLesson>[
       fr: 'Le guide avancé explique les modes de connexion, la voix, les modèles, les notifications et le dépannage.',
     ),
     remember: GuideText(
-      en: 'Finish closes this guide; Help keeps both categories available.',
-      fr: 'Terminer ferme ce guide ; Aide garde les deux catégories disponibles.',
+      en: 'Finish closes this guide; Help keeps all three guide levels available.',
+      fr: 'Terminer ferme ce guide ; Aide garde les trois niveaux de guide disponibles.',
     ),
   ),
 
@@ -790,6 +812,11 @@ const List<GuideLesson> guideLessons = <GuideLesson>[
       fr: 'Partagez uniquement les éléments assainis indispensables à la compréhension du problème.',
     ),
   ),
+];
+
+final List<GuideLesson> guideLessons = <GuideLesson>[
+  ..._legacyGuideLessons.take(9),
+  ...generatedGuideCurriculum,
 ];
 
 List<GuideLesson> guideLessonsForCategory(String categoryId) {

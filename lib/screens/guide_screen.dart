@@ -45,7 +45,6 @@ class _GuideScreenState extends State<GuideScreen> {
   int _pageIndex = 0;
   bool _showTableOfContents = false;
   bool _transitioning = false;
-  bool _saving = false;
   bool _closing = false;
 
   bool get _isFrench => widget.languageCode == 'fr';
@@ -114,7 +113,7 @@ class _GuideScreenState extends State<GuideScreen> {
   }
 
   Future<void> _openLesson(GuideLesson lesson) async {
-    if (_progress == null || _saving) return;
+    if (_progress == null) return;
     await _persistenceQueue;
     final latest = _progress;
     if (latest == null) return;
@@ -148,11 +147,21 @@ class _GuideScreenState extends State<GuideScreen> {
       if (progress == null) return;
       GuideProgress nextProgress = progress;
       if (index > previousIndex) {
-        for (var i = previousIndex; i < index; i++) {
+        final lastReached = index == lessons.length - 1;
+        final completedThrough = lastReached ? index : index - 1;
+        for (var i = previousIndex; i <= completedThrough; i++) {
           nextProgress = await _progressService.completeLesson(
             nextProgress,
             lessons[i],
           );
+        }
+        if (lastReached) {
+          if (lesson.categoryId == guideEssentialCategoryId) {
+            nextProgress = await _progressService.markFinished(nextProgress);
+          } else {
+            nextProgress = nextProgress.copyWith(outcome: 'completed');
+            await _progressService.save(nextProgress);
+          }
         }
       }
       nextProgress = await _progressService.selectLesson(
@@ -189,47 +198,17 @@ class _GuideScreenState extends State<GuideScreen> {
   }
 
   Future<void> _next() async {
-    final progress = _progress;
     final lesson = _currentLesson;
-    if (progress == null || lesson == null || _saving || _transitioning) return;
+    if (_progress == null || lesson == null || _transitioning) {
+      return;
+    }
     final lessons = guideLessonsForCategory(lesson.categoryId);
     if (_pageIndex < lessons.length - 1) {
       await _animateToPage(_pageIndex + 1);
-      return;
     }
-
-    setState(() => _saving = true);
-    await _persistenceQueue;
-    var updated = await _progressService.completeLesson(_progress!, lesson);
-    if (lesson.categoryId == guideEssentialCategoryId) {
-      updated = await _progressService.markFinished(updated);
-    } else {
-      updated = updated.copyWith(outcome: 'completed');
-      await _progressService.save(updated);
-    }
-    if (!mounted) return;
-    setState(() {
-      _progress = updated;
-      _saving = false;
-    });
-    await _close(markClosed: false);
   }
 
   Future<void> _previous() => _animateToPage(_pageIndex - 1);
-
-  Future<void> _skip() async {
-    final progress = _progress;
-    if (progress == null || _saving) return;
-    setState(() => _saving = true);
-    await _persistenceQueue;
-    final skipped = await _progressService.markSkipped(_progress!);
-    if (!mounted) return;
-    setState(() {
-      _progress = skipped;
-      _saving = false;
-    });
-    await _close(markClosed: false);
-  }
 
   Future<void> _close({bool markClosed = true}) async {
     if (_closing) return;
@@ -594,110 +573,48 @@ class _GuideScreenState extends State<GuideScreen> {
           ),
         ),
         const SizedBox(height: 8),
+        if (_pageIndex == 0)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 7),
+            child: Text(
+              _isFrench
+                  ? 'Faites glisser horizontalement pour continuer.'
+                  : 'Swipe horizontally to continue.',
+              key: const Key('guide-swipe-hint'),
+              textAlign: TextAlign.center,
+              style: TextStyle(color: palette.textMuted, fontSize: 11.5),
+            ),
+          ),
         Expanded(
-          child: PageView.builder(
-            key: const Key('guide-page-view'),
-            controller: _pageController,
-            itemCount: lessons.length,
-            allowImplicitScrolling: true,
-            physics: const PageScrollPhysics(parent: ClampingScrollPhysics()),
-            onPageChanged: _onPageChanged,
-            itemBuilder: (context, index) => _GuideSlide(
-              key: Key('guide-lesson-${lessons[index].id}'),
-              lesson: lessons[index],
-              languageCode: widget.languageCode,
-              palette: palette,
-              reduceMotion: reduceMotion,
+          child: Semantics(
+            key: const Key('guide-slide-semantics'),
+            container: true,
+            liveRegion: true,
+            label: _isFrench
+                ? 'Écran ${_pageIndex + 1} sur ${lessons.length} : ${_text(lessons[_pageIndex].title)}'
+                : 'Slide ${_pageIndex + 1} of ${lessons.length}: ${_text(lessons[_pageIndex].title)}',
+            onIncrease: _pageIndex < lessons.length - 1
+                ? () => unawaited(_next())
+                : null,
+            onDecrease: _pageIndex > 0 ? () => unawaited(_previous()) : null,
+            child: PageView.builder(
+              key: const Key('guide-page-view'),
+              controller: _pageController,
+              itemCount: lessons.length,
+              allowImplicitScrolling: true,
+              physics: const PageScrollPhysics(parent: ClampingScrollPhysics()),
+              onPageChanged: _onPageChanged,
+              itemBuilder: (context, index) => _GuideSlide(
+                key: Key('guide-lesson-${lessons[index].id}'),
+                lesson: lessons[index],
+                languageCode: widget.languageCode,
+                palette: palette,
+                reduceMotion: reduceMotion,
+              ),
             ),
           ),
         ),
-        _buildBottomNavigation(palette, lessons.length),
       ],
-    );
-  }
-
-  Widget _buildBottomNavigation(OsiaPalette palette, int lessonCount) {
-    final last = _pageIndex == lessonCount - 1;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: palette.background,
-        border: Border(top: BorderSide(color: palette.border)),
-      ),
-      child: SafeArea(
-        top: false,
-        minimum: const EdgeInsets.fromLTRB(14, 8, 14, 10),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final textScale = MediaQuery.textScalerOf(context).scale(1);
-            final skip = widget.automatic
-                ? TextButton(
-                    key: const Key('guide-skip'),
-                    onPressed: _saving ? null : _skip,
-                    child: Text(_isFrench ? 'Passer' : 'Skip'),
-                  )
-                : null;
-            final previous = OutlinedButton.icon(
-              key: const Key('guide-previous'),
-              onPressed: _pageIndex > 0 && !_saving && !_transitioning
-                  ? _previous
-                  : null,
-              icon: const Icon(Icons.arrow_back_rounded, size: 18),
-              label: Text(_isFrench ? 'Précédent' : 'Previous'),
-            );
-            final next = FilledButton.icon(
-              key: Key(last ? 'guide-finish' : 'guide-next'),
-              onPressed: _saving || _transitioning ? null : _next,
-              iconAlignment: IconAlignment.end,
-              icon: Icon(
-                last ? Icons.check_rounded : Icons.arrow_forward_rounded,
-                size: 18,
-              ),
-              label: Text(
-                last
-                    ? (_isFrench ? 'Terminer' : 'Finish')
-                    : (_isFrench ? 'Suivant' : 'Next'),
-              ),
-            );
-
-            if (constraints.maxWidth < 360 || textScale >= 1.8) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (skip != null)
-                    Align(alignment: Alignment.centerLeft, child: skip),
-                  previous,
-                  const SizedBox(height: 7),
-                  next,
-                ],
-              );
-            }
-            final pageButtons = Row(
-              children: [
-                Expanded(child: previous),
-                const SizedBox(width: 10),
-                Expanded(child: next),
-              ],
-            );
-            if (constraints.maxWidth < 500 || textScale >= 1.3) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (skip != null)
-                    Align(alignment: Alignment.centerLeft, child: skip),
-                  pageButtons,
-                ],
-              );
-            }
-            return Row(
-              children: [
-                ?skip,
-                if (skip != null) const SizedBox(width: 8),
-                Expanded(child: pageButtons),
-              ],
-            );
-          },
-        ),
-      ),
     );
   }
 
@@ -709,6 +626,8 @@ class _GuideScreenState extends State<GuideScreen> {
   bool _isCompleted(GuideProgress progress, GuideLesson lesson) =>
       lesson.categoryId == guideEssentialCategoryId
       ? progress.essentialCompleted.contains(lesson.id)
+      : lesson.categoryId == guideMasteryCategoryId
+      ? progress.masteryCompleted.contains(lesson.id)
       : progress.advancedCompleted.contains(lesson.id);
 }
 

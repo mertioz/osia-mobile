@@ -5,11 +5,14 @@ import 'services/storage_service.dart';
 
 const int guideStateSchemaVersion = 1;
 
+String _identity(String value) => value;
+
 class GuideProgress {
   const GuideProgress({
     required this.schemaVersion,
     required this.contentSchemaVersion,
     required this.essentialCompleted,
+    required this.masteryCompleted,
     required this.advancedCompleted,
     required this.currentLessonId,
     required this.finished,
@@ -21,6 +24,7 @@ class GuideProgress {
   final int schemaVersion;
   final int contentSchemaVersion;
   final Set<String> essentialCompleted;
+  final Set<String> masteryCompleted;
   final Set<String> advancedCompleted;
   final String? currentLessonId;
   final bool finished;
@@ -32,6 +36,7 @@ class GuideProgress {
     schemaVersion: guideStateSchemaVersion,
     contentSchemaVersion: guideContentSchemaVersion,
     essentialCompleted: const <String>{},
+    masteryCompleted: const <String>{},
     advancedCompleted: const <String>{},
     currentLessonId: guideLessonsForCategory(guideEssentialCategoryId).first.id,
     finished: false,
@@ -44,6 +49,7 @@ class GuideProgress {
     schemaVersion: guideStateSchemaVersion,
     contentSchemaVersion: guideContentSchemaVersion,
     essentialCompleted: <String>{},
+    masteryCompleted: <String>{},
     advancedCompleted: <String>{},
     currentLessonId: null,
     finished: false,
@@ -54,6 +60,7 @@ class GuideProgress {
 
   GuideProgress copyWith({
     Set<String>? essentialCompleted,
+    Set<String>? masteryCompleted,
     Set<String>? advancedCompleted,
     String? currentLessonId,
     bool clearCurrentLesson = false,
@@ -65,6 +72,7 @@ class GuideProgress {
     schemaVersion: guideStateSchemaVersion,
     contentSchemaVersion: guideContentSchemaVersion,
     essentialCompleted: essentialCompleted ?? this.essentialCompleted,
+    masteryCompleted: masteryCompleted ?? this.masteryCompleted,
     advancedCompleted: advancedCompleted ?? this.advancedCompleted,
     currentLessonId: clearCurrentLesson
         ? null
@@ -80,6 +88,7 @@ class GuideProgress {
     'schemaVersion': schemaVersion,
     'contentSchemaVersion': contentSchemaVersion,
     'essentialCompleted': essentialCompleted.toList()..sort(),
+    'masteryCompleted': masteryCompleted.toList()..sort(),
     'advancedCompleted': advancedCompleted.toList()..sort(),
     'currentLesson': currentLessonId,
     'finished': finished,
@@ -99,20 +108,45 @@ class GuideProgress {
       final essentialIds = guideLessonsForCategory(
         guideEssentialCategoryId,
       ).map((lesson) => lesson.id).toSet();
+      final masteryIds = guideLessonsForCategory(
+        guideMasteryCategoryId,
+      ).map((lesson) => lesson.id).toSet();
       final advancedIds = guideLessonsForCategory(
         guideAdvancedCategoryId,
       ).map((lesson) => lesson.id).toSet();
 
-      String migrateLessonId(String id) => switch (id) {
+      String migrateEssentialId(String id) => switch (id) {
         'essential.reconnection' => 'essential.notifications-background',
         _ => id,
       };
 
-      Set<String> completed(Object? value, Set<String> allowed) {
+      String migrateLegacyMasteryId(String id) => switch (id) {
+        'advanced.pairing-trust' ||
+        'advanced.connection-hierarchy' ||
+        'advanced.lan' ||
+        'advanced.webrtc' ||
+        'advanced.relay-reconnect' ||
+        'advanced.security-privacy' => 'advanced.pc-mobile-connection',
+        'advanced.android-background' ||
+        'advanced.ios-background' ||
+        'advanced.notifications' => 'mastery.notifications-background',
+        'advanced.voice-tts-stt' || 'advanced.tts' => 'advanced.voice-tts-stt',
+        'advanced.conversations-sync' => 'mastery.conversations-turns',
+        'advanced.models' => 'advanced.ai-model-hierarchy',
+        'advanced.troubleshooting' ||
+        'advanced.troubleshooting-media' => 'mastery.troubleshooting',
+        _ => id,
+      };
+
+      Set<String> completed(
+        Object? value,
+        Set<String> allowed, {
+        String Function(String) migrate = _identity,
+      }) {
         if (value is! List) return <String>{};
         return value
             .whereType<String>()
-            .map(migrateLessonId)
+            .map(migrate)
             .where(allowed.contains)
             .toSet();
       }
@@ -120,34 +154,32 @@ class GuideProgress {
       final essentialCompleted = completed(
         decoded['essentialCompleted'],
         essentialIds,
-      );
-      final advancedCompleted = completed(
-        decoded['advancedCompleted'],
-        advancedIds,
+        migrate: migrateEssentialId,
       );
       final storedContentSchema = decoded['contentSchemaVersion'];
+      final legacyContent =
+          storedContentSchema is! int || storedContentSchema < 3;
+      final masteryCompleted = legacyContent
+          ? completed(
+              decoded['advancedCompleted'],
+              masteryIds,
+              migrate: migrateLegacyMasteryId,
+            )
+          : completed(decoded['masteryCompleted'], masteryIds);
+      final advancedCompleted = legacyContent
+          ? <String>{}
+          : completed(decoded['advancedCompleted'], advancedIds);
       if (storedContentSchema is! int || storedContentSchema < 2) {
         if (essentialCompleted.contains('essential.pair-token')) {
           essentialCompleted.add('essential.enter-token');
-        }
-        if (advancedCompleted.contains('advanced.connection-hierarchy')) {
-          advancedCompleted.addAll(<String>{
-            'advanced.lan',
-            'advanced.webrtc',
-            'advanced.relay-reconnect',
-          });
-        }
-        if (advancedCompleted.contains('advanced.voice-tts-stt')) {
-          advancedCompleted.add('advanced.tts');
-        }
-        if (advancedCompleted.contains('advanced.troubleshooting')) {
-          advancedCompleted.add('advanced.troubleshooting-media');
         }
       }
 
       final rawCurrent = decoded['currentLesson'];
       final migratedCurrent = rawCurrent is String
-          ? migrateLessonId(rawCurrent)
+          ? (legacyContent
+                ? migrateLegacyMasteryId(migrateEssentialId(rawCurrent))
+                : migrateEssentialId(rawCurrent))
           : null;
       final current = guideLessonById(migratedCurrent) != null
           ? migratedCurrent
@@ -168,6 +200,7 @@ class GuideProgress {
         schemaVersion: guideStateSchemaVersion,
         contentSchemaVersion: guideContentSchemaVersion,
         essentialCompleted: essentialCompleted,
+        masteryCompleted: masteryCompleted,
         advancedCompleted: advancedCompleted,
         currentLessonId: current,
         finished: decoded['finished'] == true,
@@ -245,14 +278,18 @@ class GuideProgressService {
     GuideLesson lesson,
   ) async {
     final essential = Set<String>.from(progress.essentialCompleted);
+    final mastery = Set<String>.from(progress.masteryCompleted);
     final advanced = Set<String>.from(progress.advancedCompleted);
     if (lesson.categoryId == guideEssentialCategoryId) {
       essential.add(lesson.id);
+    } else if (lesson.categoryId == guideMasteryCategoryId) {
+      mastery.add(lesson.id);
     } else {
       advanced.add(lesson.id);
     }
     final next = progress.copyWith(
       essentialCompleted: essential,
+      masteryCompleted: mastery,
       advancedCompleted: advanced,
     );
     await save(next);

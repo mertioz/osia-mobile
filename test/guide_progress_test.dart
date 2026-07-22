@@ -67,19 +67,22 @@ void main() {
   });
 
   test(
-    'progress is separate by category and survives service instances',
+    'progress is separate across three categories and survives service instances',
     () async {
       final storage = StorageService();
       final service = GuideProgressService(storage);
       final decision = await service.prepareLaunch();
       final essential = guideLessonById('essential.first-message')!;
-      final advanced = guideLessonById('advanced.connection-hierarchy')!;
+      final mastery = guideLessonById('advanced.ai-model-hierarchy')!;
+      final advanced = guideLessonById('advanced.handshake')!;
       var progress = await service.completeLesson(decision.progress, essential);
+      progress = await service.completeLesson(progress, mastery);
       progress = await service.completeLesson(progress, advanced);
       progress = await service.selectLesson(progress, advanced.id);
 
       final restored = await GuideProgressService(storage).load();
       expect(restored.essentialCompleted, contains(essential.id));
+      expect(restored.masteryCompleted, contains(mastery.id));
       expect(restored.advancedCompleted, contains(advanced.id));
       expect(restored.currentLessonId, advanced.id);
       expect(restored.automaticPresentationHandled, isTrue);
@@ -110,7 +113,8 @@ void main() {
     final progress = GuideProgress.tryDecode(raw)!;
     expect(progress.contentSchemaVersion, guideContentSchemaVersion);
     expect(progress.essentialCompleted, <String>{'essential.voice'});
-    expect(progress.advancedCompleted, <String>{'advanced.models'});
+    expect(progress.masteryCompleted, <String>{'advanced.ai-model-hierarchy'});
+    expect(progress.advancedCompleted, isEmpty);
     expect(progress.currentLessonId, isNull);
   });
 
@@ -146,18 +150,42 @@ void main() {
       }),
     );
     expect(
-      progress.advancedCompleted,
+      progress.masteryCompleted,
       containsAll(<String>{
-        'advanced.connection-hierarchy',
-        'advanced.lan',
-        'advanced.webrtc',
-        'advanced.relay-reconnect',
+        'advanced.pc-mobile-connection',
         'advanced.voice-tts-stt',
-        'advanced.tts',
-        'advanced.troubleshooting',
-        'advanced.troubleshooting-media',
+        'mastery.troubleshooting',
       }),
     );
+    expect(progress.advancedCompleted, isEmpty);
+  });
+
+  test('schema-two advanced progress migrates only into mastery', () {
+    final raw = jsonEncode(<String, Object?>{
+      'schemaVersion': guideStateSchemaVersion,
+      'contentSchemaVersion': 2,
+      'essentialCompleted': <String>['essential.ready'],
+      'advancedCompleted': <String>[
+        'advanced.models',
+        'advanced.notifications',
+      ],
+      'currentLesson': 'advanced.models',
+      'finished': true,
+      'skipped': false,
+      'automaticPresentationHandled': true,
+      'outcome': 'completed',
+    });
+
+    final progress = GuideProgress.tryDecode(raw)!;
+    expect(progress.essentialCompleted, contains('essential.ready'));
+    expect(progress.masteryCompleted, <String>{
+      'advanced.ai-model-hierarchy',
+      'mastery.notifications-background',
+    });
+    expect(progress.advancedCompleted, isEmpty);
+    expect(progress.currentLessonId, 'advanced.ai-model-hierarchy');
+    expect(progress.finished, isTrue);
+    expect(progress.automaticPresentationHandled, isTrue);
   });
 
   test(
@@ -167,10 +195,13 @@ void main() {
       final service = GuideProgressService(storage);
       final decision = await service.prepareLaunch();
       await storage.setToken('DEMO-CODE');
-      await service.selectLesson(decision.progress, 'advanced.notifications');
+      await service.selectLesson(
+        decision.progress,
+        'mastery.notifications-background',
+      );
       await storage.clearCredentials();
       final restored = await service.load();
-      expect(restored.currentLessonId, 'advanced.notifications');
+      expect(restored.currentLessonId, 'mastery.notifications-background');
       expect(await storage.getToken(), isNull);
     },
   );

@@ -330,7 +330,7 @@ void main() {
         kind: _SceneKind.guide,
         size: const Size(844, 390),
         textScale: 1,
-        lessonId: 'advanced.connection-hierarchy',
+        lessonId: 'advanced.pc-mobile-connection',
         reducedMotion: false,
       ),
       (
@@ -346,7 +346,7 @@ void main() {
         kind: _SceneKind.guide,
         size: const Size(390, 844),
         textScale: 1,
-        lessonId: 'advanced.tts',
+        lessonId: 'advanced.voice-tts-stt',
         reducedMotion: false,
       ),
       (
@@ -354,7 +354,7 @@ void main() {
         kind: _SceneKind.guide,
         size: const Size(320, 640),
         textScale: 1.5,
-        lessonId: 'advanced.troubleshooting',
+        lessonId: 'mastery.troubleshooting',
         reducedMotion: false,
       ),
       (
