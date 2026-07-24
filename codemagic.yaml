@@ -11,6 +11,8 @@ workflows:
       ios_signing:
         distribution_type: app_store
         bundle_identifier: space.osia.app
+      vars:
+        BUNDLE_ID: space.osia.app
       flutter: 3.44.1
       xcode: 26.4
       cocoapods: 1.16.2
@@ -40,13 +42,28 @@ workflows:
           set -e
           cd ios
           pod install --repo-update
-      - name: Select next App Store Connect build number
+      - name: Fetch fresh App Store signing files
+        script: |
+          set -e
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+      - name: Add signing certificate to keychain
+        script: keychain add-certificates
+      - name: Select available App Store Connect build number
         script: |
           set -e
           if [ -z "${APP_STORE_APPLE_ID:-}" ]; then
             echo "APP_STORE_APPLE_ID is required in Codemagic group osia_app_store."
             exit 1
           fi
+          configured="$(sed -nE 's/^version:[[:space:]]+[^+[:space:]]+\+([0-9]+)[[:space:]]*$/\1/p' pubspec.yaml)"
+          case "$configured" in
+            ''|*[!0-9]*)
+              echo "pubspec.yaml must declare a numeric iOS build number."
+              exit 1
+              ;;
+          esac
           queried="$(app-store-connect get-latest-testflight-build-number \
             "$APP_STORE_APPLE_ID" --platform IOS)"
           case "$queried" in
@@ -57,9 +74,13 @@ workflows:
               ;;
             *) latest="$queried" ;;
           esac
-          next=$((latest + 1))
-          echo "IOS_BUILD_NUMBER=$next" >> "$CM_ENV"
-          echo "Selected iOS build number $next"
+          if [ "$latest" -ge "$configured" ]; then
+            selected=$((latest + 1))
+          else
+            selected="$configured"
+          fi
+          echo "IOS_BUILD_NUMBER=$selected" >> "$CM_ENV"
+          echo "Selected iOS build number $selected"
       - name: Apply App Store signing profile
         script: |
           xcode-project use-profiles \
@@ -68,7 +89,6 @@ workflows:
         script: |
           set -e
           flutter build ipa --release \
-            --build-name=1.0.0 \
             --build-number="$IOS_BUILD_NUMBER" \
             --export-options-plist=/Users/builder/export_options.plist
     artifacts:
