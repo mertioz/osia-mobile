@@ -8,9 +8,6 @@ workflows:
     environment:
       groups:
         - osia_app_store
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: space.osia.app
       vars:
         BUNDLE_ID: space.osia.app
       flutter: 3.44.1
@@ -42,6 +39,8 @@ workflows:
           set -e
           cd ios
           pod install --repo-update
+      - name: Initialize signing keychain
+        script: keychain initialize
       - name: Fetch fresh App Store signing files
         script: |
           set -e

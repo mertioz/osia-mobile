@@ -37,7 +37,7 @@ void main() {
         '<key>com.apple.developer.networking.multicast</key>\n\t<true/>',
       ),
     );
-    expect(workflow, contains('bundle_identifier: space.osia.app'));
+    expect(workflow, contains('BUNDLE_ID: space.osia.app'));
   });
 
   test('iOS local-network disclosure matches the exact Bonjour browser', () {
@@ -68,12 +68,16 @@ void main() {
     );
   });
 
-  test('Codemagic remains App Store signed and TestFlight internal only', () {
+  test('Codemagic uses scripted signing and TestFlight internal only', () {
     final workflow = _read('codemagic.yaml');
 
     expect(workflow, contains('ios-testflight-internal:'));
-    expect(workflow, contains('distribution_type: app_store'));
+    expect(workflow, contains('app_store_connect: osia-testflight'));
+    expect(workflow, contains('groups:\n        - osia_app_store'));
+    expect(workflow, isNot(contains('ios_signing:')));
+    expect(workflow, isNot(contains('distribution_type:')));
     expect(workflow, contains('BUNDLE_ID: space.osia.app'));
+    expect(workflow, contains(r'${APP_STORE_APPLE_ID:-}'));
     expect(
       workflow,
       contains(
@@ -82,6 +86,7 @@ void main() {
         '            --create',
       ),
     );
+    expect(workflow, contains('script: keychain initialize'));
     expect(workflow, contains('script: keychain add-certificates'));
     expect(
       workflow,
@@ -94,6 +99,29 @@ void main() {
     expect(workflow, contains('beta_groups:\n          - OSIA Internal'));
     expect(workflow, contains('submit_to_app_store: false'));
     expect(workflow, isNot(contains('submit_to_app_store: true')));
+
+    final initialize = workflow.indexOf('script: keychain initialize');
+    final fetch = workflow.indexOf('app-store-connect fetch-signing-files');
+    final addCertificates = workflow.indexOf(
+      'script: keychain add-certificates',
+    );
+    final useProfiles = workflow.indexOf('xcode-project use-profiles');
+    expect(initialize, greaterThanOrEqualTo(0));
+    expect(fetch, greaterThan(initialize));
+    expect(addCertificates, greaterThan(fetch));
+    expect(useProfiles, greaterThan(addCertificates));
+
+    expect(
+      workflow,
+      isNot(
+        matches(
+          RegExp(
+            r'^\s*(provisioning_profiles|certificates|certificate|profile):',
+            multiLine: true,
+          ),
+        ),
+      ),
+    );
   });
 
   test(
