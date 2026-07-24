@@ -124,6 +124,77 @@ void main() {
     );
   });
 
+  test('Codemagic excludes only host-sensitive guide goldens', () {
+    final workflow = _read('codemagic.yaml');
+    final guideTests = _read('test/guide_asset_capture_test.dart');
+    final testStep = RegExp(
+      r'- name: Run Flutter tests\n\s+script:\s*([^\n]+)',
+    ).firstMatch(workflow);
+
+    expect(testStep, isNotNull);
+    final testCommand = testStep!.group(1)!.trim();
+    expect(testCommand, 'flutter test --exclude-tags guide-golden');
+    expect(
+      RegExp(
+        r'--exclude-tags(?:=|\s+)([^\s]+)',
+      ).allMatches(workflow).map((match) => match.group(1)),
+      <String?>['guide-golden'],
+    );
+    expect(workflow, isNot(contains('|| true')));
+    expect(workflow, isNot(contains('continue_on_error')));
+    expect(workflow, isNot(contains('ignore_failure')));
+    expect(workflow, isNot(contains('allow_failure')));
+
+    expect(guideTests, contains("const _guideGoldenTag = 'guide-golden';"));
+    expect(
+      RegExp(r'tags:\s*_guideGoldenTag').allMatches(guideTests),
+      hasLength(3),
+    );
+    expect(RegExp(r'testWidgets\(').allMatches(guideTests), hasLength(3));
+    expect(RegExp(r'matchesGoldenFile\(').allMatches(guideTests), hasLength(3));
+    expect(guideTests, isNot(contains('skip:')));
+    expect(guideTests, isNot(contains('Platform.isMacOS')));
+    final testConfig = File('dart_test.yaml');
+    expect(testConfig.existsSync(), isTrue);
+    final testConfiguration = _read(testConfig.path);
+    expect(testConfiguration, 'tags:\n  guide-golden:\n');
+    expect(testConfiguration, isNot(contains('skip')));
+    expect(
+      testConfiguration,
+      isNot(
+        matches(RegExp(r'exclude[_-]tags?:.*guide-golden', multiLine: true)),
+      ),
+    );
+
+    final tests = workflow.indexOf('- name: Run Flutter tests');
+    final initialize = workflow.indexOf('- name: Initialize signing keychain');
+    final fetch = workflow.indexOf(
+      '- name: Fetch fresh App Store signing files',
+    );
+    final addCertificates = workflow.indexOf(
+      '- name: Add signing certificate to keychain',
+    );
+    final useProfiles = workflow.indexOf(
+      '- name: Apply App Store signing profile',
+    );
+    expect(tests, greaterThanOrEqualTo(0));
+    expect(initialize, greaterThan(tests));
+    expect(fetch, greaterThan(initialize));
+    expect(addCertificates, greaterThan(fetch));
+    expect(useProfiles, greaterThan(addCertificates));
+
+    expect(workflow, contains('submit_to_testflight: true'));
+    expect(workflow, contains('beta_groups:\n          - OSIA Internal'));
+    expect(
+      workflow,
+      contains(
+        "--custom-export-options='{\"testFlightInternalTestingOnly\": true}'",
+      ),
+    );
+    expect(workflow, contains('submit_to_app_store: false'));
+    expect(workflow, isNot(contains('submit_to_app_store: true')));
+  });
+
   test(
     'Codemagic preserves pubspec version until App Store requires a bump',
     () {

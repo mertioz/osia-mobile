@@ -33,7 +33,7 @@ workflows:
       - name: Analyze Flutter source
         script: flutter analyze
       - name: Run Flutter tests
-        script: flutter test
+        script: flutter test --exclude-tags guide-golden
       - name: Install CocoaPods dependencies
         script: |
           set -e

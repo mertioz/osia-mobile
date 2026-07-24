@@ -468,6 +468,11 @@ class _DemoToggle extends StatelessWidget {
   }
 }
 
+// These canonical documentation captures remain in normal local test runs.
+// The internal TestFlight workflow excludes only this tag because exact pixel
+// rasterization differs between host platforms.
+const _guideGoldenTag = 'guide-golden';
+
 void main() {
   setUpAll(() async {
     final separator = Platform.pathSeparator;
@@ -503,7 +508,7 @@ void main() {
       find.byType(Scaffold).first,
       matchesGoldenFile('../assets/guide/mobile-chat.png'),
     );
-  });
+  }, tags: _guideGoldenTag);
 
   testWidgets('capture sanitized mobile navigation', (tester) async {
     await tester.binding.setSurfaceSize(const Size(390, 780));
@@ -515,7 +520,7 @@ void main() {
       find.byType(Scaffold).first,
       matchesGoldenFile('../assets/guide/mobile-navigation.png'),
     );
-  });
+  }, tags: _guideGoldenTag);
 
   testWidgets('capture sanitized Android Settings', (tester) async {
     await tester.binding.setSurfaceSize(const Size(390, 780));
@@ -526,5 +531,5 @@ void main() {
       find.byType(Scaffold).first,
       matchesGoldenFile('../assets/guide/mobile-settings.png'),
     );
-  });
+  }, tags: _guideGoldenTag);
 }
