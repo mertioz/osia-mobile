@@ -13,6 +13,27 @@ String _plistString(String source, String key) {
   return match!.group(1)!;
 }
 
+void _expectPurposeString(
+  String source,
+  String key, {
+  required List<String> requiredPhrases,
+}) {
+  final value = _plistString(source, key).trim();
+  expect(value, isNotEmpty, reason: '$key must not be empty');
+  expect(value.length, greaterThanOrEqualTo(40), reason: '$key is too vague');
+  final normalized = value.toLowerCase();
+  for (final placeholder in <String>{
+    'this app needs access.',
+    'required for the app.',
+    'permission required.',
+  }) {
+    expect(normalized, isNot(placeholder), reason: '$key is a placeholder');
+  }
+  for (final phrase in requiredPhrases) {
+    expect(normalized, contains(phrase), reason: '$key must mention $phrase');
+  }
+}
+
 void main() {
   test('iOS bundle identifier and multicast entitlement stay wired', () {
     final project = _read('ios/Runner.xcodeproj/project.pbxproj');
@@ -66,6 +87,55 @@ void main() {
       discovery,
       contains('ResourceRecordQuery.serverPointer(lanDiscoveryServiceType)'),
     );
+  });
+
+  test('iOS protected-resource purposes match exposed application flows', () {
+    final info = _read('ios/Runner/Info.plist');
+    final chat = _read('lib/screens/chat_screen.dart');
+
+    _expectPurposeString(
+      info,
+      'NSPhotoLibraryUsageDescription',
+      requiredPhrases: <String>[
+        'photo library',
+        'explicitly',
+        'image',
+        'attach',
+        'conversation',
+      ],
+    );
+    _expectPurposeString(
+      info,
+      'NSCameraUsageDescription',
+      requiredPhrases: <String>[
+        'camera',
+        'explicitly',
+        'capture',
+        'image',
+        'attach',
+        'conversation',
+      ],
+    );
+    _expectPurposeString(
+      info,
+      'NSMicrophoneUsageDescription',
+      requiredPhrases: <String>['microphone', 'osia'],
+    );
+    _expectPurposeString(
+      info,
+      'NSLocationWhenInUseUsageDescription',
+      requiredPhrases: <String>[
+        'does not track',
+        'location',
+        'metadata',
+        'image',
+        'explicitly',
+        'attachment',
+      ],
+    );
+
+    expect(chat, contains('FilePicker.platform.pickFiles('));
+    expect(chat, contains('type: FileType.any'));
   });
 
   test('Codemagic uses scripted signing and TestFlight internal only', () {
@@ -196,12 +266,13 @@ void main() {
   });
 
   test(
-    'Codemagic preserves pubspec version until App Store requires a bump',
+    'Codemagic starts at build 3 and preserves monotonic App Store bumps',
     () {
       final pubspec = _read('pubspec.yaml');
       final workflow = _read('codemagic.yaml');
 
-      expect(pubspec, contains('version: 1.0.1+2'));
+      expect(pubspec, contains('version: 1.0.1+3'));
+      expect(pubspec, isNot(contains('version: 1.0.1+2')));
       expect(workflow, contains(r'configured="$(sed -nE'));
       expect(workflow, contains(r'if [ "$latest" -ge "$configured" ]; then'));
       expect(workflow, contains(r'selected=$((latest + 1))'));
