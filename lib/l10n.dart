@@ -825,6 +825,67 @@ class OsiaStrings {
       .replaceAll('{done}', '$done')
       .replaceAll('{total}', '$total');
 
+  String autonomousFailureDiagnostic(String? category) {
+    final messages =
+        _autonomousFailureMessages[languageCode] ??
+        _autonomousFailureMessages['en']!;
+    return messages[category] ?? messages['unknown_failure']!;
+  }
+
+  String autonomousDiagnosticMetadata({
+    int? attempt,
+    int? maxAttempts,
+    int? replanCount,
+    int? maxReplans,
+  }) {
+    final parts = <String>[];
+    if (attempt != null && attempt > 0 && maxAttempts != null) {
+      switch (languageCode) {
+        case 'fr':
+          parts.add('Tentative $attempt/$maxAttempts.');
+          break;
+        case 'zh':
+          parts.add('尝试 $attempt/$maxAttempts。');
+          break;
+        case 'ja':
+          parts.add('試行 $attempt/$maxAttempts。');
+          break;
+        case 'de':
+          parts.add('Versuch $attempt/$maxAttempts.');
+          break;
+        case 'es':
+          parts.add('Intento $attempt/$maxAttempts.');
+          break;
+        default:
+          parts.add('Attempt $attempt/$maxAttempts.');
+          break;
+      }
+    }
+    if (replanCount != null && maxReplans != null) {
+      switch (languageCode) {
+        case 'fr':
+          parts.add('Plans de reprise $replanCount/$maxReplans.');
+          break;
+        case 'zh':
+          parts.add('恢复计划 $replanCount/$maxReplans。');
+          break;
+        case 'ja':
+          parts.add('復旧計画 $replanCount/$maxReplans。');
+          break;
+        case 'de':
+          parts.add('Wiederherstellungspläne $replanCount/$maxReplans.');
+          break;
+        case 'es':
+          parts.add('Planes de recuperación $replanCount/$maxReplans.');
+          break;
+        default:
+          parts.add('Recovery plans $replanCount/$maxReplans.');
+          break;
+      }
+    }
+    return parts.join(' ');
+  }
+
   /// Title for the write-tool confirmation dialog (WOR-44 Phase 5):
   /// "{server} wants to run {tool}".
   String mcpConfirmTitle(String server, String tool) => mcpConfirmTitleTemplate
@@ -984,6 +1045,165 @@ class OsiaStrings {
     return paletteKey;
   }
 }
+
+const Map<String, Map<String, String>> _autonomousFailureMessages = {
+  'en': {
+    'planning_provider_failure':
+        'Planning could not reach the selected provider.',
+    'planning_authentication_failure':
+        'Planning stopped because provider authentication failed.',
+    'planning_rate_limit': 'Planning was rate-limited. Try again later.',
+    'planning_timeout': 'Planning timed out before a plan was ready.',
+    'invalid_planning_output': 'The provider returned an invalid plan.',
+    'task_execution_failure': 'A step could not be executed.',
+    'task_timeout': 'A step timed out before completion.',
+    'verification_error': 'OSIA could not verify the step safely.',
+    'verification_not_completed':
+        "The step's completion criterion was not met.",
+    'task_attempts_exhausted': 'The step used all permitted attempts.',
+    'replan_failure': 'OSIA could not build a recovery plan.',
+    'replans_exhausted': 'The run used all permitted recovery plans.',
+    'invalid_resume_state': 'The saved run cannot be resumed safely.',
+    'interrupted': 'The run is paused and can be resumed.',
+    'aborted': 'The run was abandoned by the user.',
+    'orchestrator_failure':
+        'Autonomous execution stopped because of an internal error.',
+    'checkpoint_failure': 'OSIA could not save the autonomous checkpoint.',
+    'unknown_failure':
+        'The autonomous run failed. Try again or review diagnostics.',
+  },
+  'fr': {
+    'planning_provider_failure':
+        "La planification n'a pas pu joindre le fournisseur sélectionné.",
+    'planning_authentication_failure':
+        "La planification s'est arrêtée car l'authentification a échoué.",
+    'planning_rate_limit':
+        'La planification a été limitée. Réessayez plus tard.',
+    'planning_timeout':
+        'La planification a expiré avant que le plan soit prêt.',
+    'invalid_planning_output': 'Le fournisseur a renvoyé un plan invalide.',
+    'task_execution_failure': "Une étape n'a pas pu être exécutée.",
+    'task_timeout': 'Une étape a expiré avant sa fin.',
+    'verification_error': "OSIA n'a pas pu vérifier l'étape de façon sûre.",
+    'verification_not_completed':
+        "Le critère de réussite de l'étape n'est pas satisfait.",
+    'task_attempts_exhausted':
+        "L'étape a utilisé toutes les tentatives autorisées.",
+    'replan_failure': "OSIA n'a pas pu créer un plan de reprise.",
+    'replans_exhausted':
+        "L'exécution a utilisé tous les plans de reprise autorisés.",
+    'invalid_resume_state':
+        "L'exécution enregistrée ne peut pas être reprise en toute sécurité.",
+    'interrupted': "L'exécution est en pause et peut être reprise.",
+    'aborted': "L'exécution a été abandonnée par l'utilisateur.",
+    'orchestrator_failure':
+        "L'exécution autonome s'est arrêtée à cause d'une erreur interne.",
+    'checkpoint_failure':
+        "OSIA n'a pas pu enregistrer le point de reprise autonome.",
+    'unknown_failure':
+        "L'exécution autonome a échoué. Réessayez ou consultez le diagnostic.",
+  },
+  'zh': {
+    'planning_provider_failure': '规划无法连接所选提供商。',
+    'planning_authentication_failure': '规划因提供商身份验证失败而停止。',
+    'planning_rate_limit': '规划受到速率限制，请稍后重试。',
+    'planning_timeout': '规划在计划就绪前超时。',
+    'invalid_planning_output': '提供商返回了无效计划。',
+    'task_execution_failure': '某个步骤无法执行。',
+    'task_timeout': '某个步骤在完成前超时。',
+    'verification_error': 'OSIA 无法安全验证该步骤。',
+    'verification_not_completed': '该步骤的完成条件未满足。',
+    'task_attempts_exhausted': '该步骤已用完所有允许的尝试次数。',
+    'replan_failure': 'OSIA 无法创建恢复计划。',
+    'replans_exhausted': '此次运行已用完所有允许的恢复计划。',
+    'invalid_resume_state': '无法安全恢复已保存的运行。',
+    'interrupted': '运行已暂停，可以恢复。',
+    'aborted': '运行已由用户放弃。',
+    'orchestrator_failure': '自主执行因内部错误而停止。',
+    'checkpoint_failure': 'OSIA 无法保存自主运行检查点。',
+    'unknown_failure': '自主运行失败，请重试或查看诊断。',
+  },
+  'ja': {
+    'planning_provider_failure': '計画時に選択したプロバイダーへ接続できませんでした。',
+    'planning_authentication_failure': 'プロバイダー認証に失敗したため計画を停止しました。',
+    'planning_rate_limit': '計画がレート制限されました。後でもう一度お試しください。',
+    'planning_timeout': '計画の準備前にタイムアウトしました。',
+    'invalid_planning_output': 'プロバイダーから無効な計画が返されました。',
+    'task_execution_failure': 'ステップを実行できませんでした。',
+    'task_timeout': 'ステップが完了前にタイムアウトしました。',
+    'verification_error': 'OSIA はステップを安全に検証できませんでした。',
+    'verification_not_completed': 'ステップの完了条件を満たしていません。',
+    'task_attempts_exhausted': 'ステップは許可された試行回数を使い切りました。',
+    'replan_failure': 'OSIA は復旧計画を作成できませんでした。',
+    'replans_exhausted': '実行は許可された復旧計画を使い切りました。',
+    'invalid_resume_state': '保存された実行を安全に再開できません。',
+    'interrupted': '実行は一時停止され、再開できます。',
+    'aborted': '実行はユーザーによって破棄されました。',
+    'orchestrator_failure': '内部エラーのため自律実行を停止しました。',
+    'checkpoint_failure': 'OSIA は自律実行のチェックポイントを保存できませんでした。',
+    'unknown_failure': '自律実行に失敗しました。再試行するか診断を確認してください。',
+  },
+  'de': {
+    'planning_provider_failure':
+        'Die Planung konnte den ausgewählten Anbieter nicht erreichen.',
+    'planning_authentication_failure':
+        'Die Planung wurde wegen fehlgeschlagener Anbieter-Anmeldung beendet.',
+    'planning_rate_limit':
+        'Die Planung wurde begrenzt. Bitte später erneut versuchen.',
+    'planning_timeout': 'Die Planung überschritt das Zeitlimit.',
+    'invalid_planning_output':
+        'Der Anbieter hat einen ungültigen Plan geliefert.',
+    'task_execution_failure': 'Ein Schritt konnte nicht ausgeführt werden.',
+    'task_timeout': 'Ein Schritt überschritt vor Abschluss das Zeitlimit.',
+    'verification_error': 'OSIA konnte den Schritt nicht sicher prüfen.',
+    'verification_not_completed':
+        'Das Abschlusskriterium des Schritts wurde nicht erfüllt.',
+    'task_attempts_exhausted':
+        'Der Schritt hat alle erlaubten Versuche verbraucht.',
+    'replan_failure': 'OSIA konnte keinen Wiederherstellungsplan erstellen.',
+    'replans_exhausted':
+        'Der Lauf hat alle erlaubten Wiederherstellungspläne verbraucht.',
+    'invalid_resume_state':
+        'Der gespeicherte Lauf kann nicht sicher fortgesetzt werden.',
+    'interrupted': 'Der Lauf ist pausiert und kann fortgesetzt werden.',
+    'aborted': 'Der Lauf wurde vom Benutzer verworfen.',
+    'orchestrator_failure':
+        'Die autonome Ausführung wurde wegen eines internen Fehlers beendet.',
+    'checkpoint_failure':
+        'OSIA konnte den autonomen Prüfpunkt nicht speichern.',
+    'unknown_failure':
+        'Der autonome Lauf ist fehlgeschlagen. Erneut versuchen oder Diagnose prüfen.',
+  },
+  'es': {
+    'planning_provider_failure':
+        'La planificación no pudo contactar al proveedor seleccionado.',
+    'planning_authentication_failure':
+        'La planificación se detuvo porque falló la autenticación.',
+    'planning_rate_limit':
+        'La planificación fue limitada. Inténtalo más tarde.',
+    'planning_timeout':
+        'La planificación agotó el tiempo antes de estar lista.',
+    'invalid_planning_output': 'El proveedor devolvió un plan no válido.',
+    'task_execution_failure': 'No se pudo ejecutar un paso.',
+    'task_timeout': 'Un paso agotó el tiempo antes de completarse.',
+    'verification_error': 'OSIA no pudo verificar el paso de forma segura.',
+    'verification_not_completed':
+        'No se cumplió el criterio de finalización del paso.',
+    'task_attempts_exhausted': 'El paso agotó todos los intentos permitidos.',
+    'replan_failure': 'OSIA no pudo crear un plan de recuperación.',
+    'replans_exhausted':
+        'La ejecución agotó todos los planes de recuperación permitidos.',
+    'invalid_resume_state':
+        'La ejecución guardada no se puede reanudar de forma segura.',
+    'interrupted': 'La ejecución está en pausa y puede reanudarse.',
+    'aborted': 'La ejecución fue abandonada por el usuario.',
+    'orchestrator_failure':
+        'La ejecución autónoma se detuvo por un error interno.',
+    'checkpoint_failure': 'OSIA no pudo guardar el punto de control autónomo.',
+    'unknown_failure':
+        'La ejecución autónoma falló. Reinténtalo o revisa el diagnóstico.',
+  },
+};
 
 // ── English (default) ─────────────────────────────────────────────────────
 

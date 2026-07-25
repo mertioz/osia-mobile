@@ -150,7 +150,11 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
 
     setState(() {
       _latest = msg;
-      _runPhase = _phaseFor(event, _runPhase);
+      // Older servers used `idle` for an unavailable resume checkpoint. Keep
+      // that event compatible while honoring WOR-173's additive typed failure.
+      _runPhase = event == 'idle' && msg.errorCategory != null
+          ? _RunPhase.failed
+          : _phaseFor(event, _runPhase);
     });
   }
 
@@ -177,6 +181,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       case 'failed':
       case 'fail':
       case 'error':
+      case 'plan_failed':
         return _RunPhase.failed;
       case 'aborted':
       case 'abort':
@@ -201,10 +206,6 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
 
   bool get _isActive =>
       _runPhase == _RunPhase.planning || _runPhase == _RunPhase.running;
-  bool get _isTerminal =>
-      _runPhase == _RunPhase.done ||
-      _runPhase == _RunPhase.failed ||
-      _runPhase == _RunPhase.aborted;
 
   // ── Configured-only model filter ─────────────────────────────────────────
 
@@ -715,8 +716,22 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     final latest = _latest;
     final objective = (latest?.objective ?? '').trim();
     final phaseName = (latest?.phaseName ?? '').trim();
-    final status = (latest?.status ?? '').trim();
-    final reason = (latest?.reason ?? '').trim();
+    final errorCategory = latest?.errorCategory;
+    final diagnosticMessage = errorCategory == null
+        ? ''
+        : strings.autonomousFailureDiagnostic(errorCategory.wireValue);
+    final diagnosticMetadata = errorCategory == null
+        ? ''
+        : strings.autonomousDiagnosticMetadata(
+            attempt: latest?.attempt,
+            maxAttempts: latest?.maxAttempts,
+            replanCount: latest?.stage == ws.AutonomousFailureStage.replan
+                ? latest?.replanCount
+                : null,
+            maxReplans: latest?.stage == ws.AutonomousFailureStage.replan
+                ? latest?.maxReplans
+                : null,
+          );
     final done = latest?.tasksDone;
     final total = latest?.tasksTotal;
 
@@ -754,7 +769,9 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
               ),
             ),
           ],
-          if (phaseName.isNotEmpty) ...[
+          if (_runPhase != _RunPhase.failed &&
+              errorCategory == null &&
+              phaseName.isNotEmpty) ...[
             const SizedBox(height: 12),
             _MetaRow(
               label: strings.autonomousPhase,
@@ -774,26 +791,25 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
             const SizedBox(height: 8),
             _TaskProgressBar(done: done, total: total, palette: palette),
           ],
-          if (status.isNotEmpty) ...[
+          if (diagnosticMessage.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(
-              status,
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.4,
-                color: palette.textMuted,
-              ),
-            ),
-          ],
-          // Reason on terminal frames (why it failed / was abandoned).
-          if (_isTerminal && reason.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text(
-              reason,
+              diagnosticMessage,
               style: TextStyle(
                 fontSize: 13,
                 height: 1.4,
                 color: _runColor(palette),
+              ),
+            ),
+          ],
+          if (diagnosticMetadata.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              diagnosticMetadata,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.4,
+                color: palette.textMuted,
               ),
             ),
           ],

@@ -1267,6 +1267,60 @@ class CronNotificationMessage {
   }
 }
 
+enum AutonomousFailureStage {
+  planning('planning'),
+  taskExecution('task_execution'),
+  verification('verification'),
+  retry('retry'),
+  replan('replan'),
+  resume('resume'),
+  control('control'),
+  persistence('persistence'),
+  orchestrator('orchestrator'),
+  unknown('unknown');
+
+  const AutonomousFailureStage(this.wireValue);
+  final String wireValue;
+
+  static AutonomousFailureStage fromWire(String value) {
+    return AutonomousFailureStage.values.firstWhere(
+      (stage) => stage.wireValue == value,
+      orElse: () => AutonomousFailureStage.unknown,
+    );
+  }
+}
+
+enum AutonomousFailureCategory {
+  planningProviderFailure('planning_provider_failure'),
+  planningAuthenticationFailure('planning_authentication_failure'),
+  planningRateLimit('planning_rate_limit'),
+  planningTimeout('planning_timeout'),
+  invalidPlanningOutput('invalid_planning_output'),
+  taskExecutionFailure('task_execution_failure'),
+  taskTimeout('task_timeout'),
+  verificationError('verification_error'),
+  verificationNotCompleted('verification_not_completed'),
+  taskAttemptsExhausted('task_attempts_exhausted'),
+  replanFailure('replan_failure'),
+  replansExhausted('replans_exhausted'),
+  invalidResumeState('invalid_resume_state'),
+  interrupted('interrupted'),
+  aborted('aborted'),
+  orchestratorFailure('orchestrator_failure'),
+  checkpointFailure('checkpoint_failure'),
+  unknownFailure('unknown_failure');
+
+  const AutonomousFailureCategory(this.wireValue);
+  final String wireValue;
+
+  static AutonomousFailureCategory fromWire(String value) {
+    return AutonomousFailureCategory.values.firstWhere(
+      (category) => category.wireValue == value,
+      orElse: () => AutonomousFailureCategory.unknownFailure,
+    );
+  }
+}
+
 /// One `autonomous_progress` frame broadcast by the PC while an autonomous run
 /// is active (WOR-45 Phase 5). Like [ConfigData], [ApiKeysMessage],
 /// [HeartbeatDataMessage], [NewChatMessage] and [ConversationsListMessage],
@@ -1305,6 +1359,22 @@ class AutonomousProgressMessage {
   /// Why the run ended or paused (carried on terminal / interrupt frames).
   final String? reason;
 
+  /// WOR-173 additive, sanitized diagnostic metadata. Older servers omit it;
+  /// future enum values fail closed to `unknown` / `unknownFailure`.
+  final AutonomousFailureStage? stage;
+  final AutonomousFailureCategory? errorCategory;
+  final int? attempt;
+  final int? maxAttempts;
+  final int? replanCount;
+  final int? maxReplans;
+  final String? provider;
+  final String? model;
+  final bool? resumable;
+  final bool? checkpointPresent;
+  final String? reasonCode;
+  final String? runRef;
+  final String? diagnosticTimestamp;
+
   const AutonomousProgressMessage({
     this.event,
     this.phaseName,
@@ -1314,6 +1384,19 @@ class AutonomousProgressMessage {
     this.objective,
     this.taskId,
     this.reason,
+    this.stage,
+    this.errorCategory,
+    this.attempt,
+    this.maxAttempts,
+    this.replanCount,
+    this.maxReplans,
+    this.provider,
+    this.model,
+    this.resumable,
+    this.checkpointPresent,
+    this.reasonCode,
+    this.runRef,
+    this.diagnosticTimestamp,
   });
 
   factory AutonomousProgressMessage.fromJson(Map<String, dynamic> json) {
@@ -1344,6 +1427,21 @@ class AutonomousProgressMessage {
       return null;
     }
 
+    bool? pickBool(List<String> keys) {
+      for (final k in keys) {
+        final v = json[k];
+        if (v is bool) return v;
+        if (v is String) {
+          if (v.toLowerCase() == 'true') return true;
+          if (v.toLowerCase() == 'false') return false;
+        }
+      }
+      return null;
+    }
+
+    final stageCode = pickStr(['stage']);
+    final categoryCode = pickStr(['error_category', 'errorCategory']);
+
     return AutonomousProgressMessage(
       event: pickStr(['event']),
       phaseName: pickStr(['phase_name', 'phaseName', 'phase']),
@@ -1353,6 +1451,23 @@ class AutonomousProgressMessage {
       objective: pickStr(['objective']),
       taskId: pickStr(['task_id', 'taskId']),
       reason: pickStr(['reason']),
+      stage: stageCode == null
+          ? null
+          : AutonomousFailureStage.fromWire(stageCode),
+      errorCategory: categoryCode == null
+          ? null
+          : AutonomousFailureCategory.fromWire(categoryCode),
+      attempt: pickInt(['attempt']),
+      maxAttempts: pickInt(['max_attempts', 'maxAttempts']),
+      replanCount: pickInt(['replan_count', 'replanCount']),
+      maxReplans: pickInt(['max_replans', 'maxReplans']),
+      provider: pickStr(['provider']),
+      model: pickStr(['model']),
+      resumable: pickBool(['resumable']),
+      checkpointPresent: pickBool(['checkpoint_present', 'checkpointPresent']),
+      reasonCode: pickStr(['reason_code', 'reasonCode']),
+      runRef: pickStr(['run_ref', 'runRef']),
+      diagnosticTimestamp: pickStr(['transition_at', 'diagnosticTimestamp']),
     );
   }
 }
