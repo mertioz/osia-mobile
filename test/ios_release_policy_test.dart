@@ -114,6 +114,8 @@ void main() {
         'image',
         'attach',
         'conversation',
+        'pairing',
+        'qr code',
       ],
     );
     _expectPurposeString(

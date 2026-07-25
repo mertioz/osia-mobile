@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Required for voice commands -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- Requested only when the user opens the pairing QR scanner -->
+    <uses-permission android:name="android.permission.CAMERA"/>
     <application
         android:label="OSIA"
         android:name="${applicationName}"

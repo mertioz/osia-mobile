@@ -47,6 +47,12 @@ class OsiaStrings {
   final String invalidToken;
   final String tokenHint;
   final String pcOffline;
+  final String scanQrCode;
+  final String scanPairingQrTitle;
+  final String scanPairingQrHint;
+  final String invalidPairingQr;
+  final String cameraPermissionDeniedForPairing;
+  final String cameraUnavailableForPairing;
 
   // ── Chat screen ──
   final String conversations;
@@ -441,6 +447,12 @@ class OsiaStrings {
     required this.invalidToken,
     required this.tokenHint,
     required this.pcOffline,
+    required this.scanQrCode,
+    required this.scanPairingQrTitle,
+    required this.scanPairingQrHint,
+    required this.invalidPairingQr,
+    required this.cameraPermissionDeniedForPairing,
+    required this.cameraUnavailableForPairing,
     required this.conversations,
     required this.newChat,
     required this.noConversationsYet,
@@ -990,6 +1002,16 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   invalidToken: 'Invalid token. Check it and try again.',
   tokenHint: 'Your token is in the OSIA settings on your PC',
   pcOffline: 'Your PC is offline. Start OSIA on your PC, then try again.',
+  scanQrCode: 'Scan QR code',
+  scanPairingQrTitle: 'Scan pairing QR code',
+  scanPairingQrHint:
+      'Point the camera at the QR code shown by OSIA on your PC.',
+  invalidPairingQr:
+      'This is not a valid OSIA pairing QR code. Try another code.',
+  cameraPermissionDeniedForPairing:
+      'Camera access was denied. You can cancel and enter the token manually.',
+  cameraUnavailableForPairing:
+      'The camera is unavailable. Try again or enter the token manually.',
   conversations: 'Conversations',
   newChat: 'New chat',
   noConversationsYet: 'No conversations yet',
@@ -1372,6 +1394,16 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   tokenHint: 'Votre token se trouve dans les paramètres OSIA sur votre PC',
   pcOffline:
       'Votre PC est hors ligne. Lancez OSIA sur votre PC, puis réessayez.',
+  scanQrCode: 'Scanner le code QR',
+  scanPairingQrTitle: 'Scanner le code QR d’appairage',
+  scanPairingQrHint:
+      'Pointez la caméra vers le code QR affiché par OSIA sur votre PC.',
+  invalidPairingQr:
+      'Ce code QR n’est pas un code d’appairage OSIA valide. Essayez-en un autre.',
+  cameraPermissionDeniedForPairing:
+      'L’accès à la caméra a été refusé. Vous pouvez annuler et saisir le jeton manuellement.',
+  cameraUnavailableForPairing:
+      'La caméra est indisponible. Réessayez ou saisissez le jeton manuellement.',
   conversations: 'Conversations',
   newChat: 'Nouveau chat',
   noConversationsYet: 'Aucune conversation pour le moment',
@@ -1758,6 +1790,12 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   invalidToken: '令牌无效。请检查后重试。',
   tokenHint: '您的令牌位于您电脑上的 OSIA 设置中',
   pcOffline: '您的电脑已离线。请在电脑上启动 OSIA，然后重试。',
+  scanQrCode: '扫描二维码',
+  scanPairingQrTitle: '扫描配对二维码',
+  scanPairingQrHint: '将摄像头对准电脑上 OSIA 显示的二维码。',
+  invalidPairingQr: '这不是有效的 OSIA 配对二维码。请扫描其他代码。',
+  cameraPermissionDeniedForPairing: '摄像头权限已被拒绝。您可以取消并手动输入令牌。',
+  cameraUnavailableForPairing: '摄像头不可用。请重试或手动输入令牌。',
   conversations: '对话',
   newChat: '新对话',
   noConversationsYet: '暂无对话',
@@ -2117,6 +2155,12 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   invalidToken: 'トークンが無効です。確認してもう一度お試しください。',
   tokenHint: 'トークンは PC の OSIA 設定にあります',
   pcOffline: 'お使いの PC がオフラインです。PC で OSIA を起動してから、もう一度お試しください。',
+  scanQrCode: 'QR コードをスキャン',
+  scanPairingQrTitle: 'ペアリング QR コードをスキャン',
+  scanPairingQrHint: 'PC の OSIA に表示された QR コードにカメラを向けてください。',
+  invalidPairingQr: '有効な OSIA ペアリング QR コードではありません。別のコードをお試しください。',
+  cameraPermissionDeniedForPairing: 'カメラへのアクセスが拒否されました。キャンセルしてトークンを手動入力できます。',
+  cameraUnavailableForPairing: 'カメラを使用できません。再試行するか、トークンを手動入力してください。',
   conversations: '会話',
   newChat: '新しいチャット',
   noConversationsYet: 'まだ会話がありません',
@@ -2488,6 +2532,16 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   tokenHint: 'Ihr Token finden Sie in den OSIA-Einstellungen auf Ihrem PC',
   pcOffline:
       'Ihr PC ist offline. Starten Sie OSIA auf Ihrem PC und versuchen Sie es erneut.',
+  scanQrCode: 'QR-Code scannen',
+  scanPairingQrTitle: 'Kopplungs-QR-Code scannen',
+  scanPairingQrHint:
+      'Richten Sie die Kamera auf den QR-Code, den OSIA auf Ihrem PC anzeigt.',
+  invalidPairingQr:
+      'Dies ist kein gültiger OSIA-Kopplungs-QR-Code. Versuchen Sie einen anderen Code.',
+  cameraPermissionDeniedForPairing:
+      'Der Kamerazugriff wurde verweigert. Sie können abbrechen und das Token manuell eingeben.',
+  cameraUnavailableForPairing:
+      'Die Kamera ist nicht verfügbar. Versuchen Sie es erneut oder geben Sie das Token manuell ein.',
   conversations: 'Unterhaltungen',
   newChat: 'Neuer Chat',
   noConversationsYet: 'Noch keine Unterhaltungen',
@@ -2882,6 +2936,15 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   tokenHint: 'Tu token está en los ajustes de OSIA en tu PC',
   pcOffline:
       'Tu PC está desconectado. Inicia OSIA en tu PC y vuelve a intentarlo.',
+  scanQrCode: 'Escanear código QR',
+  scanPairingQrTitle: 'Escanear QR de emparejamiento',
+  scanPairingQrHint: 'Apunta la cámara al código QR que muestra OSIA en tu PC.',
+  invalidPairingQr:
+      'Este no es un código QR de emparejamiento de OSIA válido. Prueba con otro.',
+  cameraPermissionDeniedForPairing:
+      'Se denegó el acceso a la cámara. Puedes cancelar e introducir el token manualmente.',
+  cameraUnavailableForPairing:
+      'La cámara no está disponible. Inténtalo de nuevo o introduce el token manualmente.',
   conversations: 'Conversaciones',
   newChat: 'Nuevo chat',
   noConversationsYet: 'Aún no hay conversaciones',

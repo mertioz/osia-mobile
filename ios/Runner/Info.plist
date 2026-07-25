@@ -31,7 +31,7 @@
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>OSIA accesses your photo library only when you explicitly select an image to attach to a conversation.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>OSIA accesses the camera only when you explicitly choose to capture an image to attach to a conversation.</string>
+	<string>OSIA accesses the camera only when you explicitly capture an image to attach to a conversation or scan an OSIA pairing QR code.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>OSIA does not track your location. It may access location metadata only in an image you explicitly select for a conversation attachment.</string>
 	<key>NSLocalNetworkUsageDescription</key>

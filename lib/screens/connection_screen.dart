@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../l10n.dart';
 import '../motion.dart';
+import '../pairing_token.dart';
 import '../services/rendezvous_service.dart';
 import '../services/relay_service.dart';
 import '../services/storage_service.dart';
@@ -12,6 +13,7 @@ import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 import 'chat_screen.dart' show ChatHandoff;
 import 'legal_screen.dart';
+import 'pairing_scanner_screen.dart';
 
 /// Minimal, premium connection screen — the first thing the user sees on
 /// first launch (and after disconnecting).
@@ -22,8 +24,13 @@ import 'legal_screen.dart';
 /// and is never shown again once stored.
 class ConnectionScreen extends StatefulWidget {
   final StorageService storage;
+  final PairingScannerAdapter Function()? pairingScannerFactory;
 
-  const ConnectionScreen({super.key, required this.storage});
+  const ConnectionScreen({
+    super.key,
+    required this.storage,
+    this.pairingScannerFactory,
+  });
 
   @override
   State<ConnectionScreen> createState() => _ConnectionScreenState();
@@ -149,16 +156,42 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     setState(() {});
   }
 
+  Future<void> _scanQrCode() async {
+    if (_connecting) return;
+    final scannedToken = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (_) =>
+            PairingScannerScreen(adapter: widget.pairingScannerFactory?.call()),
+      ),
+    );
+    if (!mounted || scannedToken == null) return;
+    final input = parsePairingToken(scannedToken);
+    if (!input.isValid) {
+      setState(() => _error = OsiaL10n.of(context).invalidToken);
+      return;
+    }
+    _tokenCtrl.value = TextEditingValue(
+      text: input.value,
+      selection: TextSelection.collapsed(offset: input.value.length),
+    );
+    setState(() => _error = null);
+  }
+
   /// Verify the token by opening a real connection to the OSIA server,
   /// then persist it and enter the chat.
   Future<void> _connect() async {
     final strings = OsiaL10n.of(context);
-    final token = _tokenCtrl.text.trim();
+    final input = parsePairingToken(_tokenCtrl.text);
 
-    if (token.isEmpty) {
+    if (input.issue == PairingTokenIssue.empty) {
       setState(() => _error = strings.tokenRequired);
       return;
     }
+    if (!input.isValid) {
+      setState(() => _error = strings.invalidToken);
+      return;
+    }
+    final token = input.value;
     if (_connecting) return;
 
     setState(() {
@@ -385,6 +418,8 @@ class _ConnectionScreenState extends State<ConnectionScreen>
                       _buildTokenField(palette, strings),
                       const SizedBox(height: 10),
                       _buildTokenHint(palette, strings),
+                      const SizedBox(height: 8),
+                      _buildScanButton(palette, strings),
                       const SizedBox(height: 12),
                       _buildError(palette),
                       const SizedBox(height: 12),
@@ -459,6 +494,7 @@ class _ConnectionScreenState extends State<ConnectionScreen>
 
   Widget _buildTokenField(OsiaPalette palette, OsiaStrings strings) {
     return TextField(
+      key: const Key('pairing-token-field'),
       controller: _tokenCtrl,
       enabled: !_connecting,
       obscureText: _obscureToken,
@@ -523,6 +559,19 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     );
   }
 
+  Widget _buildScanButton(OsiaPalette palette, OsiaStrings strings) {
+    return TextButton.icon(
+      key: const Key('pairing-scan-button'),
+      onPressed: _connecting ? null : _scanQrCode,
+      icon: const Icon(Icons.qr_code_scanner_rounded, size: 20),
+      label: Text(strings.scanQrCode),
+      style: TextButton.styleFrom(
+        foregroundColor: palette.accent,
+        textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
   Widget _buildTokenHint(OsiaPalette palette, OsiaStrings strings) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -580,6 +629,7 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     return SizedBox(
       height: 52,
       child: ElevatedButton(
+        key: const Key('pairing-connect-button'),
         onPressed: _connecting ? null : _connect,
         style: ElevatedButton.styleFrom(
           backgroundColor: palette.accent,

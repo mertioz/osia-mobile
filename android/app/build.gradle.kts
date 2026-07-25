@@ -98,6 +98,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".test"
+        }
         release {
             signingConfig = releaseSigningConfig
         }
