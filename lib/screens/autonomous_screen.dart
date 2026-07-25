@@ -366,6 +366,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       return;
     }
     FocusScope.of(context).unfocus();
+    widget.wsService.setClientLocale(strings.languageCode);
     widget.wsService.sendAutonomousStart(objective, model);
     // Optimistic "Planning…" until the first progress frame refines the state.
     setState(() {

@@ -1709,6 +1709,23 @@ class McpConfirmRequest {
 class WebSocketService {
   final String ip;
   final String token;
+  String _clientLocale = '';
+
+  /// Set the optional UI locale carried by subsequent user-turn frames.
+  /// The server remains authoritative and safely ignores unsupported values.
+  void setClientLocale(String? locale) {
+    final candidate = (locale ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll('_', '-')
+        .split(RegExp(r'[.@]'))
+        .first;
+    if (!RegExp(r'^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$').hasMatch(candidate)) {
+      _clientLocale = '';
+      return;
+    }
+    _clientLocale = candidate;
+  }
 
   /// Whether the service silently reconnects after an unexpected close.
   ///
@@ -2502,6 +2519,8 @@ class WebSocketService {
 
   @visibleForTesting
   final Future<bool> Function()? connectAttemptForTest;
+  @visibleForTesting
+  final bool Function(Map<String, dynamic>)? sendFrameForTest;
 
   bool _connectedViaRelay = false;
   RelayConnectionConfig? _relayConfig;
@@ -2559,6 +2578,7 @@ class WebSocketService {
     this.storage,
     LanDiscoveryService? lanDiscoveryService,
     this.connectAttemptForTest,
+    this.sendFrameForTest,
   }) : lanDiscoveryService = lanDiscoveryService ?? LanDiscoveryService() {
     debugPrint(
       '[OSIA Direct] LAN enabled=$lanDirectV1 WebRTC enabled=$webRtcDirectV1',
@@ -2751,6 +2771,7 @@ class WebSocketService {
       'request_id': requestId,
       'client_request_id': requestId,
       'tts_enabled': ttsEnabled,
+      if (_clientLocale.isNotEmpty) 'locale': _clientLocale,
     });
     if (sent) {
       _rememberRequest(id, requestId);
@@ -2789,6 +2810,7 @@ class WebSocketService {
       'client_request_id': clientRequestId,
       'attachment_batch_id': attachmentBatchId,
       'tts_enabled': ttsEnabled,
+      if (_clientLocale.isNotEmpty) 'locale': _clientLocale,
     });
     if (sent) {
       _rememberRequest(conversationId, clientRequestId);
@@ -2876,6 +2898,7 @@ class WebSocketService {
       'request_id': requestId,
       'client_request_id': requestId,
       'tts_enabled': ttsEnabled,
+      if (_clientLocale.isNotEmpty) 'locale': _clientLocale,
     });
     if (sent) {
       _rememberRequest(id, requestId);
@@ -3116,7 +3139,12 @@ class WebSocketService {
   /// (a configured `"provider:model"` / model id). Progress arrives on
   /// [autonomousStream].
   void sendAutonomousStart(String objective, String model) {
-    _send({'type': 'autonomous_start', 'objective': objective, 'model': model});
+    _send({
+      'type': 'autonomous_start',
+      'objective': objective,
+      'model': model,
+      if (_clientLocale.isNotEmpty) 'locale': _clientLocale,
+    });
   }
 
   /// Pause the current autonomous run (resumable — the server keeps its state).
@@ -3949,6 +3977,10 @@ class WebSocketService {
   }
 
   bool _send(Map<String, dynamic> json) {
+    final testSender = sendFrameForTest;
+    if (testSender != null) {
+      return testSender(Map<String, dynamic>.from(json));
+    }
     final lanTransport = _lanTransport;
     if (_connectedViaLan && lanTransport != null) {
       if (_transportLease?.active != true) {

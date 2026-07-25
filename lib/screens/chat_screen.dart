@@ -332,6 +332,7 @@ class _ChatScreenState extends State<ChatScreen> {
               RelayService(storage: widget.storage).connectionConfig(authToken),
           resolveHost: () => RendezvousService().resolveHost(authToken),
         );
+    _wsService.setClientLocale(widget.languageController.code);
     widget.connectionLifecycle.attach(_wsService);
 
     _connSub = _wsService.connectionStream.listen((state) {
@@ -1996,6 +1997,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool get _showThinkingTrailer => _thinking && !_isThinkingMidStream;
 
   Future<void> _sendText() async {
+    _wsService.setClientLocale(widget.languageController.code);
     final text = _textCtrl.text.trim();
     final attachments = List<PreparedAttachment>.of(_pendingAttachments);
     final hasFiles = attachments.isNotEmpty;
@@ -2474,6 +2476,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// replay the wire payload (file first, then prompt), then re-show thinking
   /// and re-arm the watchdog. Mirrors [_sendText]'s send sequence.
   void _retryLastTurn() {
+    _wsService.setClientLocale(widget.languageController.code);
     final turn = _pendingTurn;
     if (turn == null) return;
     final retryConv = _activeConversationId;
@@ -2610,6 +2613,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final base64Wav = await _audioService.stopRecording();
       if (!mounted) return;
       if (base64Wav != null && base64Wav.isNotEmpty) {
+        _wsService.setClientLocale(widget.languageController.code);
         final voiceConv = _activeConversationId;
         if (_activeConversationBusy) {
           ScaffoldMessenger.of(context).showSnackBar(
