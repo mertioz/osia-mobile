@@ -336,6 +336,7 @@ class OsiaStrings {
   final String autonomousObjectiveHint;
   final String autonomousPickModel;
   final String autonomousNoConfiguredModels;
+  final String autonomousModelFallback;
   final String autonomousStart;
   final String autonomousPlanning;
   final String autonomousRunning;
@@ -698,6 +699,7 @@ class OsiaStrings {
     required this.autonomousObjectiveHint,
     required this.autonomousPickModel,
     required this.autonomousNoConfiguredModels,
+    required this.autonomousModelFallback,
     required this.autonomousStart,
     required this.autonomousPlanning,
     required this.autonomousRunning,
@@ -1496,8 +1498,9 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   autonomousObjectiveLabel: 'Objective',
   autonomousObjectiveHint: 'Describe what OSIA should accomplish on its own…',
   autonomousPickModel: 'Choose a model',
-  autonomousNoConfiguredModels:
-      'No configured model — add an API key in Providers first.',
+  autonomousNoConfiguredModels: 'No configured model is currently available.',
+  autonomousModelFallback:
+      'The selected autonomous model became unavailable. Another configured model was selected.',
   autonomousStart: 'Start',
   autonomousPlanning: 'Planning…',
   autonomousRunning: 'Running',
@@ -1892,7 +1895,9 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   autonomousObjectiveHint: "Décrivez ce qu'OSIA doit accomplir seul…",
   autonomousPickModel: 'Choisir un modèle',
   autonomousNoConfiguredModels:
-      "Aucun modèle configuré — ajoutez d'abord une clé API dans Fournisseurs.",
+      "Aucun modèle configuré n'est disponible actuellement.",
+  autonomousModelFallback:
+      'Le modèle autonome sélectionné est devenu indisponible. Un autre modèle configuré a été sélectionné.',
   autonomousStart: 'Démarrer',
   autonomousPlanning: 'Planification…',
   autonomousRunning: 'En cours',
@@ -2264,7 +2269,8 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   autonomousObjectiveLabel: '目标',
   autonomousObjectiveHint: '描述 OSIA 需要自主完成的任务…',
   autonomousPickModel: '选择模型',
-  autonomousNoConfiguredModels: '没有已配置的模型 — 请先在「提供商」中添加 API 密钥。',
+  autonomousNoConfiguredModels: '当前没有可用的已配置模型。',
+  autonomousModelFallback: '所选自主模型已不可用，已改选另一个已配置的模型。',
   autonomousStart: '开始',
   autonomousPlanning: '规划中…',
   autonomousRunning: '运行中',
@@ -2636,7 +2642,8 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   autonomousObjectiveLabel: '目標',
   autonomousObjectiveHint: 'OSIA が自律的に達成すべき内容を入力…',
   autonomousPickModel: 'モデルを選択',
-  autonomousNoConfiguredModels: '設定済みのモデルがありません — まず「プロバイダー」で API キーを追加してください。',
+  autonomousNoConfiguredModels: '現在利用できる設定済みモデルはありません。',
+  autonomousModelFallback: '選択した自律モデルを利用できないため、別の設定済みモデルを選択しました。',
   autonomousStart: '開始',
   autonomousPlanning: '計画中…',
   autonomousRunning: '実行中',
@@ -3037,7 +3044,9 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   autonomousObjectiveHint: 'Beschreibe, was OSIA eigenständig erledigen soll…',
   autonomousPickModel: 'Modell wählen',
   autonomousNoConfiguredModels:
-      'Kein konfiguriertes Modell — füge zuerst unter Anbieter einen API-Schlüssel hinzu.',
+      'Derzeit ist kein konfiguriertes Modell verfügbar.',
+  autonomousModelFallback:
+      'Das ausgewählte autonome Modell ist nicht mehr verfügbar. Ein anderes konfiguriertes Modell wurde ausgewählt.',
   autonomousStart: 'Starten',
   autonomousPlanning: 'Planung…',
   autonomousRunning: 'Läuft',
@@ -3433,7 +3442,9 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   autonomousObjectiveHint: 'Describe lo que OSIA debe lograr por su cuenta…',
   autonomousPickModel: 'Elegir un modelo',
   autonomousNoConfiguredModels:
-      'Ningún modelo configurado — añade primero una clave API en Proveedores.',
+      'No hay ningún modelo configurado disponible actualmente.',
+  autonomousModelFallback:
+      'El modelo autónomo seleccionado dejó de estar disponible. Se seleccionó otro modelo configurado.',
   autonomousStart: 'Iniciar',
   autonomousPlanning: 'Planificando…',
   autonomousRunning: 'En curso',

@@ -23,10 +23,9 @@ import '../widgets/thinking_indicator.dart';
 ///   - inbound: `autonomous_progress` on [ws.WebSocketService.autonomousStream].
 ///
 /// The model list and "configured" rule reuse the same data as the rest of the
-/// app — `get_models` (`models_list` on the shared message stream) filtered
-/// against the config snapshot (`api_keys_set` + `api_key_fallbacks`), so a
-/// model is offered only when its provider has a primary key OR a fallback key
-/// OR is keyless/local (Ollama) — identical to the PC.
+/// app — the PC-authoritative configured catalogue delivered by `get_models`
+/// (`models_list` on the shared message stream). Mobile never invents provider
+/// availability from a static list or credential metadata.
 class AutonomousScreen extends StatefulWidget {
   /// Live connection to the OSIA server, owned by the chat screen and threaded
   /// down so this screen can drive autonomous runs.
@@ -41,25 +40,89 @@ class AutonomousScreen extends StatefulWidget {
 /// Lifecycle of an autonomous run, derived from the latest `event` marker.
 enum _RunPhase { idle, planning, running, paused, done, failed, aborted }
 
+@visibleForTesting
+bool sameAutonomousModelIdentity(ws.OsiaModel? left, ws.OsiaModel? right) {
+  if (left == null || right == null) return left == right;
+  return (left.provider ?? '').trim().toLowerCase() ==
+          (right.provider ?? '').trim().toLowerCase() &&
+      left.id.trim() == right.id.trim();
+}
+
+@visibleForTesting
+String autonomousModelWireValue(ws.OsiaModel model) {
+  final provider = (model.provider ?? '').trim().toLowerCase();
+  final modelId = model.id.trim();
+  if (provider.isEmpty || modelId.isEmpty) return '';
+  return '$provider:$modelId';
+}
+
+@visibleForTesting
+class AutonomousModelResolution {
+  final ws.OsiaModel? selected;
+  final bool fallbackOccurred;
+
+  const AutonomousModelResolution(this.selected, this.fallbackOccurred);
+}
+
+@visibleForTesting
+AutonomousModelResolution resolveAutonomousModelSelection(
+  List<ws.OsiaModel> models, {
+  ws.OsiaModel? current,
+  String? serverProvider,
+  String? serverModel,
+  bool userPicked = false,
+}) {
+  ws.OsiaModel? exact(String? provider, String? modelId) {
+    final wantedProvider = (provider ?? '').trim().toLowerCase();
+    final wantedModel = (modelId ?? '').trim();
+    if (wantedProvider.isEmpty || wantedModel.isEmpty) return null;
+    for (final model in models) {
+      if ((model.provider ?? '').trim().toLowerCase() == wantedProvider &&
+          model.id.trim() == wantedModel) {
+        return model;
+      }
+    }
+    return null;
+  }
+
+  final currentMatch = current == null
+      ? null
+      : exact(current.provider, current.id);
+  if (userPicked && currentMatch != null) {
+    return AutonomousModelResolution(currentMatch, false);
+  }
+
+  ws.OsiaModel? selected;
+  final wantedServerModel = (serverModel ?? '').trim();
+  if ((serverProvider ?? '').trim().isNotEmpty) {
+    selected = exact(serverProvider, wantedServerModel);
+  } else if (wantedServerModel.isNotEmpty) {
+    final matches = models
+        .where((model) => model.id.trim() == wantedServerModel)
+        .toList();
+    if (matches.length == 1) selected = matches.single;
+  }
+  selected ??= currentMatch;
+  selected ??= models.isEmpty ? null : models.first;
+  final fallback = current != null && currentMatch == null;
+  return AutonomousModelResolution(selected, fallback);
+}
+
 class _AutonomousScreenState extends State<AutonomousScreen> {
   final TextEditingController _objectiveCtrl = TextEditingController();
-
-  /// Latest config snapshot (drives the configured-only model filter). Null
-  /// until the first `config` reply lands.
-  ws.ConfigData? _config;
 
   /// All models the server exposes (via `models_list`). Filtered to
   /// configured-only before display.
   List<ws.OsiaModel> _models = const [];
 
-  /// The chosen model id. Defaults to the server's current model when it is
-  /// itself configured, else the first configured model.
-  String? _selectedModel;
+  /// The chosen exact provider/model entry.
+  ws.OsiaModel? _selectedModel;
 
-  /// The server's currently-active model (from `models_list`), remembered
-  /// separately so the auto-selection can prefer it once the config snapshot
-  /// has arrived — regardless of whether `models_list` or `config` lands first.
+  /// The server's currently-active exact pair (from `models_list`), remembered
+  /// separately so auto-selection can prefer it when it is in the catalogue.
   String? _serverCurrentModel;
+  String? _serverCurrentProvider;
+  bool _modelsLoaded = false;
 
   /// Set once the user explicitly picks a model in the selector, so the
   /// auto-selection stops overriding their choice when later frames arrive.
@@ -90,7 +153,6 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     _configSub = widget.wsService.configStream.listen((cfg) {
       if (!mounted) return;
       setState(() {
-        _config = cfg;
         _reasoning = cfg.reasoning;
       });
       _syncModelSelection();
@@ -99,12 +161,13 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       if (msg is ws.ModelsListMessage && mounted) {
         setState(() {
           _models = msg.models;
-          // Remember the server's current model; the actual (configured-only)
-          // selection is resolved by _syncModelSelection, which converges to
-          // the same result whether models or config arrives first.
+          _modelsLoaded = true;
+          // Remember the server's exact current pair; _syncModelSelection keeps
+          // duplicate model ids under different providers distinct.
           if (msg.current != null && msg.current!.isNotEmpty) {
             _serverCurrentModel = msg.current;
           }
+          _serverCurrentProvider = msg.currentProvider;
         });
         _syncModelSelection();
       }
@@ -211,41 +274,39 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
 
   /// The configured-only model list (the only models offered for a run).
   List<ws.OsiaModel> get _configuredModels {
-    if (_config == null) return const [];
-    return _models.where((model) => model.selectable).toList();
+    return _models
+        .where(
+          (model) =>
+              model.selectable &&
+              (model.provider ?? '').trim().isNotEmpty &&
+              model.id.trim().isNotEmpty,
+        )
+        .toList();
   }
 
   /// Resolve [_selectedModel] against the configured-only list, and push a
   /// fresh state into an open model-selector sheet.
   ///
-  /// Converges to the same selection regardless of whether `models_list` or
-  /// `config` arrives first: the configured set can only be computed once
-  /// config has landed, so until then the selection is left untouched and this
-  /// re-runs on the next stream event. Once config is present and the user
-  /// hasn't picked manually, it prefers the server's current model (when that
-  /// model is itself configured) and otherwise the first configured model.
+  /// It preserves a manual exact pair, otherwise prefers the server's exact
+  /// current pair and finally the first deterministic catalogue entry.
   void _syncModelSelection() {
     final configured = _configuredModels;
-    if (_config != null) {
-      final ids = configured.map((m) => m.id).toSet();
-      if (!_userPickedModel) {
-        // Auto-selection: server's current model if configured, else the first
-        // configured model, else none.
-        String? next;
-        if (_serverCurrentModel != null && ids.contains(_serverCurrentModel)) {
-          next = _serverCurrentModel;
-        } else if (configured.isNotEmpty) {
-          next = configured.first.id;
-        }
-        if (next != _selectedModel) setState(() => _selectedModel = next);
-      } else if (_selectedModel != null && !ids.contains(_selectedModel)) {
-        // A manual pick that is no longer configured (config changed) — clamp
-        // back to the first configured model (or clear when none remain).
-        setState(
-          () => _selectedModel = configured.isNotEmpty
-              ? configured.first.id
-              : null,
-        );
+    if (_modelsLoaded) {
+      final resolution = resolveAutonomousModelSelection(
+        configured,
+        current: _selectedModel,
+        serverProvider: _serverCurrentProvider,
+        serverModel: _serverCurrentModel,
+        userPicked: _userPickedModel,
+      );
+      if (!sameAutonomousModelIdentity(resolution.selected, _selectedModel)) {
+        setState(() => _selectedModel = resolution.selected);
+      } else if (resolution.selected != null &&
+          !identical(resolution.selected, _selectedModel)) {
+        setState(() => _selectedModel = resolution.selected);
+      }
+      if (resolution.fallbackOccurred) {
+        _showModelFallbackNotice();
       }
     }
     final notifier = _selectorNotifier;
@@ -253,14 +314,25 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       _modelLoadTimeout?.cancel();
       notifier.value = ModelSelectorState(
         models: configured,
-        // Still waiting on the config snapshot needed to filter — keep spinning.
-        isLoading: _config == null,
-        errorMessage: (_config != null && configured.isEmpty)
+        isLoading: !_modelsLoaded,
+        errorMessage: (_modelsLoaded && configured.isEmpty)
             ? OsiaL10n.of(context).autonomousNoConfiguredModels
             : null,
         reasoning: _reasoning,
       );
     }
+  }
+
+  void _showModelFallbackNotice() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final strings = OsiaL10n.of(context);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(strings.autonomousModelFallback)),
+        );
+    });
   }
 
   // ── Actions ──────────────────────────────────────────────────────────────
@@ -273,8 +345,8 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     final notifier = ValueNotifier<ModelSelectorState>(
       ModelSelectorState(
         models: configured,
-        isLoading: _config == null,
-        errorMessage: (_config != null && configured.isEmpty)
+        isLoading: !_modelsLoaded,
+        errorMessage: (_modelsLoaded && configured.isEmpty)
             ? strings.autonomousNoConfiguredModels
             : null,
         reasoning: _reasoning,
@@ -283,7 +355,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     _selectorNotifier = notifier;
     _modelLoadTimeout?.cancel();
 
-    if (_config == null || _models.isEmpty) {
+    if (!_modelsLoaded) {
       widget.wsService.sendGetConfig();
       widget.wsService.sendGetModels();
       _modelLoadTimeout = Timer(const Duration(seconds: 5), () {
@@ -292,7 +364,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         notifier.value = ModelSelectorState(
           models: const [],
           isLoading: false,
-          errorMessage: _config != null
+          errorMessage: _modelsLoaded
               ? strings.autonomousNoConfiguredModels
               : strings.modelsLoadFailed,
           reasoning: _reasoning,
@@ -301,19 +373,24 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     }
 
     try {
+      ws.OsiaModel? pickedModel;
       final chosen = await showModelSelector(
         context: context,
         stateListenable: notifier,
-        currentModel: _selectedModel,
+        currentModel: _selectedModel?.id,
+        currentProvider: _selectedModel?.provider,
         // The run uses the explicitly chosen model — the AI-hierarchy override
         // note doesn't apply here.
         hierarchyActive: false,
         onReasoningChanged: _setReasoningForModel,
+        onModelSelected: (model) => pickedModel = model,
       );
-      if (chosen != null) {
+      if (chosen != null && pickedModel != null) {
         // A manual pick wins over auto-selection from here on.
         _userPickedModel = true;
-        if (chosen != _selectedModel) setState(() => _selectedModel = chosen);
+        if (!sameAutonomousModelIdentity(pickedModel, _selectedModel)) {
+          setState(() => _selectedModel = pickedModel);
+        }
       }
     } finally {
       _modelLoadTimeout?.cancel();
@@ -356,8 +433,11 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         );
       return;
     }
-    final model = _selectedModel;
-    if (model == null || model.isEmpty) {
+    final selectedModel = _selectedModel;
+    final model = selectedModel == null
+        ? ''
+        : autonomousModelWireValue(selectedModel);
+    if (model.isEmpty) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -434,6 +514,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         !_isActive &&
         _objectiveCtrl.text.trim().isNotEmpty &&
         _selectedModel != null &&
+        autonomousModelWireValue(_selectedModel!).isNotEmpty &&
         configuredCount > 0;
 
     return Scaffold(
@@ -531,7 +612,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
               ),
               // "No configured model" hint once config has arrived and the
               // filtered list is empty.
-              if (_config != null && configuredCount == 0) ...[
+              if (_modelsLoaded && configuredCount == 0) ...[
                 const SizedBox(height: 10),
                 _InlineNote(
                   icon: Icons.info_outline_rounded,
@@ -694,12 +775,11 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
   /// Pretty label for the selected model — its server label when known, else
   /// the raw id, else the "choose a model" prompt.
   String _selectedModelLabel(OsiaStrings strings) {
-    final id = _selectedModel;
-    if (id == null || id.isEmpty) return strings.autonomousPickModel;
-    for (final m in _models) {
-      if (m.id == id) return m.label;
+    final model = _selectedModel;
+    if (model == null || model.id.isEmpty) {
+      return strings.autonomousPickModel;
     }
-    return id;
+    return model.label;
   }
 
   /// The status card. Idle → a muted "nothing running" line; active →
