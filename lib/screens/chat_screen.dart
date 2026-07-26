@@ -567,9 +567,12 @@ class _ChatScreenState extends State<ChatScreen> {
               _abandonedAudioRequestIds.contains(clientRequestId)) {
             break;
           }
+          // Read-aloud owns a separate media request id while [_pendingTurn]
+          // intentionally retains the completed text turn's id. Keep the
+          // active-conversation guard, but do not compare those unrelated ids.
           if (!_isFrameForCurrentTurn(
             conversationId: conversationId,
-            clientRequestId: clientRequestId,
+            clientRequestId: source == 'speak' ? '' : clientRequestId,
           )) {
             break;
           }
