@@ -894,6 +894,70 @@ class OsiaStrings {
       .replaceAll('{server}', server)
       .replaceAll('{tool}', tool);
 
+  String get colossalDeletionPcReviewTitle {
+    switch (languageCode) {
+      case 'fr':
+        return 'Verification locale requise';
+      case 'de':
+        return 'Lokale Prufung erforderlich';
+      case 'es':
+        return 'Se requiere revision local';
+      default:
+        return 'Local PC review required';
+    }
+  }
+
+  String get colossalDeletionPcReviewBody {
+    switch (languageCode) {
+      case 'fr':
+        return 'Cette suppression colossale ne peut pas etre autorisee depuis le mobile. Consultez l inventaire complet et confirmez-la localement sur le PC.';
+      case 'de':
+        return 'Diese sehr grosse Loschung kann nicht mobil genehmigt werden. Prufen Sie das vollstandige Inventar lokal am PC.';
+      case 'es':
+        return 'Esta eliminacion masiva no se puede aprobar desde el movil. Revise el inventario completo localmente en el PC.';
+      default:
+        return 'This colossal deletion cannot be approved on mobile. Review the complete inventory and confirm it locally on the PC.';
+    }
+  }
+
+  String colossalDeletionSafeCounts(
+    int files,
+    int folders,
+    int bytes,
+    int roots,
+  ) {
+    final size = bytes >= 1024 * 1024 * 1024
+        ? '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GiB'
+        : bytes >= 1024 * 1024
+        ? '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB'
+        : bytes >= 1024
+        ? '${(bytes / 1024).toStringAsFixed(1)} KiB'
+        : '$bytes B';
+    switch (languageCode) {
+      case 'fr':
+        return '$files fichiers, $folders dossiers, $size, $roots racines';
+      case 'de':
+        return '$files Dateien, $folders Ordner, $size, $roots Wurzeln';
+      case 'es':
+        return '$files archivos, $folders carpetas, $size, $roots raices';
+      default:
+        return '$files files, $folders folders, $size, $roots roots';
+    }
+  }
+
+  String get colossalDeletionClose {
+    switch (languageCode) {
+      case 'fr':
+        return 'Fermer';
+      case 'de':
+        return 'Schliessen';
+      case 'es':
+        return 'Cerrar';
+      default:
+        return 'Close';
+    }
+  }
+
   String modelCount(int count) {
     switch (languageCode) {
       case 'fr':

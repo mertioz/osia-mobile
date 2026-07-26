@@ -1659,11 +1659,33 @@ class McpConfirmRequest {
   /// list of arg names, or a `{arg: …}` map.
   final String summary;
 
+  /// Additive WOR-193 discriminator.  The only reinforced value understood by
+  /// mobile is PC-only and is never approvable here.
+  final String confirmationKind;
+  final bool canApprove;
+  final int filesCount;
+  final int foldersCount;
+  final int totalBytes;
+  final int rootCount;
+  final String safeReason;
+  final double? expiresAt;
+
+  bool get isPcOnlyColossalDeletion =>
+      confirmationKind == 'colossal_deletion_pc_only';
+
   const McpConfirmRequest({
     required this.id,
     required this.server,
     required this.tool,
     required this.summary,
+    this.confirmationKind = 'ordinary',
+    this.canApprove = true,
+    this.filesCount = 0,
+    this.foldersCount = 0,
+    this.totalBytes = 0,
+    this.rootCount = 0,
+    this.safeReason = '',
+    this.expiresAt,
   });
 
   factory McpConfirmRequest.fromJson(Map<String, dynamic> json) {
@@ -1684,11 +1706,31 @@ class McpConfirmRequest {
       return raw?.toString() ?? '';
     }
 
+    int safeCount(dynamic raw) {
+      if (raw is! num || !raw.isFinite) return 0;
+      final value = raw.toInt();
+      return value < 0 ? 0 : value;
+    }
+
+    final kind = (json['confirmation_kind'] ?? 'ordinary').toString();
+    final pcOnly = kind == 'colossal_deletion_pc_only';
     return McpConfirmRequest(
       id: (json['id'] ?? '').toString(),
       server: (json['server'] ?? '').toString(),
       tool: (json['tool'] ?? '').toString(),
       summary: coerceSummary(json['summary']),
+      confirmationKind: kind,
+      // A reinforced request is fail-closed regardless of a contradictory
+      // server field. Unknown kinds still honor an explicit non-approvable bit.
+      canApprove: pcOnly ? false : json['can_approve'] != false,
+      filesCount: safeCount(json['files_count']),
+      foldersCount: safeCount(json['folders_count']),
+      totalBytes: safeCount(json['total_bytes']),
+      rootCount: safeCount(json['root_count']),
+      safeReason: (json['safe_reason'] ?? '').toString(),
+      expiresAt: json['expires_at'] is num
+          ? (json['expires_at'] as num).toDouble()
+          : null,
     );
   }
 }
