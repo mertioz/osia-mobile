@@ -3919,3 +3919,396 @@ class OsiaL10n extends InheritedWidget {
   @override
   bool updateShouldNotify(OsiaL10n old) => old.strings != strings;
 }
+
+extension PermissionOsiaStrings on OsiaStrings {
+  String _permissionText(
+    String en,
+    String fr,
+    String zh,
+    String ja,
+    String de,
+    String es,
+  ) => switch (languageCode) {
+    'fr' => fr,
+    'zh' => zh,
+    'ja' => ja,
+    'de' => de,
+    'es' => es,
+    _ => en,
+  };
+
+  String get permissionsTitle => _permissionText(
+    'Permissions',
+    'Autorisations',
+    '权限',
+    '権限',
+    'Berechtigungen',
+    'Permisos',
+  );
+  String get permissionsSubtitle => _permissionText(
+    'PC-controlled access',
+    'Accès contrôlé par le PC',
+    '由电脑控制的访问权限',
+    'PC が管理するアクセス',
+    'Vom PC gesteuerter Zugriff',
+    'Acceso controlado por el PC',
+  );
+  String get permissionLive =>
+      _permissionText('Live', 'En direct', '实时', 'ライブ', 'Live', 'En directo');
+  String get permissionLastKnown => _permissionText(
+    'Last known state',
+    'Dernier état connu',
+    '上次已知状态',
+    '最後に確認した状態',
+    'Letzter bekannter Stand',
+    'Último estado conocido',
+  );
+  String get permissionSyncing => _permissionText(
+    'Syncing with your PC…',
+    'Synchronisation avec votre PC…',
+    '正在与电脑同步…',
+    'PC と同期中…',
+    'Synchronisierung mit dem PC…',
+    'Sincronizando con el PC…',
+  );
+  String get permissionNoSnapshot => _permissionText(
+    'Connect to your PC to load permissions.',
+    'Connectez-vous à votre PC pour charger les autorisations.',
+    '连接电脑以加载权限。',
+    'PC に接続して権限を読み込んでください。',
+    'Mit dem PC verbinden, um Berechtigungen zu laden.',
+    'Conecta el PC para cargar los permisos.',
+  );
+  String get permissionDefaultAccess => _permissionText(
+    'Default Access',
+    'Accès par défaut',
+    '默认访问',
+    'デフォルトアクセス',
+    'Standardzugriff',
+    'Acceso predeterminado',
+  );
+  String get permissionFullAccess => _permissionText(
+    'Full Access',
+    'Accès complet',
+    '完全访问',
+    'フルアクセス',
+    'Vollzugriff',
+    'Acceso total',
+  );
+  String get permissionMixedAccess =>
+      _permissionText('Mixed', 'Mixte', '混合', '混合', 'Gemischt', 'Mixto');
+  String get permissionPcEnableOnly => _permissionText(
+    'Full Access can only be enabled on your PC.',
+    'L’Accès complet peut uniquement être activé sur votre PC.',
+    '完全访问只能在电脑上启用。',
+    'フルアクセスは PC でのみ有効にできます。',
+    'Vollzugriff kann nur am PC aktiviert werden.',
+    'El Acceso total solo se puede activar en el PC.',
+  );
+  String get permissionOn =>
+      _permissionText('On', 'Activé', '开启', 'オン', 'An', 'Activado');
+  String get permissionOff =>
+      _permissionText('Off', 'Désactivé', '关闭', 'オフ', 'Aus', 'Desactivado');
+  String get permissionTemporary => _permissionText(
+    'Temporary permissions',
+    'Autorisations temporaires',
+    '临时权限',
+    '一時的な権限',
+    'Temporäre Berechtigungen',
+    'Permisos temporales',
+  );
+  String get permissionNoTemporary => _permissionText(
+    'No temporary permissions are active.',
+    'Aucune autorisation temporaire active.',
+    '没有有效的临时权限。',
+    '有効な一時権限はありません。',
+    'Keine temporären Berechtigungen aktiv.',
+    'No hay permisos temporales activos.',
+  );
+  String get permissionRevoke => _permissionText(
+    'Revoke',
+    'Révoquer',
+    '撤销',
+    '取り消す',
+    'Widerrufen',
+    'Revocar',
+  );
+  String get permissionRevokeRun => _permissionText(
+    'Revoke all for this run',
+    'Tout révoquer pour cette exécution',
+    '撤销此运行的全部权限',
+    'この実行の権限をすべて取り消す',
+    'Alles für diesen Lauf widerrufen',
+    'Revocar todo para esta ejecución',
+  );
+  String get permissionRevokeTask => _permissionText(
+    'Revoke all for this task',
+    'Tout révoquer pour cette tâche',
+    '撤销此任务的全部权限',
+    'このタスクの権限をすべて取り消す',
+    'Alles für diese Aufgabe widerrufen',
+    'Revocar todo para esta tarea',
+  );
+  String get permissionRevokeAll => _permissionText(
+    'Revoke all delegated access',
+    'Révoquer tous les accès délégués',
+    '撤销所有委托访问',
+    '委任アクセスをすべて取り消す',
+    'Alle delegierten Zugriffe widerrufen',
+    'Revocar todo el acceso delegado',
+  );
+  String get permissionDisableFullAccess => _permissionText(
+    'Disable Full Access',
+    'Désactiver l’Accès complet',
+    '停用完全访问',
+    'フルアクセスを無効にする',
+    'Vollzugriff deaktivieren',
+    'Desactivar Acceso total',
+  );
+  String get permissionPending => _permissionText(
+    'Waiting for PC confirmation…',
+    'En attente de confirmation du PC…',
+    '等待电脑确认…',
+    'PC の確認待ち…',
+    'Warten auf PC-Bestätigung…',
+    'Esperando confirmación del PC…',
+  );
+  String get permissionRefresh => _permissionText(
+    'Refresh',
+    'Actualiser',
+    '刷新',
+    '更新',
+    'Aktualisieren',
+    'Actualizar',
+  );
+  String get permissionChangesUnavailable => _permissionText(
+    'Changes are unavailable on this PC.',
+    'Les modifications sont indisponibles sur ce PC.',
+    '此电脑暂时无法进行更改。',
+    'この PC では変更できません。',
+    'Änderungen sind auf diesem PC nicht verfügbar.',
+    'Los cambios no están disponibles en este PC.',
+  );
+  String get permissionHistory => _permissionText(
+    'Recent activity',
+    'Activité récente',
+    '最近活动',
+    '最近の履歴',
+    'Letzte Aktivität',
+    'Actividad reciente',
+  );
+  String get permissionNoHistory => _permissionText(
+    'No permission activity yet.',
+    'Aucune activité pour le moment.',
+    '暂无权限活动。',
+    '権限の履歴はまだありません。',
+    'Noch keine Berechtigungsaktivität.',
+    'Aún no hay actividad de permisos.',
+  );
+  String get permissionApplied => _permissionText(
+    'Confirmed by your PC.',
+    'Confirmé par votre PC.',
+    '电脑已确认。',
+    'PC で確認されました。',
+    'Vom PC bestätigt.',
+    'Confirmado por el PC.',
+  );
+  String get permissionRejected => _permissionText(
+    'The PC did not apply that change.',
+    'Le PC n’a pas appliqué cette modification.',
+    '电脑未应用此更改。',
+    'PC はこの変更を適用しませんでした。',
+    'Der PC hat die Änderung nicht angewendet.',
+    'El PC no aplicó el cambio.',
+  );
+
+  String permissionCategoryLabel(String key) => switch (key) {
+    'files_modify' => _permissionText(
+      'Modify files',
+      'Modifier des fichiers',
+      '修改文件',
+      'ファイルの変更',
+      'Dateien ändern',
+      'Modificar archivos',
+    ),
+    'files_delete' => _permissionText(
+      'Delete files',
+      'Supprimer des fichiers',
+      '删除文件',
+      'ファイルの削除',
+      'Dateien löschen',
+      'Eliminar archivos',
+    ),
+    'commands' => _permissionText(
+      'Run commands',
+      'Exécuter des commandes',
+      '运行命令',
+      'コマンドの実行',
+      'Befehle ausführen',
+      'Ejecutar comandos',
+    ),
+    'browser_account' => _permissionText(
+      'Browser account actions',
+      'Actions de compte web',
+      '浏览器账户操作',
+      'ブラウザーのアカウント操作',
+      'Browser-Kontoaktionen',
+      'Acciones de cuenta web',
+    ),
+    'connectors' => _permissionText(
+      'Connected services',
+      'Services connectés',
+      '已连接服务',
+      '接続済みサービス',
+      'Verbundene Dienste',
+      'Servicios conectados',
+    ),
+    'send_publish_submit' => _permissionText(
+      'Send or publish',
+      'Envoyer ou publier',
+      '发送或发布',
+      '送信または公開',
+      'Senden oder veröffentlichen',
+      'Enviar o publicar',
+    ),
+    'purchases_payments' => _permissionText(
+      'Purchases and payments',
+      'Achats et paiements',
+      '购买与付款',
+      '購入と支払い',
+      'Käufe und Zahlungen',
+      'Compras y pagos',
+    ),
+    'autonomous_actions' => _permissionText(
+      'Autonomous actions',
+      'Actions autonomes',
+      '自主操作',
+      '自律操作',
+      'Autonome Aktionen',
+      'Acciones autónomas',
+    ),
+    'scheduled_actions' => _permissionText(
+      'Scheduled actions',
+      'Actions planifiées',
+      '计划操作',
+      'スケジュール済み操作',
+      'Geplante Aktionen',
+      'Acciones programadas',
+    ),
+    _ => _permissionText(
+      'Sensitive actions',
+      'Actions sensibles',
+      '敏感操作',
+      '重要な操作',
+      'Sensible Aktionen',
+      'Acciones sensibles',
+    ),
+  };
+
+  String permissionActionLabel(String key) => switch (key) {
+    'files_and_folders' => _permissionText(
+      'Files and folders',
+      'Fichiers et dossiers',
+      '文件和文件夹',
+      'ファイルとフォルダー',
+      'Dateien und Ordner',
+      'Archivos y carpetas',
+    ),
+    'commands' => permissionCategoryLabel('commands'),
+    'device_settings' => _permissionText(
+      'Device settings',
+      'Réglages de l’appareil',
+      '设备设置',
+      'デバイス設定',
+      'Geräteeinstellungen',
+      'Ajustes del dispositivo',
+    ),
+    'connected_services' => permissionCategoryLabel('connectors'),
+    'web_actions' => _permissionText(
+      'Web actions',
+      'Actions web',
+      '网页操作',
+      'Web 操作',
+      'Web-Aktionen',
+      'Acciones web',
+    ),
+    'payments' => permissionCategoryLabel('purchases_payments'),
+    _ => permissionCategoryLabel(''),
+  };
+
+  String permissionContextLabel(String context) => switch (context) {
+    'autonomous' => _permissionText(
+      'Autonomous',
+      'Autonome',
+      '自主',
+      '自律',
+      'Autonom',
+      'Autónomo',
+    ),
+    'scheduled' => _permissionText(
+      'Scheduled Task',
+      'Tâche planifiée',
+      '计划任务',
+      'スケジュール済みタスク',
+      'Geplante Aufgabe',
+      'Tarea programada',
+    ),
+    _ => _permissionText('Chat', 'Chat', '聊天', 'チャット', 'Chat', 'Chat'),
+  };
+
+  String permissionRemainingUses(int count) => _permissionText(
+    '$count use${count == 1 ? '' : 's'} left',
+    '$count utilisation${count == 1 ? '' : 's'} restante${count == 1 ? '' : 's'}',
+    '剩余 $count 次',
+    '残り $count 回',
+    '$count Verwendung${count == 1 ? '' : 'en'} übrig',
+    '$count uso${count == 1 ? '' : 's'} restante${count == 1 ? '' : 's'}',
+  );
+
+  String permissionExpiresIn(int minutes) => _permissionText(
+    'Expires in $minutes min',
+    'Expire dans $minutes min',
+    '$minutes 分钟后到期',
+    '$minutes 分後に期限切れ',
+    'Läuft in $minutes Min. ab',
+    'Caduca en $minutes min',
+  );
+
+  String permissionHistoryLabel(String event) => switch (event) {
+    'full_access_enabled' => permissionFullAccess,
+    'full_access_disabled' => permissionDisableFullAccess,
+    'grant_created' => _permissionText(
+      'Temporary access added',
+      'Accès temporaire ajouté',
+      '已添加临时访问',
+      '一時アクセスを追加',
+      'Temporärer Zugriff hinzugefügt',
+      'Acceso temporal añadido',
+    ),
+    'grant_revoked' => _permissionText(
+      'Temporary access revoked',
+      'Accès temporaire révoqué',
+      '已撤销临时访问',
+      '一時アクセスを取り消し',
+      'Temporärer Zugriff widerrufen',
+      'Acceso temporal revocado',
+    ),
+    'delegated_authority_revoked' => permissionRevokeAll,
+    'automatic_permission_changed' => _permissionText(
+      'Access settings changed',
+      'Réglages d’accès modifiés',
+      '访问设置已更改',
+      'アクセス設定を変更',
+      'Zugriffseinstellungen geändert',
+      'Ajustes de acceso modificados',
+    ),
+    _ => _permissionText(
+      'Permission activity',
+      'Activité d’autorisation',
+      '权限活动',
+      '権限の履歴',
+      'Berechtigungsaktivität',
+      'Actividad de permisos',
+    ),
+  };
+}

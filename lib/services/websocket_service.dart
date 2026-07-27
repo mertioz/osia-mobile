@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -1866,6 +1867,374 @@ class McpConfirmRequest {
 
 // ── WebSocket service ─────────────────────────────────────────────────────
 
+const int permissionSnapshotSchemaVersion = 1;
+const Set<String> permissionCategoryKeys = <String>{
+  'files_modify',
+  'files_delete',
+  'commands',
+  'browser_account',
+  'connectors',
+  'send_publish_submit',
+  'purchases_payments',
+  'autonomous_actions',
+  'scheduled_actions',
+};
+
+bool _hasExactStringKeys(Map<Object?, Object?> value, Set<String> keys) =>
+    value.length == keys.length && value.keys.every(keys.contains);
+
+bool _isPermissionOpaqueId(Object? value) =>
+    value is String &&
+    RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$').hasMatch(value);
+
+String _newPermissionDeviceId() =>
+    'permission-device-${WebSocketService.newClientRequestId()}';
+
+enum PermissionRevocationOperation {
+  revokeTemporaryPermission('revoke_temporary_permission'),
+  revokeAutonomousRun('revoke_autonomous_run'),
+  revokeScheduledTask('revoke_scheduled_task'),
+  revokeAllDelegatedAuthority('revoke_all_delegated_authority'),
+  disableFullAccess('disable_full_access');
+
+  const PermissionRevocationOperation(this.wireValue);
+  final String wireValue;
+}
+
+class PermissionTemporaryItem {
+  const PermissionTemporaryItem({
+    required this.actionLabel,
+    required this.context,
+    required this.expiresAt,
+    required this.remainingUses,
+    required this.mobileItemId,
+    required this.revocable,
+  });
+
+  final String actionLabel;
+  final String context;
+  final double? expiresAt;
+  final int? remainingUses;
+  final String mobileItemId;
+  final bool revocable;
+}
+
+class PermissionHistoryEvent {
+  const PermissionHistoryEvent({
+    required this.timestamp,
+    required this.event,
+    required this.context,
+  });
+
+  final double timestamp;
+  final String event;
+  final String context;
+}
+
+class PermissionPendingRequestState {
+  const PermissionPendingRequestState({
+    required this.requestId,
+    required this.status,
+  });
+
+  final String requestId;
+  final String status;
+}
+
+class PermissionSnapshot {
+  const PermissionSnapshot({
+    required this.snapshotId,
+    required this.serverId,
+    required this.sessionId,
+    required this.policyEpoch,
+    required this.sequence,
+    required this.generatedAt,
+    required this.preset,
+    required this.categories,
+    required this.fullAccessActive,
+    required this.protectedStoreAvailable,
+    required this.temporaryPermissions,
+    required this.history,
+    required this.pendingRequests,
+  });
+
+  final String snapshotId;
+  final String serverId;
+  final String sessionId;
+  final int policyEpoch;
+  final int sequence;
+  final double generatedAt;
+  final String preset;
+  final Map<String, bool> categories;
+  final bool fullAccessActive;
+  final bool protectedStoreAvailable;
+  final List<PermissionTemporaryItem> temporaryPermissions;
+  final List<PermissionHistoryEvent> history;
+  final List<PermissionPendingRequestState> pendingRequests;
+
+  static PermissionSnapshot? tryParse(Map<String, dynamic> json) {
+    const topKeys = <String>{
+      'type',
+      'schema_version',
+      'snapshot_id',
+      'server_id',
+      'session_id',
+      'policy_epoch',
+      'sequence',
+      'generated_at',
+      'preset',
+      'categories',
+      'full_access_active',
+      'protected_store',
+      'temporary_permissions',
+      'history',
+      'pending_requests',
+    };
+    if (!_hasExactStringKeys(json, topKeys) ||
+        json['type'] != 'permission_snapshot' ||
+        json['schema_version'] != permissionSnapshotSchemaVersion ||
+        !_isPermissionOpaqueId(json['snapshot_id']) ||
+        !_isPermissionOpaqueId(json['server_id']) ||
+        !_isPermissionOpaqueId(json['session_id'])) {
+      return null;
+    }
+    final epoch = json['policy_epoch'];
+    final sequence = json['sequence'];
+    final generatedAt = json['generated_at'];
+    final preset = json['preset'];
+    final protectedStore = json['protected_store'];
+    if (epoch is! int ||
+        epoch < 0 ||
+        sequence is! int ||
+        sequence < 1 ||
+        generatedAt is! num ||
+        !generatedAt.toDouble().isFinite ||
+        generatedAt < 0 ||
+        !const <String>{
+          'default_access',
+          'full_access',
+          'mixed',
+        }.contains(preset) ||
+        !const <String>{'available', 'unavailable'}.contains(protectedStore) ||
+        json['full_access_active'] is! bool) {
+      return null;
+    }
+    final rawCategories = json['categories'];
+    if (rawCategories is! Map ||
+        !_hasExactStringKeys(rawCategories, permissionCategoryKeys) ||
+        rawCategories.values.any((value) => value is! bool)) {
+      return null;
+    }
+    final categories = <String, bool>{
+      for (final key in permissionCategoryKeys) key: rawCategories[key] as bool,
+    };
+
+    final rawPermissions = json['temporary_permissions'];
+    if (rawPermissions is! List) return null;
+    final permissions = <PermissionTemporaryItem>[];
+    const permissionKeys = <String>{
+      'action_label',
+      'context',
+      'expires_at',
+      'remaining_uses',
+      'mobile_item_id',
+      'revocable',
+    };
+    for (final raw in rawPermissions) {
+      if (raw is! Map || !_hasExactStringKeys(raw, permissionKeys)) return null;
+      final actionLabel = raw['action_label'];
+      final context = raw['context'];
+      final expiresAt = raw['expires_at'];
+      final remainingUses = raw['remaining_uses'];
+      if (!_isPermissionOpaqueId(actionLabel) ||
+          !const <String>{
+            'chat',
+            'autonomous',
+            'scheduled',
+          }.contains(context) ||
+          !_isPermissionOpaqueId(raw['mobile_item_id']) ||
+          raw['revocable'] is! bool ||
+          (expiresAt != null &&
+              (expiresAt is! num || !expiresAt.toDouble().isFinite)) ||
+          (remainingUses != null &&
+              (remainingUses is! int || remainingUses < 0))) {
+        return null;
+      }
+      permissions.add(
+        PermissionTemporaryItem(
+          actionLabel: actionLabel as String,
+          context: context as String,
+          expiresAt: expiresAt == null ? null : (expiresAt as num).toDouble(),
+          remainingUses: remainingUses as int?,
+          mobileItemId: raw['mobile_item_id'] as String,
+          revocable: raw['revocable'] as bool,
+        ),
+      );
+    }
+
+    final rawHistory = json['history'];
+    if (rawHistory is! List) return null;
+    final history = <PermissionHistoryEvent>[];
+    const historyKeys = <String>{'timestamp', 'event', 'context'};
+    for (final raw in rawHistory) {
+      if (raw is! Map || !_hasExactStringKeys(raw, historyKeys)) return null;
+      final timestamp = raw['timestamp'];
+      if (timestamp is! num ||
+          !timestamp.toDouble().isFinite ||
+          !_isPermissionOpaqueId(raw['event']) ||
+          raw['context'] is! String ||
+          !const <String>{
+            '',
+            'chat',
+            'autonomous',
+            'scheduled',
+          }.contains(raw['context'])) {
+        return null;
+      }
+      history.add(
+        PermissionHistoryEvent(
+          timestamp: timestamp.toDouble(),
+          event: raw['event'] as String,
+          context: raw['context'] as String,
+        ),
+      );
+    }
+
+    final rawPending = json['pending_requests'];
+    if (rawPending is! List) return null;
+    final pending = <PermissionPendingRequestState>[];
+    const pendingKeys = <String>{'request_id', 'status'};
+    for (final raw in rawPending) {
+      if (raw is! Map ||
+          !_hasExactStringKeys(raw, pendingKeys) ||
+          !_isPermissionOpaqueId(raw['request_id']) ||
+          !const <String>{
+            'pending',
+            'applied',
+            'idempotent',
+            'rejected',
+            'unknown',
+          }.contains(raw['status'])) {
+        return null;
+      }
+      pending.add(
+        PermissionPendingRequestState(
+          requestId: raw['request_id'] as String,
+          status: raw['status'] as String,
+        ),
+      );
+    }
+
+    return PermissionSnapshot(
+      snapshotId: json['snapshot_id'] as String,
+      serverId: json['server_id'] as String,
+      sessionId: json['session_id'] as String,
+      policyEpoch: epoch,
+      sequence: sequence,
+      generatedAt: generatedAt.toDouble(),
+      preset: preset as String,
+      categories: Map<String, bool>.unmodifiable(categories),
+      fullAccessActive: json['full_access_active'] as bool,
+      protectedStoreAvailable: protectedStore == 'available',
+      temporaryPermissions: List<PermissionTemporaryItem>.unmodifiable(
+        permissions,
+      ),
+      history: List<PermissionHistoryEvent>.unmodifiable(history),
+      pendingRequests: List<PermissionPendingRequestState>.unmodifiable(
+        pending,
+      ),
+    );
+  }
+}
+
+class PermissionRevocationAck {
+  const PermissionRevocationAck({
+    required this.requestId,
+    required this.serverId,
+    required this.sessionId,
+    required this.basePolicyEpoch,
+    required this.baseSnapshotSequence,
+    required this.status,
+    required this.reason,
+    required this.policyEpoch,
+  });
+
+  final String requestId;
+  final String serverId;
+  final String sessionId;
+  final int basePolicyEpoch;
+  final int baseSnapshotSequence;
+  final String status;
+  final String reason;
+  final int policyEpoch;
+
+  bool get succeeded => status == 'applied' || status == 'idempotent';
+
+  static PermissionRevocationAck? tryParse(Map<String, dynamic> json) {
+    const keys = <String>{
+      'type',
+      'schema_version',
+      'request_id',
+      'server_id',
+      'session_id',
+      'base_policy_epoch',
+      'base_snapshot_sequence',
+      'status',
+      'reason',
+      'policy_epoch',
+    };
+    if (!_hasExactStringKeys(json, keys) ||
+        json['type'] != 'permission_revocation_ack' ||
+        json['schema_version'] != permissionSnapshotSchemaVersion ||
+        !_isPermissionOpaqueId(json['request_id']) ||
+        !_isPermissionOpaqueId(json['server_id']) ||
+        !_isPermissionOpaqueId(json['session_id']) ||
+        !_isPermissionOpaqueId(json['reason']) ||
+        !const <String>{
+          'applied',
+          'idempotent',
+          'rejected',
+        }.contains(json['status'])) {
+      return null;
+    }
+    final baseEpoch = json['base_policy_epoch'];
+    final baseSequence = json['base_snapshot_sequence'];
+    final epoch = json['policy_epoch'];
+    if (baseEpoch is! int ||
+        baseEpoch < 0 ||
+        baseSequence is! int ||
+        baseSequence < 1 ||
+        epoch is! int ||
+        epoch < 0) {
+      return null;
+    }
+    return PermissionRevocationAck(
+      requestId: json['request_id'] as String,
+      serverId: json['server_id'] as String,
+      sessionId: json['session_id'] as String,
+      basePolicyEpoch: baseEpoch,
+      baseSnapshotSequence: baseSequence,
+      status: json['status'] as String,
+      reason: json['reason'] as String,
+      policyEpoch: epoch,
+    );
+  }
+}
+
+class _PendingPermissionRevocation {
+  const _PendingPermissionRevocation({
+    required this.sessionId,
+    required this.policyEpoch,
+    required this.snapshotSequence,
+    required this.targetId,
+  });
+
+  final String sessionId;
+  final int policyEpoch;
+  final int snapshotSequence;
+  final String targetId;
+}
+
 /// Manages the WebSocket connection to the OSIA PC server.
 ///
 /// Usage:
@@ -1883,6 +2252,15 @@ class WebSocketService {
   String _clientLocale = '';
   String _autonomousAuthorizationOrigin = '';
   String _scheduledAuthorizationOrigin = '';
+  final String _permissionDeviceId = _newPermissionDeviceId();
+  String _permissionSessionId = '';
+  final Set<String> _retiredPermissionSessionIds = <String>{};
+  int _lastPermissionSequence = 0;
+  int _lastPermissionEpoch = -1;
+  bool _permissionsLive = false;
+  PermissionSnapshot? _permissionSnapshot;
+  final Map<String, _PendingPermissionRevocation>
+  _pendingPermissionRevocations = <String, _PendingPermissionRevocation>{};
 
   /// Set the optional UI locale carried by subsequent user-turn frames.
   /// The server remains authoritative and safely ignores unsupported values.
@@ -1951,6 +2329,12 @@ class WebSocketService {
 
   final StreamController<ConfigData> _configCtrl =
       StreamController<ConfigData>.broadcast();
+
+  final StreamController<PermissionSnapshot> _permissionSnapshotCtrl =
+      StreamController<PermissionSnapshot>.broadcast();
+
+  final StreamController<PermissionRevocationAck> _permissionAckCtrl =
+      StreamController<PermissionRevocationAck>.broadcast();
 
   final StreamController<ChatGptAccountState> _chatGptAccountCtrl =
       StreamController<ChatGptAccountState>.broadcast();
@@ -2078,6 +2462,29 @@ class WebSocketService {
   /// Stream of full config snapshots (one per `get_config` reply). Kept off
   /// [messageStream] so the chat screen's sealed-message switch is untouched.
   Stream<ConfigData> get configStream => _configCtrl.stream;
+
+  /// Strict, sanitized snapshots from the currently authenticated PC.
+  Stream<PermissionSnapshot> get permissionSnapshotStream =>
+      _permissionSnapshotCtrl.stream;
+
+  /// Typed PC acknowledgements for locally pending revocation requests.
+  Stream<PermissionRevocationAck> get permissionRevocationAckStream =>
+      _permissionAckCtrl.stream;
+
+  /// Last accepted canonical state. It is display-only while offline.
+  PermissionSnapshot? get permissionSnapshot => _permissionSnapshot;
+
+  /// True only after this connection has accepted a fresh session snapshot.
+  bool get permissionsLive =>
+      _permissionsLive && _state == ConnectionState.connected;
+
+  Set<String> get pendingPermissionRequestIds =>
+      Set<String>.unmodifiable(_pendingPermissionRevocations.keys);
+
+  bool isPermissionItemPending(String mobileItemId) =>
+      _pendingPermissionRevocations.values.any(
+        (pending) => pending.targetId == mobileItemId,
+      );
 
   /// Sanitized ChatGPT-account status and ephemeral device-code updates.
   Stream<ChatGptAccountState> get chatGptAccountStream =>
@@ -2546,6 +2953,23 @@ class WebSocketService {
   }
 
   @visibleForTesting
+  void setPermissionConnectionForTest(bool connected) {
+    if (connected) {
+      _beginPermissionReconnect();
+      _setState(ConnectionState.connected);
+    } else {
+      _markPermissionsOffline();
+      _setState(ConnectionState.disconnected);
+    }
+  }
+
+  @visibleForTesting
+  String get expectedPermissionServerIdForTest => _expectedPermissionServerId;
+
+  @visibleForTesting
+  String get permissionDeviceIdForTest => _permissionDeviceId;
+
+  @visibleForTesting
   void rememberRequestForTest(String conversationId, String clientRequestId) {
     _rememberRequest(conversationId, clientRequestId);
     if (conversationId.isNotEmpty) _pendingConvs.add(conversationId);
@@ -2856,6 +3280,7 @@ class WebSocketService {
       ),
     );
 
+    _beginPermissionReconnect();
     _setState(ConnectionState.connecting);
     unawaited(
       Future<void>.microtask(() async {
@@ -2927,6 +3352,7 @@ class WebSocketService {
     _relayConfig = null;
     _relayReadyCompleter = null;
     _clearApplicationTurnTracking();
+    _markPermissionsOffline();
     _setState(ConnectionState.disconnected);
     final connectCompleter = _connectCompleter;
     if (connectCompleter != null && !connectCompleter.isCompleted) {
@@ -3277,6 +3703,59 @@ class WebSocketService {
   /// [configStream] as a [ConfigData].
   void sendGetConfig() {
     _send({'type': 'get_config'});
+  }
+
+  /// Request a fresh canonical permission snapshot for this authenticated PC.
+  bool requestPermissionSnapshot() {
+    if (_state != ConnectionState.connected) return false;
+    return _send({
+      'type': 'get_permission_snapshot',
+      'schema_version': permissionSnapshotSchemaVersion,
+      'device_id': _permissionDeviceId,
+      'pending_request_ids': _pendingPermissionRevocations.keys.toList(),
+    });
+  }
+
+  /// Submit one non-optimistic, snapshot-bound revocation to the PC authority.
+  String? sendPermissionRevocation(
+    PermissionRevocationOperation operation, {
+    String targetId = '',
+  }) {
+    final snapshot = _permissionSnapshot;
+    if (!permissionsLive || snapshot == null || _permissionSessionId.isEmpty) {
+      return null;
+    }
+    final targeted = <PermissionRevocationOperation>{
+      PermissionRevocationOperation.revokeTemporaryPermission,
+      PermissionRevocationOperation.revokeAutonomousRun,
+      PermissionRevocationOperation.revokeScheduledTask,
+    }.contains(operation);
+    if (targeted != targetId.isNotEmpty ||
+        (targetId.isNotEmpty && !_isPermissionOpaqueId(targetId))) {
+      return null;
+    }
+    final requestId = 'permission-${newClientRequestId()}';
+    final pending = _PendingPermissionRevocation(
+      sessionId: _permissionSessionId,
+      policyEpoch: snapshot.policyEpoch,
+      snapshotSequence: snapshot.sequence,
+      targetId: targetId,
+    );
+    final sent = _send({
+      'type': 'permission_revocation_request',
+      'schema_version': permissionSnapshotSchemaVersion,
+      'request_id': requestId,
+      'device_id': _permissionDeviceId,
+      'session_id': _permissionSessionId,
+      'expected_policy_epoch': snapshot.policyEpoch,
+      'expected_snapshot_sequence': snapshot.sequence,
+      'operation': operation.wireValue,
+      'target_id': targetId,
+      'expires_at': DateTime.now().millisecondsSinceEpoch / 1000.0 + 30.0,
+    });
+    if (!sent) return null;
+    _pendingPermissionRevocations[requestId] = pending;
+    return requestId;
   }
 
   /// Ask the PC for the raw API keys, to pre-fill the provider editors. The
@@ -3647,6 +4126,8 @@ class WebSocketService {
     _errorCtrl.close();
     _relayTransferCtrl.close();
     _configCtrl.close();
+    _permissionSnapshotCtrl.close();
+    _permissionAckCtrl.close();
     _chatGptAccountCtrl.close();
     _apiKeysCtrl.close();
     _memoryCtrl.close();
@@ -3676,6 +4157,7 @@ class WebSocketService {
     _seenApplicationEventIds.clear();
     _applicationEventOrder.clear();
     _lastApplicationSequence.clear();
+    _pendingPermissionRevocations.clear();
   }
 
   /// Strip any scheme, path, or port the user may have pasted into the
@@ -3765,6 +4247,87 @@ class WebSocketService {
     _awaitingAuthenticatedInitialSync = false;
     sendGetChatGptAccount();
     sendGetModels();
+    requestPermissionSnapshot();
+  }
+
+  String get _expectedPermissionServerId => sha256
+      .convert(utf8.encode('osia-permission-server-v1\u0000$token'))
+      .toString();
+
+  void _beginPermissionReconnect() {
+    if (_permissionSessionId.isNotEmpty) {
+      _retiredPermissionSessionIds.add(_permissionSessionId);
+    }
+    _permissionSessionId = '';
+    _lastPermissionSequence = 0;
+    _permissionsLive = false;
+  }
+
+  void _markPermissionsOffline() {
+    if (_permissionSessionId.isNotEmpty) {
+      _retiredPermissionSessionIds.add(_permissionSessionId);
+    }
+    _permissionSessionId = '';
+    _lastPermissionSequence = 0;
+    _permissionsLive = false;
+  }
+
+  void _handlePermissionSnapshot(Map<String, dynamic> json) {
+    final snapshot = PermissionSnapshot.tryParse(json);
+    if (snapshot == null ||
+        snapshot.serverId != _expectedPermissionServerId ||
+        snapshot.policyEpoch < _lastPermissionEpoch) {
+      return;
+    }
+    if (_permissionSessionId.isEmpty) {
+      if (_retiredPermissionSessionIds.contains(snapshot.sessionId)) {
+        return;
+      }
+      _permissionSessionId = snapshot.sessionId;
+      _lastPermissionSequence = 0;
+    } else if (snapshot.sessionId != _permissionSessionId) {
+      return;
+    }
+    if (snapshot.sequence <= _lastPermissionSequence) return;
+
+    _lastPermissionSequence = snapshot.sequence;
+    _lastPermissionEpoch = snapshot.policyEpoch;
+    _permissionSnapshot = snapshot;
+    _permissionsLive = _state == ConnectionState.connected;
+    for (final pending in snapshot.pendingRequests) {
+      if (pending.status != 'pending') {
+        _pendingPermissionRevocations.remove(pending.requestId);
+      }
+    }
+    if (!_permissionSnapshotCtrl.isClosed) {
+      _permissionSnapshotCtrl.add(snapshot);
+    }
+  }
+
+  void _handlePermissionRevocationAck(Map<String, dynamic> json) {
+    final ack = PermissionRevocationAck.tryParse(json);
+    if (ack == null ||
+        ack.serverId != _expectedPermissionServerId ||
+        _permissionSessionId.isEmpty ||
+        ack.sessionId != _permissionSessionId) {
+      return;
+    }
+    final pending = _pendingPermissionRevocations[ack.requestId];
+    if (pending == null ||
+        pending.sessionId != _permissionSessionId ||
+        ack.basePolicyEpoch != pending.policyEpoch ||
+        ack.baseSnapshotSequence != pending.snapshotSequence ||
+        ack.policyEpoch < pending.policyEpoch) {
+      return;
+    }
+    _pendingPermissionRevocations.remove(ack.requestId);
+    if (ack.succeeded ||
+        ack.reason == 'stale_epoch' ||
+        ack.reason == 'stale_snapshot') {
+      _permissionsLive = false;
+      requestPermissionSnapshot();
+    }
+    if (!_permissionAckCtrl.isClosed) _permissionAckCtrl.add(ack);
   }
 
   void _resetRelayE2eState() {
@@ -4012,6 +4575,7 @@ class WebSocketService {
     _completeRelayReady(false);
     _resetRelayE2eState();
     _relayReadyCompleter = null;
+    _markPermissionsOffline();
     if (channel != null) {
       debugPrint('[OSIA WS] Closing current socket ($reason).');
       try {
@@ -6016,7 +6580,7 @@ class WebSocketService {
       debugPrint('[OSIA WS] Socket open, sending auth');
 
       // Auth is the first message after the socket opens.
-      _send({'type': 'auth', 'token': token});
+      _send({'type': 'auth', 'token': token, 'device_id': _permissionDeviceId});
     } on TimeoutException {
       if (!_isCurrentConnect(connectGeneration)) return;
       final msg =
@@ -6306,6 +6870,10 @@ class WebSocketService {
           );
         case 'chatgpt_account_state':
           _acceptChatGptAccountSnapshot(json['account'], standalone: true);
+        case 'permission_snapshot':
+          _handlePermissionSnapshot(json);
+        case 'permission_revocation_ack':
+          _handlePermissionRevocationAck(json);
         case 'config':
           // Full config snapshot. Delivered on its own [configStream] (NOT
           // through the paced message queue) so it can't interleave with or
@@ -6556,6 +7124,7 @@ class WebSocketService {
     _resetRelayE2eState();
     _completeRelayReady(false);
     _relayReadyCompleter = null;
+    _markPermissionsOffline();
     _setState(ConnectionState.disconnected);
     if (relayDroppedWhileConnected && !_intentionalClose) {
       if (!_errorCtrl.isClosed) _errorCtrl.add(kRelayUnreachableError);

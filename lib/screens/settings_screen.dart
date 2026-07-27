@@ -8,6 +8,7 @@ import '../l10n.dart';
 import '../legal_manifest.dart';
 import '../motion.dart';
 import '../nav.dart';
+import '../permissions_settings_section.dart';
 import '../services/background_connection_service.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
@@ -203,6 +204,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.wsService.sendGetModels();
     widget.wsService.sendGetChatGptAccount();
     widget.wsService.sendMcpStatus();
+    widget.wsService.requestPermissionSnapshot();
   }
 
   void _openProviders() {
@@ -430,6 +432,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 wsService: widget.wsService,
                 showHeader: false,
               ),
+
+              PermissionsSettingsSection(wsService: widget.wsService),
 
               // ── Memory ───────────────────────────────────────────────
               const SizedBox(height: 18),
