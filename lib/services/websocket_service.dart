@@ -1267,6 +1267,74 @@ class CronNotificationMessage {
   }
 }
 
+/// Sanitized scheduled-task authorization event from the PC authority.
+/// Instructions, normalized scopes, grant references, and tool arguments are
+/// deliberately not represented by this mobile model.
+class ScheduledTaskAuthorizationEvent {
+  final String eventType;
+  final bool ok;
+  final String code;
+  final String taskId;
+  final String authorizationStatus;
+  final Map<String, dynamic>? request;
+
+  const ScheduledTaskAuthorizationEvent({
+    required this.eventType,
+    required this.ok,
+    required this.code,
+    required this.taskId,
+    required this.authorizationStatus,
+    this.request,
+  });
+
+  factory ScheduledTaskAuthorizationEvent.fromJson(Map<String, dynamic> json) {
+    final type = (json['type'] ?? '').toString();
+    final rawTask = json['task'];
+    final task = rawTask is Map
+        ? rawTask.cast<String, dynamic>()
+        : const <String, dynamic>{};
+    Map<String, dynamic>? request;
+    if (type == 'scheduled_task_authorization_request') {
+      final rawCapabilities = json['capabilities'];
+      final capabilities = rawCapabilities is List
+          ? rawCapabilities.whereType<Map>().map((raw) {
+              final item = raw.cast<String, dynamic>();
+              return <String, dynamic>{
+                'id': (item['id'] ?? '').toString(),
+                'tool_category': (item['tool_category'] ?? '').toString(),
+                'effect_class': (item['effect_class'] ?? '').toString(),
+                'safe_category': (item['safe_category'] ?? '').toString(),
+              };
+            }).toList()
+          : <Map<String, dynamic>>[];
+      request = <String, dynamic>{
+        'protocol_version': json['protocol_version'],
+        'request_id': json['request_id'],
+        'task_id': json['task_id'],
+        'task_revision': json['task_revision'],
+        'definition_hash': json['definition_hash'],
+        'authorization_revision': json['authorization_revision'],
+        'policy_epoch': json['policy_epoch'],
+        'expiration': json['expiration'],
+        'request_expires_at': json['request_expires_at'],
+        'origin_ref': json['origin_ref'],
+        'capabilities': capabilities,
+        'max_executions': json['max_executions'],
+      };
+    }
+    return ScheduledTaskAuthorizationEvent(
+      eventType: type,
+      ok: json['ok'] == true,
+      code: (json['code'] ?? '').toString(),
+      taskId: (json['task_id'] ?? task['task_id'] ?? '').toString(),
+      authorizationStatus:
+          (json['authorization_status'] ?? task['authorization_status'] ?? '')
+              .toString(),
+      request: request,
+    );
+  }
+}
+
 enum AutonomousFailureStage {
   planning('planning'),
   taskExecution('task_execution'),
@@ -1814,6 +1882,7 @@ class WebSocketService {
   final String token;
   String _clientLocale = '';
   String _autonomousAuthorizationOrigin = '';
+  String _scheduledAuthorizationOrigin = '';
 
   /// Set the optional UI locale carried by subsequent user-turn frames.
   /// The server remains authoritative and safely ignores unsupported values.
@@ -1911,6 +1980,10 @@ class WebSocketService {
   final StreamController<CronNotificationMessage> _cronNotificationCtrl =
       StreamController<CronNotificationMessage>.broadcast();
 
+  final StreamController<ScheduledTaskAuthorizationEvent>
+  _scheduledAuthorizationCtrl =
+      StreamController<ScheduledTaskAuthorizationEvent>.broadcast();
+
   final StreamController<AutonomousProgressMessage> _autonomousCtrl =
       StreamController<AutonomousProgressMessage>.broadcast();
 
@@ -1972,6 +2045,7 @@ class WebSocketService {
   final Map<String, String> _turnByRequest = <String, String>{};
   final Set<String> _unboundRequestIds = <String>{};
   final Set<String> _seenCronNotifications = {};
+  final Set<String> _respondedScheduledAuthorizationRequests = {};
   final Set<String> _seenApplicationEventIds = <String>{};
   final Queue<String> _applicationEventOrder = Queue<String>();
   final Map<String, int> _lastApplicationSequence = <String, int>{};
@@ -2040,6 +2114,10 @@ class WebSocketService {
   /// Stream of scheduled-task completion/failure notifications.
   Stream<CronNotificationMessage> get cronNotificationStream =>
       _cronNotificationCtrl.stream;
+
+  /// Sanitized scheduled-task authorization requests and state transitions.
+  Stream<ScheduledTaskAuthorizationEvent> get scheduledAuthorizationStream =>
+      _scheduledAuthorizationCtrl.stream;
 
   /// Stream of autonomous-run progress frames (`autonomous_progress`, WOR-45
   /// Phase 5). Kept off [messageStream] for the same reason as [configStream].
@@ -2813,6 +2891,8 @@ class WebSocketService {
   void disconnect() {
     _intentionalClose = true;
     _autonomousAuthorizationOrigin = '';
+    _scheduledAuthorizationOrigin = '';
+    _respondedScheduledAuthorizationRequests.clear();
     lanDiscoveryService.stop();
     _connectGeneration++;
     _socketGeneration++;
@@ -3233,6 +3313,89 @@ class WebSocketService {
     _send({'type': 'get_conversations'});
   }
 
+  /// Ask the PC authority to prepare an exact, revision-bound authorization.
+  void sendScheduledTaskAuthorizationRequest(
+    Map<String, dynamic> job, {
+    int? maxExecutions,
+  }) {
+    final taskId = (job['id'] ?? job['task_id'] ?? '').toString();
+    if (_scheduledAuthorizationOrigin.isEmpty || taskId.isEmpty) return;
+    _send({
+      'type': 'scheduled_task_authorization_request',
+      'task_id': taskId,
+      'max_executions': ?maxExecutions,
+    });
+  }
+
+  bool canRespondToScheduledTaskAuthorization(
+    ScheduledTaskAuthorizationEvent event,
+  ) {
+    final request = event.request;
+    if (request == null || _scheduledAuthorizationOrigin.isEmpty) return false;
+    final requestId = (request['request_id'] ?? '').toString();
+    return requestId.isNotEmpty &&
+        !_respondedScheduledAuthorizationRequests.contains(requestId) &&
+        request['origin_ref'] == _scheduledAuthorizationOrigin;
+  }
+
+  /// Approve or deny the exact sanitized envelope returned by the PC.
+  void sendScheduledTaskAuthorizationResponse(
+    ScheduledTaskAuthorizationEvent event,
+    String action,
+  ) {
+    if (!canRespondToScheduledTaskAuthorization(event)) return;
+    final request = event.request!;
+    final requestId = (request['request_id'] ?? '').toString();
+    _respondedScheduledAuthorizationRequests.add(requestId);
+    _send({
+      'type': 'scheduled_task_authorization_response',
+      'protocol_version': request['protocol_version'],
+      'request_id': requestId,
+      'task_id': request['task_id'],
+      'task_revision': request['task_revision'],
+      'definition_hash': request['definition_hash'],
+      'authorization_revision': request['authorization_revision'],
+      'policy_epoch': request['policy_epoch'],
+      'expiration': request['expiration'],
+      'origin_ref': _scheduledAuthorizationOrigin,
+      'action': action,
+    });
+  }
+
+  Map<String, dynamic>? _scheduledTaskControlEnvelope(
+    Map<String, dynamic> job,
+  ) {
+    final taskId = (job['id'] ?? job['task_id'] ?? '').toString();
+    final definitionHash = (job['definition_hash'] ?? '').toString();
+    if (_scheduledAuthorizationOrigin.isEmpty ||
+        taskId.isEmpty ||
+        definitionHash.isEmpty) {
+      return null;
+    }
+    return <String, dynamic>{
+      'protocol_version': 1,
+      'task_id': taskId,
+      'task_revision': job['task_revision'],
+      'definition_hash': definitionHash,
+      'authorization_revision': job['authorization_revision'],
+      'policy_epoch': job['policy_epoch'],
+      'expiration': job['authorization_expires_at'],
+      'origin_ref': _scheduledAuthorizationOrigin,
+    };
+  }
+
+  void sendScheduledTaskAuthorizationRevoke(Map<String, dynamic> job) {
+    final envelope = _scheduledTaskControlEnvelope(job);
+    if (envelope == null) return;
+    _send({'type': 'scheduled_task_authorization_revoke', ...envelope});
+  }
+
+  void sendScheduledTaskDisable(Map<String, dynamic> job) {
+    final envelope = _scheduledTaskControlEnvelope(job);
+    if (envelope == null) return;
+    _send({'type': 'scheduled_task_disable', ...envelope});
+  }
+
   // ── Autonomous runs (WOR-45 Phase 5) ──
   //
   // The PC accepts these commands and broadcasts `autonomous_progress` frames
@@ -3492,6 +3655,7 @@ class WebSocketService {
     _newChatCtrl.close();
     _conversationsListCtrl.close();
     _cronNotificationCtrl.close();
+    _scheduledAuthorizationCtrl.close();
     _autonomousCtrl.close();
     _mcpStatusCtrl.close();
     _mcpConfirmCtrl.close();
@@ -6263,6 +6427,15 @@ class WebSocketService {
           debugPrint('[OSIA WS] cron_notification: status=${note.status}');
           if (!_cronNotificationCtrl.isClosed) {
             _cronNotificationCtrl.add(note);
+          }
+        case 'scheduled_task_authorization_context':
+          final origin = json['origin_ref'];
+          _scheduledAuthorizationOrigin = origin is String ? origin : '';
+        case 'scheduled_task_authorization_request':
+        case 'scheduled_task_authorization_state':
+          final event = ScheduledTaskAuthorizationEvent.fromJson(json);
+          if (!_scheduledAuthorizationCtrl.isClosed) {
+            _scheduledAuthorizationCtrl.add(event);
           }
         case 'autonomous_authorization_context':
           final origin = json['origin_ref'];

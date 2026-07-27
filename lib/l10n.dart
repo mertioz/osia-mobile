@@ -915,6 +915,162 @@ class OsiaStrings {
     'es': 'Resultado anterior desconocido; continuación automática bloqueada',
   });
 
+  String get scheduledAuthorizationTitle => _autonomousAuthorizationText(const {
+    'en': 'Scheduled task authorization',
+    'fr': 'Autorisation de la tÃ¢che planifiÃ©e',
+    'zh': 'å®šæ—¶ä»»åŠ¡æŽˆæƒ',
+    'ja': 'ã‚¹ã‚±ã‚¸ãƒ¥ãƒ¼ãƒ«ã‚¿ã‚¹ã‚¯ã®æ‰¿èª',
+    'de': 'Autorisierung der geplanten Aufgabe',
+    'es': 'AutorizaciÃ³n de tarea programada',
+  });
+  String get scheduledAuthorize => _autonomousAuthorizationText(const {
+    'en': 'Authorize',
+    'fr': 'Autoriser',
+    'zh': 'æŽˆæƒ',
+    'ja': 'æ‰¿èª',
+    'de': 'Autorisieren',
+    'es': 'Autorizar',
+  });
+  String get scheduledReauthorize => _autonomousAuthorizationText(const {
+    'en': 'Reauthorize',
+    'fr': 'RÃ©autoriser',
+    'zh': 'é‡æ–°æŽˆæƒ',
+    'ja': 'å†æ‰¿èª',
+    'de': 'Erneut autorisieren',
+    'es': 'Volver a autorizar',
+  });
+  String get scheduledDisable => _autonomousAuthorizationText(const {
+    'en': 'Disable',
+    'fr': 'DÃ©sactiver',
+    'zh': 'åœç”¨',
+    'ja': 'ç„¡åŠ¹åŒ–',
+    'de': 'Deaktivieren',
+    'es': 'Desactivar',
+  });
+  String get scheduledInstructionPrivate => _autonomousAuthorizationText(const {
+    'en': 'The task instruction stays private on the PC.',
+    'fr': "L'instruction de la tÃ¢che reste privÃ©e sur le PC.",
+    'zh': 'ä»»åŠ¡æŒ‡ä»¤ä»…ä¿ç•™åœ¨ PC ä¸Šã€‚',
+    'ja': 'ã‚¿ã‚¹ã‚¯æŒ‡ç¤ºã¯ PC ä¸Šã§éžå…¬é–‹ã®ã¾ã¾ã§ã™ã€‚',
+    'de': 'Die Aufgabenanweisung bleibt auf dem PC privat.',
+    'es': 'La instrucciÃ³n de la tarea permanece privada en el PC.',
+  });
+  String get scheduledPcReviewRequired => _autonomousAuthorizationText(const {
+    'en': 'This task requires local review on the PC.',
+    'fr': 'Cette tÃ¢che exige un examen local sur le PC.',
+    'zh': 'æ­¤ä»»åŠ¡éœ€è¦åœ¨ PC ä¸Šæœ¬åœ°å®¡æ ¸ã€‚',
+    'ja': 'ã“ã®ã‚¿ã‚¹ã‚¯ã¯ PC ä¸Šã§ã®ãƒ­ãƒ¼ã‚«ãƒ«ç¢ºèªãŒå¿…è¦ã§ã™ã€‚',
+    'de': 'Diese Aufgabe muss lokal auf dem PC geprÃ¼ft werden.',
+    'es': 'Esta tarea requiere revisiÃ³n local en el PC.',
+  });
+  String get scheduledExactCapabilities => _autonomousAuthorizationText(const {
+    'en': 'Exact capabilities',
+    'fr': 'CapacitÃ©s exactes',
+    'zh': 'ç²¾ç¡®æƒé™',
+    'ja': 'æ­£ç¢ºãªæ©Ÿèƒ½',
+    'de': 'Exakte FÃ¤higkeiten',
+    'es': 'Capacidades exactas',
+  });
+
+  String scheduledRevision(int value) => _autonomousAuthorizationText({
+    'en': 'Revision $value',
+    'fr': 'R\u00e9vision $value',
+    'zh': '\u4fee\u8ba2 $value',
+    'ja': '\u30ea\u30d3\u30b8\u30e7\u30f3 $value',
+    'de': 'Revision $value',
+    'es': 'Revisi\u00f3n $value',
+  });
+
+  String scheduledMaxExecutions(int value) => _autonomousAuthorizationText({
+    'en': 'Maximum executions: $value',
+    'fr': "Nombre maximal d'executions : $value",
+    'zh': '\u6700\u5927\u6267\u884c\u6b21\u6570\uff1a$value',
+    'ja': '\u6700\u5927\u5b9f\u884c\u56de\u6570: $value',
+    'de': 'Maximale Ausf\u00fchrungen: $value',
+    'es': 'Ejecuciones m\u00e1ximas: $value',
+  });
+
+  String scheduledExpires(String value) => _autonomousAuthorizationText({
+    'en': 'Expires: $value',
+    'fr': 'Expire : $value',
+    'zh': '\u5230\u671f\u65f6\u95f4\uff1a$value',
+    'ja': '\u6709\u52b9\u671f\u9650: $value',
+    'de': 'L\u00e4uft ab: $value',
+    'es': 'Caduca: $value',
+  });
+
+  String scheduledAuthorizationStatus(String status) {
+    final values = <String, Map<String, String>>{
+      'authorized': {
+        'en': 'Authorized',
+        'fr': 'AutorisÃ©e',
+        'zh': 'å·²æŽˆæƒ',
+        'ja': 'æ‰¿èªæ¸ˆã¿',
+        'de': 'Autorisiert',
+        'es': 'Autorizada',
+      },
+      'authorization_expired': {
+        'en': 'Expired',
+        'fr': 'ExpirÃ©e',
+        'zh': 'å·²è¿‡æœŸ',
+        'ja': 'æœŸé™åˆ‡ã‚Œ',
+        'de': 'Abgelaufen',
+        'es': 'Caducada',
+      },
+      'authorization_revoked': {
+        'en': 'Revoked',
+        'fr': 'RÃ©voquÃ©e',
+        'zh': 'å·²æ’¤é”€',
+        'ja': 'å–ã‚Šæ¶ˆã—æ¸ˆã¿',
+        'de': 'Widerrufen',
+        'es': 'Revocada',
+      },
+      'authorization_invalidated_by_edit': {
+        'en': 'Edited â€” authorization required',
+        'fr': 'ModifiÃ©e â€” autorisation requise',
+        'zh': 'å·²ä¿®æ”¹ â€” éœ€è¦æŽˆæƒ',
+        'ja': 'ç·¨é›†æ¸ˆã¿ â€” å†æ‰¿èªãŒå¿…è¦',
+        'de': 'GeÃ¤ndert â€“ Autorisierung erforderlich',
+        'es': 'Editada â€” requiere autorizaciÃ³n',
+      },
+      'disabled': {
+        'en': 'Disabled',
+        'fr': 'DÃ©sactivÃ©e',
+        'zh': 'å·²åœç”¨',
+        'ja': 'ç„¡åŠ¹',
+        'de': 'Deaktiviert',
+        'es': 'Desactivada',
+      },
+      'running': {
+        'en': 'Running',
+        'fr': 'En cours',
+        'zh': 'æ­£åœ¨è¿è¡Œ',
+        'ja': 'å®Ÿè¡Œä¸­',
+        'de': 'Wird ausgefÃ¼hrt',
+        'es': 'En ejecuciÃ³n',
+      },
+      'blocked_outcome_unknown': {
+        'en': 'Blocked â€” prior outcome unknown',
+        'fr': 'BloquÃ©e â€” rÃ©sultat antÃ©rieur inconnu',
+        'zh': 'å·²é˜»æ­¢ â€” ä¸Šæ¬¡ç»“æžœæœªçŸ¥',
+        'ja': 'ãƒ–ãƒ­ãƒƒã‚¯ä¸­ â€” ä»¥å‰ã®çµæžœãŒä¸æ˜Ž',
+        'de': 'Blockiert â€“ vorheriges Ergebnis unbekannt',
+        'es': 'Bloqueada â€” resultado anterior desconocido',
+      },
+    };
+    return _autonomousAuthorizationText(
+      values[status] ??
+          const {
+            'en': 'Authorization required',
+            'fr': 'Autorisation requise',
+            'zh': 'éœ€è¦æŽˆæƒ',
+            'ja': 'æ‰¿èªãŒå¿…è¦',
+            'de': 'Autorisierung erforderlich',
+            'es': 'AutorizaciÃ³n requerida',
+          },
+    );
+  }
+
   String autonomousFailureDiagnostic(String? category) {
     final messages =
         _autonomousFailureMessages[languageCode] ??

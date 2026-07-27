@@ -2830,6 +2830,7 @@ class _CronScreenState extends State<_CronScreen> {
   late List<Map<String, dynamic>> _jobs;
   StreamSubscription<ws.ConfigData>? _configSub;
   StreamSubscription<ws.ConnectionState>? _connSub;
+  StreamSubscription<ws.ScheduledTaskAuthorizationEvent>? _authSub;
 
   @override
   void initState() {
@@ -2847,6 +2848,9 @@ class _CronScreenState extends State<_CronScreen> {
         _refreshServerState();
       }
     });
+    _authSub = widget.wsService.scheduledAuthorizationStream.listen(
+      _handleAuthorizationEvent,
+    );
     _recoverConnection();
   }
 
@@ -2854,6 +2858,7 @@ class _CronScreenState extends State<_CronScreen> {
   void dispose() {
     _configSub?.cancel();
     _connSub?.cancel();
+    _authSub?.cancel();
     super.dispose();
   }
 
@@ -2868,6 +2873,93 @@ class _CronScreenState extends State<_CronScreen> {
 
   void _refreshServerState() {
     widget.wsService.sendGetConfig();
+  }
+
+  void _handleAuthorizationEvent(ws.ScheduledTaskAuthorizationEvent event) {
+    if (!mounted) return;
+    if (event.request != null) {
+      unawaited(_reviewAuthorization(event));
+      return;
+    }
+    _refreshServerState();
+    final strings = OsiaL10n.of(context);
+    final message = event.code == 'pc_local_review_required'
+        ? strings.scheduledPcReviewRequired
+        : strings.scheduledAuthorizationStatus(
+            event.authorizationStatus.isEmpty
+                ? (event.ok ? 'authorized' : 'authorization_required')
+                : event.authorizationStatus,
+          );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _reviewAuthorization(
+    ws.ScheduledTaskAuthorizationEvent event,
+  ) async {
+    final request = event.request!;
+    final strings = OsiaL10n.of(context);
+    final rawCapabilities = request['capabilities'];
+    final capabilities = rawCapabilities is List
+        ? rawCapabilities
+              .whereType<Map>()
+              .map((raw) {
+                final item = raw.cast<String, dynamic>();
+                return '${item['safe_category']} | ${item['effect_class']}';
+              })
+              .where((value) => value.trim().isNotEmpty)
+              .toList()
+        : <String>[];
+    final expiration = request['expiration'];
+    final expirationText = expiration is num
+        ? DateTime.fromMillisecondsSinceEpoch(
+            (expiration.toDouble() * 1000).round(),
+            isUtc: true,
+          ).toLocal().toIso8601String()
+        : '';
+    final maxExecutions = request['max_executions'];
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(strings.scheduledAuthorizationTitle),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${strings.scheduledExactCapabilities} '
+                '| ${strings.scheduledRevision(request['task_revision'] is int ? request['task_revision'] as int : 0)}',
+              ),
+              const SizedBox(height: 10),
+              for (final capability in capabilities)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('- $capability'),
+                ),
+              if (maxExecutions is int)
+                Text(strings.scheduledMaxExecutions(maxExecutions)),
+              if (expirationText.isNotEmpty)
+                Text(strings.scheduledExpires(expirationText)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop('deny'),
+            child: Text(strings.autonomousDeny),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop('approve'),
+            child: Text(strings.autonomousApproveExact),
+          ),
+        ],
+      ),
+    );
+    if (action != null && mounted) {
+      widget.wsService.sendScheduledTaskAuthorizationResponse(event, action);
+    }
   }
 
   void _toggle(int index, bool value) {
@@ -2943,6 +3035,12 @@ class _CronScreenState extends State<_CronScreen> {
                     onToggle: (v) => _toggle(i, v),
                     onDelete: () => _delete(i),
                     onTap: () => _edit(index: i),
+                    onAuthorize: () => widget.wsService
+                        .sendScheduledTaskAuthorizationRequest(_jobs[i]),
+                    onRevoke: () => widget.wsService
+                        .sendScheduledTaskAuthorizationRevoke(_jobs[i]),
+                    onDisable: () =>
+                        widget.wsService.sendScheduledTaskDisable(_jobs[i]),
                   ),
                   const SizedBox(height: 10),
                 ],
@@ -2969,6 +3067,9 @@ class _CronRow extends StatelessWidget {
   final ValueChanged<bool> onToggle;
   final VoidCallback onDelete;
   final VoidCallback onTap;
+  final VoidCallback onAuthorize;
+  final VoidCallback onRevoke;
+  final VoidCallback onDisable;
   const _CronRow({
     required this.job,
     required this.palette,
@@ -2978,6 +3079,9 @@ class _CronRow extends StatelessWidget {
     required this.onToggle,
     required this.onDelete,
     required this.onTap,
+    required this.onAuthorize,
+    required this.onRevoke,
+    required this.onDisable,
   });
 
   @override
@@ -2990,6 +3094,30 @@ class _CronRow extends StatelessWidget {
       strings.cronModelDefault,
     );
     final enabled = job['enabled'] == true;
+    final authorizationStatus =
+        (job['authorization_status'] ?? 'authorization_required').toString();
+    final revision = job['task_revision'] is int
+        ? job['task_revision'] as int
+        : 0;
+    final rawBounds = job['authorization_bounds'];
+    final bounds = rawBounds is Map
+        ? rawBounds.cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final mode = (bounds['mode'] ?? '').toString();
+    final maxExecutions = bounds['max_executions'];
+    final expires = job['authorization_expires_at'];
+    final expiryText = expires is num
+        ? DateTime.fromMillisecondsSinceEpoch(
+            (expires.toDouble() * 1000).round(),
+            isUtc: true,
+          ).toLocal().toIso8601String()
+        : '';
+    final authorizationDetails = <String>[
+      strings.scheduledRevision(revision),
+      if (mode.isNotEmpty) mode,
+      if (maxExecutions is int) strings.scheduledMaxExecutions(maxExecutions),
+      if (expiryText.isNotEmpty) strings.scheduledExpires(expiryText),
+    ].join(' | ');
     return _OsiaCard(
       palette: palette,
       padding: EdgeInsets.zero,
@@ -3028,6 +3156,51 @@ class _CronRow extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontSize: 12, color: palette.textMuted),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      strings.scheduledAuthorizationStatus(authorizationStatus),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: authorizationStatus == 'authorized'
+                            ? palette.accent
+                            : palette.textMuted,
+                      ),
+                    ),
+                    if (authorizationDetails.isNotEmpty)
+                      Text(
+                        authorizationDetails,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: palette.textMuted,
+                        ),
+                      ),
+                    const SizedBox(height: 5),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 2,
+                      children: [
+                        TextButton(
+                          onPressed: onAuthorize,
+                          child: Text(
+                            authorizationStatus == 'authorized'
+                                ? strings.scheduledReauthorize
+                                : strings.scheduledAuthorize,
+                          ),
+                        ),
+                        if (authorizationStatus == 'authorized')
+                          TextButton(
+                            onPressed: onRevoke,
+                            child: Text(strings.autonomousRevoke),
+                          ),
+                        TextButton(
+                          onPressed: onDisable,
+                          child: Text(strings.scheduledDisable),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -3191,6 +3364,8 @@ class _CronEditScreenState extends State<_CronEditScreen> {
   List<ws.ConversationItem>? _conversations;
   StreamSubscription<ws.ConversationsListMessage>? _convSub;
   StreamSubscription<ws.ConnectionState>? _connSub;
+
+  bool get _instructionRedacted => widget.initialJob?['task_redacted'] == true;
 
   @override
   void initState() {
@@ -3442,12 +3617,18 @@ class _CronEditScreenState extends State<_CronEditScreen> {
             children: [
               _FieldLabel(strings.cronTaskLabel, palette),
               const SizedBox(height: 8),
-              _OsiaTextField(
-                controller: _taskCtrl,
-                hint: strings.cronTaskHint,
-                palette: palette,
-                maxLines: 3,
-              ),
+              if (_instructionRedacted)
+                _EmptyHint(
+                  label: strings.scheduledInstructionPrivate,
+                  palette: palette,
+                )
+              else
+                _OsiaTextField(
+                  controller: _taskCtrl,
+                  hint: strings.cronTaskHint,
+                  palette: palette,
+                  maxLines: 3,
+                ),
               const SizedBox(height: 20),
               _FieldLabel(strings.cronType, palette),
               const SizedBox(height: 8),
