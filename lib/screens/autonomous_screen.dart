@@ -38,7 +38,19 @@ class AutonomousScreen extends StatefulWidget {
 }
 
 /// Lifecycle of an autonomous run, derived from the latest `event` marker.
-enum _RunPhase { idle, planning, running, paused, done, failed, aborted }
+enum _RunPhase {
+  idle,
+  planning,
+  authorizationPending,
+  running,
+  scopeExtension,
+  revoked,
+  outcomeUnknown,
+  paused,
+  done,
+  failed,
+  aborted,
+}
 
 @visibleForTesting
 bool sameAutonomousModelIdentity(ws.OsiaModel? left, ws.OsiaModel? right) {
@@ -54,6 +66,32 @@ String autonomousModelWireValue(ws.OsiaModel model) {
   final modelId = model.id.trim();
   if (provider.isEmpty || modelId.isEmpty) return '';
   return '$provider:$modelId';
+}
+
+@visibleForTesting
+bool autonomousMobileScopeCanApprove(
+  Map<String, dynamic>? request, {
+  required bool originMatches,
+}) {
+  if (request == null || !originMatches) return false;
+  return request['local_pc_review_required'] != true &&
+      (request['universal_barrier'] ?? '').toString().isEmpty &&
+      request['can_approve_mobile'] == true;
+}
+
+@visibleForTesting
+bool autonomousMobileInitialCanApprove(
+  List<Map<String, dynamic>> capabilities, {
+  required bool originMatches,
+}) {
+  if (!originMatches) return false;
+  final delegable = capabilities.where((item) => item['delegable'] == true);
+  return delegable.isNotEmpty &&
+      delegable.every(
+        (item) =>
+            item['can_approve_mobile'] == true &&
+            (item['universal_barrier'] ?? '').toString().isEmpty,
+      );
 }
 
 @visibleForTesting
@@ -213,11 +251,12 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
 
     setState(() {
       _latest = msg;
+      final lifecycle = (msg.runState ?? event).toLowerCase();
       // Older servers used `idle` for an unavailable resume checkpoint. Keep
       // that event compatible while honoring WOR-173's additive typed failure.
       _runPhase = event == 'idle' && msg.errorCategory != null
           ? _RunPhase.failed
-          : _phaseFor(event, _runPhase);
+          : _phaseFor(lifecycle, _runPhase);
     });
   }
 
@@ -231,6 +270,15 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       case 'planning':
       case 'plan':
         return _RunPhase.planning;
+      case 'authorization_pending':
+        return _RunPhase.authorizationPending;
+      case 'suspended_scope_extension':
+      case 'scope_extension_denied':
+        return _RunPhase.scopeExtension;
+      case 'suspended_authorization_revoked':
+        return _RunPhase.revoked;
+      case 'blocked_outcome_unknown':
+        return _RunPhase.outcomeUnknown;
       case 'paused':
       case 'interrupt':
       case 'interrupted':
@@ -268,7 +316,12 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
   }
 
   bool get _isActive =>
-      _runPhase == _RunPhase.planning || _runPhase == _RunPhase.running;
+      _runPhase == _RunPhase.planning ||
+      _runPhase == _RunPhase.authorizationPending ||
+      _runPhase == _RunPhase.running ||
+      _runPhase == _RunPhase.scopeExtension ||
+      _runPhase == _RunPhase.revoked ||
+      _runPhase == _RunPhase.outcomeUnknown;
 
   // ── Configured-only model filter ─────────────────────────────────────────
 
@@ -448,9 +501,13 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     FocusScope.of(context).unfocus();
     widget.wsService.setClientLocale(strings.languageCode);
     widget.wsService.sendAutonomousStart(objective, model);
+    // Do not retain private objective text in the visible mobile widget tree.
+    // Authorization review is reconstructed from structural plan labels and
+    // safe capability summaries returned by the PC.
+    _objectiveCtrl.clear();
     // Optimistic "Planning…" until the first progress frame refines the state.
     setState(() {
-      _latest = ws.AutonomousProgressMessage(objective: objective);
+      _latest = const ws.AutonomousProgressMessage();
       _runPhase = _RunPhase.planning;
     });
   }
@@ -467,6 +524,53 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     setState(() {
       _runPhase = _RunPhase.running;
     });
+  }
+
+  void _authorizeAndStart() {
+    final latest = _latest;
+    if (latest == null) return;
+    final selected = latest.capabilitySummary
+        .where(
+          (item) =>
+              item['delegable'] == true &&
+              item['can_approve_mobile'] == true &&
+              (item['universal_barrier'] ?? '').toString().isEmpty,
+        )
+        .map((item) => (item['capability_id'] ?? '').toString())
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    widget.wsService.sendAutonomousAuthorizationResponse(
+      latest,
+      'approve',
+      selectedCapabilityIds: selected,
+    );
+  }
+
+  void _denyAuthorization() {
+    final latest = _latest;
+    if (latest == null) return;
+    widget.wsService.sendAutonomousAuthorizationResponse(latest, 'deny');
+  }
+
+  void _approveScopeExtension() {
+    final latest = _latest;
+    if (latest == null) return;
+    widget.wsService.sendAutonomousScopeExtensionResponse(
+      latest,
+      'approve_exact',
+    );
+  }
+
+  void _denyScopeExtension() {
+    final latest = _latest;
+    if (latest == null) return;
+    widget.wsService.sendAutonomousScopeExtensionResponse(latest, 'deny');
+  }
+
+  void _revokeAuthorization() {
+    final latest = _latest;
+    if (latest == null) return;
+    widget.wsService.sendAutonomousAuthorizationRevoke(latest);
   }
 
   Future<void> _abort() async {
@@ -685,11 +789,17 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
               ),
 
               // ── Interrupt / Abandon ──
+              if (_runPhase == _RunPhase.authorizationPending ||
+                  _runPhase == _RunPhase.scopeExtension) ...[
+                const SizedBox(height: 16),
+                _buildAuthorizationReview(palette, strings),
+              ],
+
               if (_isActive || _runPhase == _RunPhase.paused) ...[
                 const SizedBox(height: 20),
                 Row(
                   children: [
-                    if (_isActive)
+                    if (_runPhase == _RunPhase.running)
                       Expanded(
                         child: PressableScale(
                           child: OutlinedButton.icon(
@@ -711,7 +821,8 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                           ),
                         ),
                       ),
-                    if (_isActive) const SizedBox(width: 12),
+                    if (_runPhase == _RunPhase.running)
+                      const SizedBox(width: 12),
                     if (_runPhase == _RunPhase.paused)
                       Expanded(
                         child: PressableScale(
@@ -739,6 +850,30 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                       ),
                     if (_runPhase == _RunPhase.paused)
                       const SizedBox(width: 12),
+                    if (_runPhase == _RunPhase.running ||
+                        _runPhase == _RunPhase.scopeExtension) ...[
+                      Expanded(
+                        child: PressableScale(
+                          child: OutlinedButton.icon(
+                            onPressed: _revokeAuthorization,
+                            icon: const Icon(
+                              Icons.lock_reset_rounded,
+                              size: 19,
+                            ),
+                            label: Text(strings.autonomousRevoke),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: palette.error,
+                              side: BorderSide(color: palette.border),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
                     Expanded(
                       child: PressableScale(
                         child: OutlinedButton.icon(
@@ -784,6 +919,167 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
 
   /// The status card. Idle → a muted "nothing running" line; active →
   /// thinking indicator + phase / tasks / status; terminal → a final state.
+  Widget _buildAuthorizationReview(OsiaPalette palette, OsiaStrings strings) {
+    final latest = _latest;
+    if (latest == null) return const SizedBox.shrink();
+    final isInitial = _runPhase == _RunPhase.authorizationPending;
+    final request = isInitial
+        ? latest.authorizationRequest
+        : latest.pendingScopeExtension;
+    final canRespond = widget.wsService.canRespondToAutonomousRequest(request);
+    final localOnly = request?['local_pc_review_required'] == true;
+    final barrier = (request?['universal_barrier'] ?? '').toString();
+    final canApproveExtension = autonomousMobileScopeCanApprove(
+      request,
+      originMatches: canRespond,
+    );
+    final canApproveInitial =
+        isInitial &&
+        autonomousMobileInitialCanApprove(
+          latest.capabilitySummary,
+          originMatches: canRespond,
+        );
+    final initialPcOnly =
+        isInitial &&
+        !canApproveInitial &&
+        latest.capabilitySummary.any(
+          (item) =>
+              item['can_approve_mobile'] != true ||
+              (item['universal_barrier'] ?? '').toString().isNotEmpty,
+        );
+
+    final planLines = <String>[];
+    for (final phase in latest.planSummary) {
+      final name = (phase['name'] ?? '').toString().trim();
+      if (name.isNotEmpty) planLines.add(name);
+      final tasks = phase['tasks'];
+      if (tasks is List) {
+        planLines.addAll(
+          tasks
+              .map((task) => task.toString().trim())
+              .where((task) => task.isNotEmpty)
+              .map((task) => '• $task'),
+        );
+      }
+    }
+    final capabilityLines = latest.capabilitySummary
+        .map((item) {
+          final label = (item['label'] ?? '').toString();
+          final effect = (item['effect_class'] ?? '').toString();
+          final precision = (item['target_precision'] ?? 'unknown').toString();
+          final uses = item['expected_use_count'];
+          final ttl = item['grant_ttl_seconds'];
+          final bounds = <String>[];
+          if (uses is int && uses > 0) bounds.add('$uses×');
+          if (ttl is int && ttl > 0) bounds.add('${(ttl / 60).ceil()} min');
+          final universal = (item['universal_barrier'] ?? '').toString();
+          final suffix = universal.isEmpty
+              ? ''
+              : ' · ${strings.autonomousPcOnly}';
+          final boundsText = bounds.isEmpty ? '' : ' · ${bounds.join(' · ')}';
+          return '• $label · $effect · $precision$boundsText$suffix';
+        })
+        .toList(growable: false);
+
+    return _OsiaCard(
+      palette: palette,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            isInitial
+                ? strings.autonomousReviewPlan
+                : strings.autonomousAdditionalPermission,
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (planLines.isNotEmpty && isInitial) ...[
+            const SizedBox(height: 10),
+            Text(
+              planLines.join('\n'),
+              style: TextStyle(color: palette.textMuted, height: 1.4),
+            ),
+          ],
+          if (capabilityLines.isNotEmpty && isInitial) ...[
+            const SizedBox(height: 12),
+            Text(
+              strings.autonomousRequestedCapabilities,
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              capabilityLines.join('\n'),
+              style: TextStyle(color: palette.textMuted, height: 1.4),
+            ),
+          ],
+          if (!isInitial) ...[
+            const SizedBox(height: 10),
+            Text(
+              '${request?['safe_category'] ?? ''} · '
+              '${request?['effect_class'] ?? ''} · '
+              '${request?['requested_use_count'] ?? 1}×'
+              '${_requestTtlMinutes(request)}',
+              style: TextStyle(color: palette.textMuted, height: 1.4),
+            ),
+          ],
+          if (localOnly ||
+              barrier.isNotEmpty ||
+              !canRespond ||
+              initialPcOnly) ...[
+            const SizedBox(height: 12),
+            _InlineNote(
+              icon: Icons.desktop_windows_outlined,
+              text: strings.autonomousPcOnly,
+              palette: palette,
+            ),
+          ],
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              if (canApproveInitial || canApproveExtension)
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: isInitial
+                        ? _authorizeAndStart
+                        : _approveScopeExtension,
+                    child: Text(
+                      isInitial
+                          ? strings.autonomousAuthorizeAndStart
+                          : strings.autonomousApproveExact,
+                    ),
+                  ),
+                ),
+              if (canApproveInitial || canApproveExtension)
+                const SizedBox(width: 10),
+              if (canRespond)
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: isInitial
+                        ? _denyAuthorization
+                        : _denyScopeExtension,
+                    child: Text(strings.autonomousDeny),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _requestTtlMinutes(Map<String, dynamic>? request) {
+    final issued = request?['issued_at'];
+    final expires = request?['expires_at'];
+    if (issued is! num || expires is! num || expires <= issued) return '';
+    return ' · ${((expires - issued) / 60).ceil()} min';
+  }
+
   Widget _buildStatus(OsiaPalette palette, OsiaStrings strings) {
     if (_runPhase == _RunPhase.idle) {
       return _InlineNote(
@@ -895,7 +1191,8 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
             ),
           ],
           // Active runs show the choreographed thinking indicator.
-          if (_isActive) ...[
+          if (_runPhase == _RunPhase.planning ||
+              _runPhase == _RunPhase.running) ...[
             const SizedBox(height: 8),
             const Align(
               alignment: Alignment.centerLeft,
@@ -917,6 +1214,14 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         return Icons.stop_circle_rounded;
       case _RunPhase.paused:
         return Icons.pause_circle_rounded;
+      case _RunPhase.authorizationPending:
+        return Icons.fact_check_outlined;
+      case _RunPhase.scopeExtension:
+        return Icons.add_moderator_outlined;
+      case _RunPhase.revoked:
+        return Icons.lock_outline_rounded;
+      case _RunPhase.outcomeUnknown:
+        return Icons.help_outline_rounded;
       case _RunPhase.planning:
       case _RunPhase.running:
       case _RunPhase.idle:
@@ -931,8 +1236,13 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         return palette.error;
       case _RunPhase.paused:
         return palette.textMuted;
+      case _RunPhase.revoked:
+      case _RunPhase.outcomeUnknown:
+        return palette.error;
       case _RunPhase.done:
       case _RunPhase.planning:
+      case _RunPhase.authorizationPending:
+      case _RunPhase.scopeExtension:
       case _RunPhase.running:
       case _RunPhase.idle:
         return palette.accent;
@@ -945,6 +1255,14 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         return strings.autonomousPlanning;
       case _RunPhase.running:
         return strings.autonomousRunning;
+      case _RunPhase.authorizationPending:
+        return strings.autonomousReviewPlan;
+      case _RunPhase.scopeExtension:
+        return strings.autonomousAdditionalPermission;
+      case _RunPhase.revoked:
+        return strings.autonomousAuthorizationRevoked;
+      case _RunPhase.outcomeUnknown:
+        return strings.autonomousOutcomeUnknown;
       case _RunPhase.paused:
         return strings.autonomousInterrupted;
       case _RunPhase.done:

@@ -827,6 +827,94 @@ class OsiaStrings {
       .replaceAll('{done}', '$done')
       .replaceAll('{total}', '$total');
 
+  String _autonomousAuthorizationText(Map<String, String> values) =>
+      values[languageCode] ?? values['en']!;
+
+  String get autonomousAuthorizeAndStart => _autonomousAuthorizationText(const {
+    'en': 'Authorize and Start',
+    'fr': 'Autoriser et démarrer',
+    'zh': '授权并开始',
+    'ja': '承認して開始',
+    'de': 'Autorisieren und starten',
+    'es': 'Autorizar e iniciar',
+  });
+  String get autonomousReviewPlan => _autonomousAuthorizationText(const {
+    'en': 'Review plan before execution',
+    'fr': 'Examiner le plan avant exécution',
+    'zh': '执行前审核计划',
+    'ja': '実行前に計画を確認',
+    'de': 'Plan vor Ausführung prüfen',
+    'es': 'Revisar el plan antes de ejecutar',
+  });
+  String get autonomousRequestedCapabilities =>
+      _autonomousAuthorizationText(const {
+        'en': 'Requested capabilities',
+        'fr': 'Capacités demandées',
+        'zh': '请求的能力',
+        'ja': '要求された機能',
+        'de': 'Angeforderte Fähigkeiten',
+        'es': 'Capacidades solicitadas',
+      });
+  String get autonomousAdditionalPermission =>
+      _autonomousAuthorizationText(const {
+        'en': 'Additional permission required',
+        'fr': 'Autorisation supplémentaire requise',
+        'zh': '需要额外权限',
+        'ja': '追加の権限が必要です',
+        'de': 'Zusätzliche Berechtigung erforderlich',
+        'es': 'Se requiere permiso adicional',
+      });
+  String get autonomousApproveExact => _autonomousAuthorizationText(const {
+    'en': 'Approve exact scope',
+    'fr': 'Approuver la portée exacte',
+    'zh': '批准精确范围',
+    'ja': '正確な範囲を承認',
+    'de': 'Exakten Umfang genehmigen',
+    'es': 'Aprobar alcance exacto',
+  });
+  String get autonomousDeny => _autonomousAuthorizationText(const {
+    'en': 'Deny',
+    'fr': 'Refuser',
+    'zh': '拒绝',
+    'ja': '拒否',
+    'de': 'Ablehnen',
+    'es': 'Denegar',
+  });
+  String get autonomousPcOnly => _autonomousAuthorizationText(const {
+    'en': 'Local PC review required; mobile approval is unavailable.',
+    'fr': 'Examen local sur le PC requis ; approbation mobile indisponible.',
+    'zh': '需要在本地电脑上审核；无法通过手机批准。',
+    'ja': 'ローカル PC での確認が必要です。モバイルでは承認できません。',
+    'de': 'Lokale PC-Prüfung erforderlich; mobile Freigabe ist nicht möglich.',
+    'es':
+        'Se requiere revisión local en el PC; no se puede aprobar en el móvil.',
+  });
+  String get autonomousRevoke => _autonomousAuthorizationText(const {
+    'en': 'Revoke',
+    'fr': 'Révoquer',
+    'zh': '撤销',
+    'ja': '取り消す',
+    'de': 'Widerrufen',
+    'es': 'Revocar',
+  });
+  String get autonomousAuthorizationRevoked =>
+      _autonomousAuthorizationText(const {
+        'en': 'Authorization revoked; automatic continuation blocked',
+        'fr': 'Autorisation révoquée ; poursuite automatique bloquée',
+        'zh': '授权已撤销；自动继续已被阻止',
+        'ja': '承認が取り消され、自動続行はブロックされました',
+        'de': 'Autorisierung widerrufen; automatische Fortsetzung blockiert',
+        'es': 'Autorización revocada; continuación automática bloqueada',
+      });
+  String get autonomousOutcomeUnknown => _autonomousAuthorizationText(const {
+    'en': 'Prior action outcome unknown; automatic continuation blocked',
+    'fr': 'Résultat antérieur inconnu ; poursuite automatique bloquée',
+    'zh': '先前操作结果未知；自动继续已被阻止',
+    'ja': '以前の操作結果が不明なため、自動続行はブロックされました',
+    'de': 'Früheres Aktionsergebnis unbekannt; Fortsetzung blockiert',
+    'es': 'Resultado anterior desconocido; continuación automática bloqueada',
+  });
+
   String autonomousFailureDiagnostic(String? category) {
     final messages =
         _autonomousFailureMessages[languageCode] ??

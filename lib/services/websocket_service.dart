@@ -1374,6 +1374,19 @@ class AutonomousProgressMessage {
   final String? reasonCode;
   final String? runRef;
   final String? diagnosticTimestamp;
+  final int? protocolVersion;
+  final String? runId;
+  final int? planRevision;
+  final int? authorizationRevision;
+  final int? policyEpoch;
+  final String? runState;
+  final String? authorizationStatus;
+  final String? authorizationSource;
+  final int? grantCount;
+  final List<Map<String, dynamic>> capabilitySummary;
+  final List<Map<String, dynamic>> planSummary;
+  final Map<String, dynamic>? authorizationRequest;
+  final Map<String, dynamic>? pendingScopeExtension;
 
   const AutonomousProgressMessage({
     this.event,
@@ -1397,6 +1410,19 @@ class AutonomousProgressMessage {
     this.reasonCode,
     this.runRef,
     this.diagnosticTimestamp,
+    this.protocolVersion,
+    this.runId,
+    this.planRevision,
+    this.authorizationRevision,
+    this.policyEpoch,
+    this.runState,
+    this.authorizationStatus,
+    this.authorizationSource,
+    this.grantCount,
+    this.capabilitySummary = const [],
+    this.planSummary = const [],
+    this.authorizationRequest,
+    this.pendingScopeExtension,
   });
 
   factory AutonomousProgressMessage.fromJson(Map<String, dynamic> json) {
@@ -1441,6 +1467,19 @@ class AutonomousProgressMessage {
 
     final stageCode = pickStr(['stage']);
     final categoryCode = pickStr(['error_category', 'errorCategory']);
+    List<Map<String, dynamic>> pickMaps(String key) {
+      final value = json[key];
+      if (value is! List) return const [];
+      return value
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+    }
+
+    Map<String, dynamic>? pickMap(String key) {
+      final value = json[key];
+      return value is Map ? Map<String, dynamic>.from(value) : null;
+    }
 
     return AutonomousProgressMessage(
       event: pickStr(['event']),
@@ -1468,6 +1507,28 @@ class AutonomousProgressMessage {
       reasonCode: pickStr(['reason_code', 'reasonCode']),
       runRef: pickStr(['run_ref', 'runRef']),
       diagnosticTimestamp: pickStr(['transition_at', 'diagnosticTimestamp']),
+      protocolVersion: pickInt(['protocol_version', 'protocolVersion']),
+      runId: pickStr(['run_id', 'runId']),
+      planRevision: pickInt(['plan_revision', 'planRevision']),
+      authorizationRevision: pickInt([
+        'authorization_revision',
+        'authorizationRevision',
+      ]),
+      policyEpoch: pickInt(['policy_epoch', 'policyEpoch']),
+      runState: pickStr(['run_state', 'runState']),
+      authorizationStatus: pickStr([
+        'authorization_status',
+        'authorizationStatus',
+      ]),
+      authorizationSource: pickStr([
+        'authorization_source',
+        'authorizationSource',
+      ]),
+      grantCount: pickInt(['grant_count', 'grantCount']),
+      capabilitySummary: pickMaps('capability_summary'),
+      planSummary: pickMaps('plan_summary'),
+      authorizationRequest: pickMap('authorization_request'),
+      pendingScopeExtension: pickMap('pending_scope_extension'),
     );
   }
 }
@@ -1752,6 +1813,7 @@ class WebSocketService {
   final String ip;
   final String token;
   String _clientLocale = '';
+  String _autonomousAuthorizationOrigin = '';
 
   /// Set the optional UI locale carried by subsequent user-turn frames.
   /// The server remains authoritative and safely ignores unsupported values.
@@ -2750,6 +2812,7 @@ class WebSocketService {
   /// Close the connection and stop reconnection attempts.
   void disconnect() {
     _intentionalClose = true;
+    _autonomousAuthorizationOrigin = '';
     lanDiscoveryService.stop();
     _connectGeneration++;
     _socketGeneration++;
@@ -3186,6 +3249,67 @@ class WebSocketService {
       'objective': objective,
       'model': model,
       if (_clientLocale.isNotEmpty) 'locale': _clientLocale,
+    });
+  }
+
+  bool canRespondToAutonomousRequest(Map<String, dynamic>? request) {
+    if (request == null || _autonomousAuthorizationOrigin.isEmpty) return false;
+    if (request['responded'] == true) return false;
+    return request['origin_ref'] == _autonomousAuthorizationOrigin;
+  }
+
+  Map<String, dynamic> _autonomousResponseEnvelope(
+    Map<String, dynamic> request,
+    String action,
+  ) {
+    return {
+      'protocol_version': request['protocol_version'],
+      'request_id': request['request_id'],
+      'run_id': request['run_id'],
+      'plan_revision': request['plan_revision'],
+      'authorization_revision': request['authorization_revision'],
+      'expected_policy_epoch': request['expected_policy_epoch'],
+      'origin_ref': _autonomousAuthorizationOrigin,
+      'action': action,
+    };
+  }
+
+  void sendAutonomousAuthorizationResponse(
+    AutonomousProgressMessage run,
+    String action, {
+    List<String>? selectedCapabilityIds,
+  }) {
+    final request = run.authorizationRequest;
+    if (!canRespondToAutonomousRequest(request)) return;
+    _send({
+      'type': 'autonomous_authorization_response',
+      ..._autonomousResponseEnvelope(request!, action),
+      'selected_capability_ids': ?selectedCapabilityIds,
+    });
+  }
+
+  void sendAutonomousScopeExtensionResponse(
+    AutonomousProgressMessage run,
+    String action,
+  ) {
+    final request = run.pendingScopeExtension;
+    if (!canRespondToAutonomousRequest(request)) return;
+    _send({
+      'type': 'autonomous_scope_extension_response',
+      ..._autonomousResponseEnvelope(request!, action),
+    });
+  }
+
+  void sendAutonomousAuthorizationRevoke(AutonomousProgressMessage run) {
+    if (_autonomousAuthorizationOrigin.isEmpty || run.runId == null) return;
+    _send({
+      'type': 'autonomous_authorization_revoke',
+      'protocol_version': run.protocolVersion,
+      'run_id': run.runId,
+      'plan_revision': run.planRevision,
+      'authorization_revision': run.authorizationRevision,
+      'expected_policy_epoch': run.policyEpoch,
+      'origin_ref': _autonomousAuthorizationOrigin,
     });
   }
 
@@ -6140,7 +6264,15 @@ class WebSocketService {
           if (!_cronNotificationCtrl.isClosed) {
             _cronNotificationCtrl.add(note);
           }
+        case 'autonomous_authorization_context':
+          final origin = json['origin_ref'];
+          _autonomousAuthorizationOrigin = origin is String ? origin : '';
         case 'autonomous_progress':
+        case 'autonomous_plan_ready':
+        case 'autonomous_authorization_request':
+        case 'autonomous_scope_extension_request':
+        case 'autonomous_authorization_state':
+        case 'autonomous_authorization_revoked':
           // Live progress for an autonomous run (WOR-45 Phase 5). Delivered on
           // its own [autonomousStream] (NOT the paced message queue) so it can't
           // disturb response-chunk streaming.
