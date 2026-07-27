@@ -6343,15 +6343,6 @@ class _McpScreenState extends State<_McpScreen> {
   /// Live connector status per id, merged from `mcp_status` pushes.
   final Map<String, ws.McpServerStatus> _statuses = {};
 
-  /// Whether the server confirms write MCP tools before running them
-  /// (`mcp_confirm_writes`, WOR-44 Phase 5; default ON). Optimistic local
-  /// mirror, persisted via `set_setting` and re-seeded from each config push.
-  late bool _confirmWrites;
-
-  /// Whether write tools may run unattended — no client connected to confirm
-  /// (`mcp_allow_unattended_writes`; default OFF). Same persistence as above.
-  late bool _allowUnattended;
-
   /// Native Gmail REST state from the config snapshot. Gmail auth, tokens and
   /// REST calls stay server-side; Mobile only requests safe connector actions.
   ws.GmailRestConfig? _gmailRest;
@@ -6394,14 +6385,6 @@ class _McpScreenState extends State<_McpScreen> {
     _apiKeys = Map<String, String>.from(widget.apiKeys);
     _mcpTokens = _readMcpTokens(widget.config.settings['mcp_tokens']);
     _apiKeysSet = Map<String, bool>.from(widget.config.apiKeysSet);
-    _confirmWrites = _readBool(
-      widget.config.settings['mcp_confirm_writes'],
-      true,
-    );
-    _allowUnattended = _readBool(
-      widget.config.settings['mcp_allow_unattended_writes'],
-      false,
-    );
     _gmailRest = widget.config.gmailRest;
     _gmailRestConnecting = _gmailRest?.connecting == true;
     _syncGmailAttemptTimer(_gmailRest);
@@ -6426,11 +6409,6 @@ class _McpScreenState extends State<_McpScreen> {
           }
         });
         _apiKeysSet = Map<String, bool>.from(cfg.apiKeysSet);
-        _confirmWrites = _readBool(cfg.settings['mcp_confirm_writes'], true);
-        _allowUnattended = _readBool(
-          cfg.settings['mcp_allow_unattended_writes'],
-          false,
-        );
         final nextGmail = cfg.gmailRest;
         _gmailRest = nextGmail;
         _gmailRestConnecting = nextGmail?.connecting == true;
@@ -7278,47 +7256,6 @@ class _McpScreenState extends State<_McpScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              // ── Write-tool safety (WOR-44 Phase 5) ──
-              // Global gate for write MCP tools, applies to every connector.
-              _OsiaCard(
-                palette: palette,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _confirmToggleRow(
-                      palette,
-                      title: strings.mcpConfirmWritesLabel,
-                      subtitle: strings.mcpConfirmWritesSub,
-                      value: _confirmWrites,
-                      onChanged: (v) {
-                        setState(() => _confirmWrites = v);
-                        widget.wsService.sendSetSetting(
-                          'mcp_confirm_writes',
-                          v,
-                        );
-                      },
-                    ),
-                    Divider(
-                      height: 18,
-                      color: palette.border.withValues(alpha: 0.5),
-                    ),
-                    _confirmToggleRow(
-                      palette,
-                      title: strings.mcpUnattendedWritesLabel,
-                      subtitle: strings.mcpUnattendedWritesSub,
-                      value: _allowUnattended,
-                      onChanged: (v) {
-                        setState(() => _allowUnattended = v);
-                        widget.wsService.sendSetSetting(
-                          'mcp_allow_unattended_writes',
-                          v,
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
               _FieldLabel(strings.connectorLabel, palette),
               const SizedBox(height: 8),
               _selectorDropdown<String>(
@@ -7758,53 +7695,6 @@ class _McpScreenState extends State<_McpScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  /// One title+subtitle row with a trailing Switch, for the write-safety card.
-  Widget _confirmToggleRow(
-    OsiaPalette palette, {
-    required String title,
-    required String subtitle,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-  }) {
-    return Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: palette.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.35,
-                  color: palette.textMuted,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 12),
-        Switch(
-          value: value,
-          onChanged: onChanged,
-          activeTrackColor: palette.accent,
-          activeThumbColor: palette.isDark ? palette.background : Colors.white,
-          inactiveTrackColor: palette.border.withValues(alpha: 0.5),
-          inactiveThumbColor: palette.textMuted,
-        ),
-      ],
     );
   }
 

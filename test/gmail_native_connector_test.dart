@@ -32,6 +32,8 @@ class _FakeWebSocketService extends ws.WebSocketService {
   final List<Map<String, String>> connectRequests = <Map<String, String>>[];
   final List<Map<String, String>> cancelRequests = <Map<String, String>>[];
   final List<String> disconnectRequests = <String>[];
+  final List<MapEntry<String, dynamic>> settingWrites =
+      <MapEntry<String, dynamic>>[];
   int configRequests = 0;
 
   @override
@@ -73,7 +75,9 @@ class _FakeWebSocketService extends ws.WebSocketService {
   void sendMcpStatus([String? id]) {}
 
   @override
-  void sendSetSetting(String key, dynamic value) {}
+  void sendSetSetting(String key, dynamic value) {
+    settingWrites.add(MapEntry<String, dynamic>(key, value));
+  }
 
   @override
   void sendMcpConnect(String id, {String? requestId}) {
@@ -195,6 +199,25 @@ Future<void> _openGmailConnector(
 }
 
 void main() {
+  testWidgets(
+    'WOR-198 Connectors has no duplicate permission controls or placeholders',
+    (tester) async {
+      final service = _FakeWebSocketService();
+      addTearDown(service.dispose);
+      await _openGmailConnector(tester, service, _gmail());
+      final strings = osiaStringsForCode('en');
+
+      expect(find.text(strings.mcpConfirmWritesLabel), findsNothing);
+      expect(find.text(strings.mcpConfirmWritesSub), findsNothing);
+      expect(find.text(strings.mcpUnattendedWritesLabel), findsNothing);
+      expect(find.text(strings.mcpUnattendedWritesSub), findsNothing);
+      expect(service.settingWrites, isEmpty);
+      expect(find.byType(SingleChildScrollView), findsWidgets);
+      expect(find.text(strings.connectorLabel), findsOneWidget);
+      expect(find.text(strings.gmailRestTitle), findsOneWidget);
+    },
+  );
+
   testWidgets(
     'shows native Gmail disconnected and configuration-missing states',
     (tester) async {
