@@ -1404,6 +1404,17 @@ enum AutonomousFailureCategory {
 /// `interrupted`, `idle`, `busy`). Every other field is optional and only
 /// present on the frames that carry it.
 class AutonomousProgressMessage {
+  final int? schemaVersion;
+  final String? eventId;
+  final int? sequence;
+  final String? serverId;
+  final String? sessionId;
+  final String? safeOperationPhase;
+  final String? safeSiteDisplay;
+  final String? safeProgressText;
+  final Map<String, dynamic>? artifactSafeSummary;
+  final bool? terminal;
+
   /// Lifecycle marker for this frame (planning / phase / progress / done /
   /// failed / aborted / interrupted / idle / busy …).
   final String? event;
@@ -1458,6 +1469,16 @@ class AutonomousProgressMessage {
   final Map<String, dynamic>? pendingScopeExtension;
 
   const AutonomousProgressMessage({
+    this.schemaVersion,
+    this.eventId,
+    this.sequence,
+    this.serverId,
+    this.sessionId,
+    this.safeOperationPhase,
+    this.safeSiteDisplay,
+    this.safeProgressText,
+    this.artifactSafeSummary,
+    this.terminal,
     this.event,
     this.phaseName,
     this.tasksDone,
@@ -1551,6 +1572,16 @@ class AutonomousProgressMessage {
     }
 
     return AutonomousProgressMessage(
+      schemaVersion: pickInt(['schema_version']),
+      eventId: pickStr(['event_id']),
+      sequence: pickInt(['sequence']),
+      serverId: pickStr(['server_id']),
+      sessionId: pickStr(['session_id']),
+      safeOperationPhase: pickStr(['safe_operation_phase']),
+      safeSiteDisplay: pickStr(['safe_site_display']),
+      safeProgressText: pickStr(['safe_progress_text']),
+      artifactSafeSummary: pickMap('artifact_safe_summary'),
+      terminal: pickBool(['terminal']),
       event: pickStr(['event']),
       phaseName: pickStr(['phase_name', 'phaseName', 'phase']),
       tasksDone: pickInt(['tasks_done', 'tasksDone']),
@@ -1600,6 +1631,201 @@ class AutonomousProgressMessage {
       pendingScopeExtension: pickMap('pending_scope_extension'),
     );
   }
+}
+
+/// Strict, value-free progress from the browser subsystem. The parser accepts
+/// only the allowlisted protocol projection; page content, selectors, paths,
+/// filenames and query strings have no fields through which to enter the UI.
+class BrowserProgressMessage {
+  const BrowserProgressMessage({
+    required this.eventId,
+    required this.sequence,
+    required this.serverId,
+    required this.sessionId,
+    required this.runId,
+    required this.planRevision,
+    required this.authorizationRevision,
+    required this.phase,
+    required this.safeSiteDisplay,
+    required this.safeProgressText,
+    required this.terminal,
+    this.browserSessionId = '',
+    this.artifactSafeSummary,
+  });
+
+  final String eventId;
+  final int sequence;
+  final String serverId;
+  final String sessionId;
+  final String browserSessionId;
+  final String runId;
+  final int planRevision;
+  final int authorizationRevision;
+  final String phase;
+  final String safeSiteDisplay;
+  final String safeProgressText;
+  final Map<String, dynamic>? artifactSafeSummary;
+  final bool terminal;
+
+  static BrowserProgressMessage? tryParse(Map<String, dynamic> json) {
+    const keys = <String>{
+      'type',
+      'schema_version',
+      'event_id',
+      'sequence',
+      'server_id',
+      'session_id',
+      'browser_session_id',
+      'run_id',
+      'plan_revision',
+      'authorization_revision',
+      'safe_operation_phase',
+      'safe_site_display',
+      'safe_progress_text',
+      'artifact_safe_summary',
+      'terminal',
+    };
+    if (!_hasExactStringKeys(json, keys) ||
+        json['type'] != 'browser_progress' ||
+        json['schema_version'] != 1 ||
+        json['event_id'] is! String ||
+        json['sequence'] is! int ||
+        json['server_id'] is! String ||
+        json['session_id'] is! String ||
+        json['browser_session_id'] is! String ||
+        json['run_id'] is! String ||
+        json['plan_revision'] is! int ||
+        json['authorization_revision'] is! int ||
+        json['safe_operation_phase'] is! String ||
+        json['safe_site_display'] is! String ||
+        json['safe_progress_text'] is! String ||
+        json['terminal'] is! bool) {
+      return null;
+    }
+    final eventId = json['event_id'] as String;
+    final sequence = json['sequence'] as int;
+    final serverId = json['server_id'] as String;
+    final sessionId = json['session_id'] as String;
+    final browserSessionId = json['browser_session_id'] as String;
+    final runId = json['run_id'] as String;
+    final planRevision = json['plan_revision'] as int;
+    final authorizationRevision = json['authorization_revision'] as int;
+    final phase = json['safe_operation_phase'] as String;
+    final site = json['safe_site_display'] as String;
+    final progress = json['safe_progress_text'] as String;
+    if (eventId.isEmpty ||
+        eventId.length > 128 ||
+        sequence < 1 ||
+        serverId.isEmpty ||
+        sessionId.isEmpty ||
+        sessionId.length > 128 ||
+        browserSessionId.length > 128 ||
+        runId.isEmpty ||
+        runId.length > 256 ||
+        planRevision < 0 ||
+        authorizationRevision < 0 ||
+        !const <String>{
+          'snapshot',
+          'waiting',
+          'downloading',
+          'finalizing',
+          'complete',
+          'failed',
+          'cancelled',
+        }.contains(phase) ||
+        site.length > 512 ||
+        progress.isEmpty ||
+        progress.length > 300 ||
+        !const <String>{
+          'Browser state refreshed',
+          'Waiting for the download',
+          'Downloading to private storage',
+          'Finalizing the private artifact',
+          'Private artifact ready',
+          'Browser operation needs attention',
+          'Browser operation cancelled',
+        }.contains(progress) ||
+        !_isSafeProgressSiteDisplay(site)) {
+      return null;
+    }
+    final rawArtifact = json['artifact_safe_summary'];
+    Map<String, dynamic>? artifact;
+    if (rawArtifact != null) {
+      if (rawArtifact is! Map) return null;
+      const artifactKeys = <String>{
+        'artifact_id',
+        'size',
+        'mime_type',
+        'classification',
+        'private',
+      };
+      if (rawArtifact.keys.any(
+            (key) => key is! String || !artifactKeys.contains(key),
+          ) ||
+          rawArtifact['private'] != true) {
+        return null;
+      }
+      final size = rawArtifact['size'];
+      if (size != null && (size is! int || size < 0)) return null;
+      if (!_isSafeArtifactMetadata(rawArtifact)) return null;
+      artifact = Map<String, dynamic>.unmodifiable(
+        Map<String, dynamic>.from(rawArtifact),
+      );
+    }
+    return BrowserProgressMessage(
+      eventId: eventId,
+      sequence: sequence,
+      serverId: serverId,
+      sessionId: sessionId,
+      browserSessionId: browserSessionId,
+      runId: runId,
+      planRevision: planRevision,
+      authorizationRevision: authorizationRevision,
+      phase: phase,
+      safeSiteDisplay: site,
+      safeProgressText: progress,
+      artifactSafeSummary: artifact,
+      terminal: json['terminal'] as bool,
+    );
+  }
+}
+
+bool _isSafeProgressSiteDisplay(String value) {
+  if (value.isEmpty) return true;
+  if (value.contains('?') || value.contains('#')) return false;
+  final uri = Uri.tryParse(value);
+  return uri != null &&
+      const <String>{'http', 'https'}.contains(uri.scheme) &&
+      uri.host.isNotEmpty &&
+      uri.userInfo.isEmpty &&
+      (uri.path.isEmpty || uri.path == '/');
+}
+
+bool _isSafeArtifactMetadata(Map<dynamic, dynamic> value) {
+  final artifactId = value['artifact_id'];
+  if (artifactId != null &&
+      (artifactId is! String ||
+          !RegExp(r'^web_[0-9a-f]{32}$').hasMatch(artifactId))) {
+    return false;
+  }
+  final mime = value['mime_type'];
+  if (mime != null &&
+      (mime is! String ||
+          mime.length > 160 ||
+          !RegExp(r'^[a-z0-9.+-]+/[a-z0-9.+-]+$').hasMatch(mime))) {
+    return false;
+  }
+  final classification = value['classification'];
+  if (classification != null &&
+      (classification is! String ||
+          !const <String>{
+            'opaque_content',
+            'active_content',
+            'archive_content',
+          }.contains(classification))) {
+    return false;
+  }
+  return true;
 }
 
 /// One streamed-response event for a single conversation (WOR-53). Like
@@ -2261,6 +2487,27 @@ class WebSocketService {
   PermissionSnapshot? _permissionSnapshot;
   final Map<String, _PendingPermissionRevocation>
   _pendingPermissionRevocations = <String, _PendingPermissionRevocation>{};
+  String _autonomousProgressSessionId = '';
+  String _autonomousProgressRunId = '';
+  final Set<String> _retiredAutonomousProgressSessions = <String>{};
+  int _lastAutonomousProgressSequence = 0;
+  int _lastAutonomousPlanRevision = -1;
+  int _lastAutonomousAuthorizationRevision = -1;
+  bool _autonomousTerminalSeen = false;
+  bool _autonomousProgressLive = false;
+  bool _awaitingAutonomousSnapshot = true;
+  bool _expectNewAutonomousRun = false;
+  String _browserProgressSessionId = '';
+  String _browserProgressRunId = '';
+  final Set<String> _retiredBrowserProgressSessions = <String>{};
+  int _lastBrowserProgressSequence = 0;
+  int _lastBrowserPlanRevision = -1;
+  int _lastBrowserAuthorizationRevision = -1;
+  bool _browserTerminalSeen = false;
+  bool _browserProgressLive = false;
+  BrowserProgressMessage? _browserProgress;
+  final Set<String> _seenProgressEventIds = <String>{};
+  final Queue<String> _progressEventOrder = Queue<String>();
 
   /// Set the optional UI locale carried by subsequent user-turn frames.
   /// The server remains authoritative and safely ignores unsupported values.
@@ -2370,6 +2617,9 @@ class WebSocketService {
 
   final StreamController<AutonomousProgressMessage> _autonomousCtrl =
       StreamController<AutonomousProgressMessage>.broadcast();
+
+  final StreamController<BrowserProgressMessage> _browserProgressCtrl =
+      StreamController<BrowserProgressMessage>.broadcast();
 
   final StreamController<McpStatusMessage> _mcpStatusCtrl =
       StreamController<McpStatusMessage>.broadcast();
@@ -2530,6 +2780,19 @@ class WebSocketService {
   /// Phase 5). Kept off [messageStream] for the same reason as [configStream].
   Stream<AutonomousProgressMessage> get autonomousStream =>
       _autonomousCtrl.stream;
+
+  /// Strict live browser progress. The cached value is display-only while
+  /// [browserProgressLive] is false during reconnect reconciliation.
+  Stream<BrowserProgressMessage> get browserProgressStream =>
+      _browserProgressCtrl.stream;
+
+  BrowserProgressMessage? get browserProgress => _browserProgress;
+
+  bool get browserProgressLive =>
+      _browserProgressLive && _state == ConnectionState.connected;
+
+  bool get autonomousProgressLive =>
+      _autonomousProgressLive && _state == ConnectionState.connected;
 
   /// Stream of live MCP connector status pushes (`mcp_status`, WOR-44 Phase 4).
   /// Kept off [messageStream] for the same reason as [configStream]. Each event
@@ -3886,6 +4149,7 @@ class WebSocketService {
   /// (a configured `"provider:model"` / model id). Progress arrives on
   /// [autonomousStream].
   void sendAutonomousStart(String objective, String model) {
+    _expectNewAutonomousRun = true;
     _send({
       'type': 'autonomous_start',
       'objective': objective,
@@ -3975,7 +4239,14 @@ class WebSocketService {
   /// [autonomousStream] as an [AutonomousProgressMessage] (a snapshot of the
   /// active run, or an `event:"idle"` frame when nothing is running).
   void sendGetAutonomousStatus() {
+    _awaitingAutonomousSnapshot = true;
     _send({'type': 'get_autonomous_status'});
+  }
+
+  /// Ask for a fresh value-free browser snapshot after authentication or
+  /// reconnect. Cached state stays explicitly non-live until it arrives.
+  void sendGetBrowserStatus() {
+    _send({'type': 'get_browser_status', 'schema_version': 1});
   }
 
   // ── MCP / Connectors (WOR-44 Phase 4) ──
@@ -4138,6 +4409,7 @@ class WebSocketService {
     _cronNotificationCtrl.close();
     _scheduledAuthorizationCtrl.close();
     _autonomousCtrl.close();
+    _browserProgressCtrl.close();
     _mcpStatusCtrl.close();
     _mcpConfirmCtrl.close();
     _mcpOauthUrlCtrl.close();
@@ -4248,13 +4520,243 @@ class WebSocketService {
     sendGetChatGptAccount();
     sendGetModels();
     requestPermissionSnapshot();
+    sendGetAutonomousStatus();
+    sendGetBrowserStatus();
   }
 
   String get _expectedPermissionServerId => sha256
       .convert(utf8.encode('osia-permission-server-v1\u0000$token'))
       .toString();
 
+  bool _rememberProgressEvent(String eventId) {
+    if (_seenProgressEventIds.contains(eventId)) return false;
+    _seenProgressEventIds.add(eventId);
+    _progressEventOrder.addLast(eventId);
+    while (_progressEventOrder.length > 256) {
+      _seenProgressEventIds.remove(_progressEventOrder.removeFirst());
+    }
+    return true;
+  }
+
+  void _beginProgressReconnect() {
+    _autonomousProgressLive = false;
+    _awaitingAutonomousSnapshot = true;
+    _browserProgressLive = false;
+  }
+
+  void _markProgressOffline() {
+    _beginProgressReconnect();
+  }
+
+  bool _validAutonomousProgressFrame(Map<String, dynamic> json) {
+    if (json['schema_version'] != 1 ||
+        json['event_id'] is! String ||
+        json['sequence'] is! int ||
+        json['server_id'] != _expectedPermissionServerId ||
+        json['session_id'] is! String ||
+        json['run_id'] is! String ||
+        json['plan_revision'] is! int ||
+        json['authorization_revision'] is! int ||
+        json['safe_operation_phase'] is! String ||
+        json['safe_site_display'] is! String ||
+        json['safe_progress_text'] is! String ||
+        json['terminal'] is! bool) {
+      return false;
+    }
+    final eventId = json['event_id'] as String;
+    final sequence = json['sequence'] as int;
+    final sessionId = json['session_id'] as String;
+    final runId = json['run_id'] as String;
+    final planRevision = json['plan_revision'] as int;
+    final authorizationRevision = json['authorization_revision'] as int;
+    final site = json['safe_site_display'] as String;
+    final progress = json['safe_progress_text'] as String;
+    final event = (json['event'] ?? '').toString().toLowerCase();
+    if (eventId.isEmpty ||
+        eventId.length > 128 ||
+        sequence < 1 ||
+        sessionId.isEmpty ||
+        sessionId.length > 128 ||
+        runId.isEmpty ||
+        runId.length > 256 ||
+        planRevision < 0 ||
+        authorizationRevision < 0 ||
+        site.length > 512 ||
+        !_isSafeProgressSiteDisplay(site) ||
+        progress.isEmpty ||
+        progress.length > 300 ||
+        json['safe_operation_phase'] != event ||
+        !const <String>{
+          'aborted',
+          'authorization_denied',
+          'authorization_pending',
+          'blocked_outcome_unknown',
+          'busy',
+          'cancelled',
+          'done',
+          'failed',
+          'idle',
+          'interrupted',
+          'plan_failed',
+          'running',
+          'salvaged',
+          'scope_extension_denied',
+          'state_updated',
+          'suspended_authorization_revoked',
+          'suspended_browser_intervention',
+          'suspended_browser_state',
+          'suspended_scope_extension',
+          'task_done',
+          'task_failed',
+        }.contains(event) ||
+        !const <String>{
+          'Autonomous work is running',
+          'One planned step completed',
+          'One planned step needs attention',
+          'Autonomous work completed',
+          'Autonomous work stopped with an error',
+          'Autonomous work is paused',
+          'Autonomous work was cancelled',
+          'No Autonomous work is active',
+          'Autonomous state updated',
+        }.contains(progress) ||
+        _seenProgressEventIds.contains(eventId)) {
+      return false;
+    }
+    final rawArtifact = json['artifact_safe_summary'];
+    if (rawArtifact != null) {
+      if (rawArtifact is! Map ||
+          rawArtifact.keys.any(
+            (key) =>
+                key is! String ||
+                !const <String>{
+                  'artifact_id',
+                  'size',
+                  'mime_type',
+                  'classification',
+                  'private',
+                }.contains(key),
+          ) ||
+          rawArtifact['private'] != true ||
+          (rawArtifact['size'] != null &&
+              (rawArtifact['size'] is! int || rawArtifact['size'] < 0)) ||
+          !_isSafeArtifactMetadata(rawArtifact)) {
+        return false;
+      }
+    }
+    if (_autonomousProgressSessionId.isEmpty) {
+      if (_retiredAutonomousProgressSessions.contains(sessionId)) return false;
+      _autonomousProgressSessionId = sessionId;
+    } else if (sessionId != _autonomousProgressSessionId) {
+      if (!_awaitingAutonomousSnapshot ||
+          _retiredAutonomousProgressSessions.contains(sessionId)) {
+        return false;
+      }
+      _retiredAutonomousProgressSessions.add(_autonomousProgressSessionId);
+      _autonomousProgressSessionId = sessionId;
+      _autonomousProgressRunId = '';
+      _lastAutonomousProgressSequence = 0;
+      _lastAutonomousPlanRevision = -1;
+      _lastAutonomousAuthorizationRevision = -1;
+      _autonomousTerminalSeen = false;
+    }
+    if (_autonomousProgressRunId.isEmpty) {
+      _autonomousProgressRunId = runId;
+    } else if (runId != _autonomousProgressRunId) {
+      final newRunAllowed =
+          _awaitingAutonomousSnapshot ||
+          _expectNewAutonomousRun ||
+          _autonomousTerminalSeen ||
+          _autonomousProgressRunId == 'idle';
+      if (!newRunAllowed ||
+          const <String>{
+            'task_done',
+            'task_failed',
+            'salvaged',
+          }.contains(event)) {
+        return false;
+      }
+      _autonomousProgressRunId = runId;
+      _lastAutonomousProgressSequence = 0;
+      _lastAutonomousPlanRevision = -1;
+      _lastAutonomousAuthorizationRevision = -1;
+      _autonomousTerminalSeen = false;
+    }
+    if (sequence <= _lastAutonomousProgressSequence ||
+        planRevision < _lastAutonomousPlanRevision ||
+        authorizationRevision < _lastAutonomousAuthorizationRevision ||
+        (_autonomousTerminalSeen &&
+            !(_awaitingAutonomousSnapshot && json['terminal'] == true))) {
+      return false;
+    }
+    _lastAutonomousProgressSequence = sequence;
+    _lastAutonomousPlanRevision = planRevision;
+    _lastAutonomousAuthorizationRevision = authorizationRevision;
+    _autonomousTerminalSeen = json['terminal'] as bool;
+    _autonomousProgressLive = true;
+    _awaitingAutonomousSnapshot = false;
+    _expectNewAutonomousRun = false;
+    return _rememberProgressEvent(eventId);
+  }
+
+  void _handleBrowserProgress(Map<String, dynamic> json) {
+    final progress = BrowserProgressMessage.tryParse(json);
+    if (progress == null ||
+        progress.serverId != _expectedPermissionServerId ||
+        _seenProgressEventIds.contains(progress.eventId)) {
+      return;
+    }
+    if (_browserProgressSessionId.isEmpty) {
+      if (_retiredBrowserProgressSessions.contains(progress.sessionId)) return;
+      _browserProgressSessionId = progress.sessionId;
+    } else if (progress.sessionId != _browserProgressSessionId) {
+      if (_browserProgressLive ||
+          _retiredBrowserProgressSessions.contains(progress.sessionId)) {
+        return;
+      }
+      _retiredBrowserProgressSessions.add(_browserProgressSessionId);
+      _browserProgressSessionId = progress.sessionId;
+      _browserProgressRunId = '';
+      _lastBrowserProgressSequence = 0;
+      _lastBrowserPlanRevision = -1;
+      _lastBrowserAuthorizationRevision = -1;
+      _browserTerminalSeen = false;
+    }
+    if (_browserProgressRunId.isEmpty) {
+      _browserProgressRunId = progress.runId;
+    } else if (progress.runId != _browserProgressRunId) {
+      if (progress.phase != 'snapshot' && progress.phase != 'waiting') {
+        return;
+      }
+      _browserProgressRunId = progress.runId;
+      _lastBrowserProgressSequence = 0;
+      _lastBrowserPlanRevision = -1;
+      _lastBrowserAuthorizationRevision = -1;
+      _browserTerminalSeen = false;
+    }
+    if (progress.sequence <= _lastBrowserProgressSequence ||
+        progress.planRevision < _lastBrowserPlanRevision ||
+        progress.authorizationRevision < _lastBrowserAuthorizationRevision ||
+        (_browserTerminalSeen &&
+            !(!_browserProgressLive &&
+                progress.phase == 'snapshot' &&
+                progress.terminal))) {
+      return;
+    }
+    _lastBrowserProgressSequence = progress.sequence;
+    _lastBrowserPlanRevision = progress.planRevision;
+    _lastBrowserAuthorizationRevision = progress.authorizationRevision;
+    _browserTerminalSeen = progress.terminal;
+    _browserProgress = progress;
+    _browserProgressLive = true;
+    if (_rememberProgressEvent(progress.eventId) &&
+        !_browserProgressCtrl.isClosed) {
+      _browserProgressCtrl.add(progress);
+    }
+  }
+
   void _beginPermissionReconnect() {
+    _beginProgressReconnect();
     if (_permissionSessionId.isNotEmpty) {
       _retiredPermissionSessionIds.add(_permissionSessionId);
     }
@@ -4264,6 +4766,7 @@ class WebSocketService {
   }
 
   void _markPermissionsOffline() {
+    _markProgressOffline();
     if (_permissionSessionId.isNotEmpty) {
       _retiredPermissionSessionIds.add(_permissionSessionId);
     }
@@ -7009,6 +7512,18 @@ class WebSocketService {
           final origin = json['origin_ref'];
           _autonomousAuthorizationOrigin = origin is String ? origin : '';
         case 'autonomous_progress':
+          // Canonical progress is accepted only after the authenticated
+          // server/session/run/revision/sequence guard. A stale frame can
+          // never replace the terminal result.
+          if (!_validAutonomousProgressFrame(json)) break;
+          final canonicalProgress = AutonomousProgressMessage.fromJson(json);
+          debugPrint(
+            '[OSIA WS] autonomous_progress: event=${canonicalProgress.event} '
+            '${canonicalProgress.tasksDone}/${canonicalProgress.tasksTotal}',
+          );
+          if (!_autonomousCtrl.isClosed) {
+            _autonomousCtrl.add(canonicalProgress);
+          }
         case 'autonomous_plan_ready':
         case 'autonomous_authorization_request':
         case 'autonomous_scope_extension_request':
@@ -7025,6 +7540,8 @@ class WebSocketService {
           if (!_autonomousCtrl.isClosed) {
             _autonomousCtrl.add(prog);
           }
+        case 'browser_progress':
+          _handleBrowserProgress(json);
         case 'mcp_status':
           // Live MCP connector status (WOR-44 Phase 4). Delivered on its own
           // [mcpStatusStream] (NOT the paced message queue) so it can't disturb

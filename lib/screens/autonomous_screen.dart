@@ -169,6 +169,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
 
   /// Latest progress frame, or null before the first one arrives.
   ws.AutonomousProgressMessage? _latest;
+  ws.BrowserProgressMessage? _browserProgress;
 
   /// Derived run state. Starts idle; flips to [_RunPhase.planning] the instant
   /// the user taps Start (optimistic) until the first frame refines it.
@@ -177,6 +178,8 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
   StreamSubscription<ws.ConfigData>? _configSub;
   StreamSubscription<ws.OsiaMessage>? _msgSub;
   StreamSubscription<ws.AutonomousProgressMessage>? _autoSub;
+  StreamSubscription<ws.BrowserProgressMessage>? _browserSub;
+  StreamSubscription<ws.ConnectionState>? _connectionSub;
 
   /// Live notifier for an open model-selector sheet, so a late `models_list`
   /// (or config) flips it from spinner → list.
@@ -211,6 +214,15 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       }
     });
     _autoSub = widget.wsService.autonomousStream.listen(_onProgress);
+    _browserSub = widget.wsService.browserProgressStream.listen((progress) {
+      if (!mounted) return;
+      setState(() => _browserProgress = progress);
+    });
+    _connectionSub = widget.wsService.connectionStream.listen((_) {
+      if (!mounted) return;
+      setState(() {});
+    });
+    _browserProgress = widget.wsService.browserProgress;
 
     // Pull everything the screen needs. get_autonomous_status lets a client
     // that opens mid-run render the live progress immediately (the server
@@ -225,6 +237,8 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     _configSub?.cancel();
     _msgSub?.cancel();
     _autoSub?.cancel();
+    _browserSub?.cancel();
+    _connectionSub?.cancel();
     _modelLoadTimeout?.cancel();
     _selectorNotifier?.dispose();
     _objectiveCtrl.dispose();
@@ -788,6 +802,11 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                 ),
               ),
 
+              if (_browserProgress != null) ...[
+                const SizedBox(height: 16),
+                _buildBrowserProgressCard(palette, strings),
+              ],
+
               // ── Interrupt / Abandon ──
               if (_runPhase == _RunPhase.authorizationPending ||
                   _runPhase == _RunPhase.scopeExtension) ...[
@@ -917,8 +936,82 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     return model.label;
   }
 
-  /// The status card. Idle → a muted "nothing running" line; active →
-  /// thinking indicator + phase / tasks / status; terminal → a final state.
+  /// Minimal, display-only browser status using the existing OSIA card system.
+  Widget _buildBrowserProgressCard(OsiaPalette palette, OsiaStrings strings) {
+    final progress = _browserProgress;
+    if (progress == null) return const SizedBox.shrink();
+    final artifact = progress.artifactSafeSummary;
+    final size = artifact?['size'];
+    final detailLines = <String>[
+      if (progress.safeSiteDisplay.isNotEmpty) progress.safeSiteDisplay,
+      if (artifact?['private'] == true)
+        size is int
+            ? 'Private artifact · ${_formatPrivateBytes(size)}'
+            : 'Private artifact',
+    ];
+    final live = widget.wsService.browserProgressLive;
+    return _OsiaCard(
+      key: const Key('browser-progress-card'),
+      palette: palette,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            progress.phase == 'complete'
+                ? Icons.lock_rounded
+                : Icons.language_rounded,
+            color: palette.accent,
+            size: 21,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  progress.safeProgressText,
+                  key: const Key('browser-progress-text'),
+                  style: const TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (!live) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    strings.disconnected,
+                    key: const Key('browser-progress-last-known'),
+                    style: TextStyle(color: palette.textMuted, fontSize: 12),
+                  ),
+                ],
+                for (final line in detailLines) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    line,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: palette.textMuted, fontSize: 12.5),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatPrivateBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KiB';
+    }
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GiB';
+  }
+
   Widget _buildAuthorizationReview(OsiaPalette palette, OsiaStrings strings) {
     final latest = _latest;
     if (latest == null) return const SizedBox.shrink();
