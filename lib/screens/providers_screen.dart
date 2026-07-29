@@ -12,6 +12,67 @@ import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 import '../widgets/model_selector_sheet.dart';
 
+const String osiaOAuthRelayRedirectUri =
+    'https://relay.osia.space/oauth/callback';
+
+/// Accept only the stable callback or the exact temporary old-PC rendezvous URI.
+bool isTrustedOsiaMobileOAuthRedirect(String value) {
+  if (value == osiaOAuthRelayRedirectUri) return true;
+  // Temporary WOR-203 migration overlap. New PCs never generate this form.
+  return RegExp(
+    r'^https://osia-rendezvous\.aymengherbi06\.workers\.dev/oauth/cb/[0-9a-f]{64}$',
+  ).hasMatch(value);
+}
+
+bool isTrustedMcpAuthorizationUrl(String value) {
+  final uri = Uri.tryParse(value);
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty ||
+      uri.fragment.isNotEmpty) {
+    return false;
+  }
+  final redirects = uri.queryParametersAll['redirect_uri'];
+  final states = uri.queryParametersAll['state'];
+  if (redirects == null ||
+      redirects.length != 1 ||
+      !isTrustedOsiaMobileOAuthRedirect(redirects.single) ||
+      states == null ||
+      states.length != 1 ||
+      states.single.isEmpty) {
+    return false;
+  }
+  return true;
+}
+
+bool isTrustedGmailAuthorizationUrl(String value) {
+  final uri = Uri.tryParse(value);
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host != 'accounts.google.com' ||
+      uri.port != 443 ||
+      uri.userInfo.isNotEmpty ||
+      uri.path != '/o/oauth2/v2/auth' ||
+      uri.fragment.isNotEmpty) {
+    return false;
+  }
+  final query = uri.queryParametersAll;
+  String? one(String name) {
+    final values = query[name];
+    return values != null && values.length == 1 ? values.single : null;
+  }
+
+  final redirect = one('redirect_uri');
+  return one('response_type') == 'code' &&
+      one('code_challenge_method') == 'S256' &&
+      (one('client_id') ?? '').isNotEmpty &&
+      (one('state') ?? '').isNotEmpty &&
+      (one('code_challenge') ?? '').isNotEmpty &&
+      redirect != null &&
+      isTrustedOsiaMobileOAuthRedirect(redirect);
+}
+
 /// Configure APIs & Providers — the mobile mirror of the PC's provider panels.
 ///
 /// Reachable from the settings screen (i.e. after a successful connection).
@@ -6490,6 +6551,14 @@ class _McpScreenState extends State<_McpScreen> {
       // Correlate by id: only open the browser for the connector the user just
       // tapped Connect on; ignore a stale / non-matching id.
       if (evt.id != _pendingOauthId) return;
+      if (!isTrustedMcpAuthorizationUrl(evt.url)) {
+        widget.wsService.sendMcpOauthCancel(evt.id);
+        _pendingOauthId = null;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(OsiaL10n.of(context).linkOpenFailed)),
+        );
+        return;
+      }
       _pendingOauthId = null;
       _openOauthUrl(evt.url);
     });
@@ -7054,35 +7123,7 @@ class _McpScreenState extends State<_McpScreen> {
   }
 
   bool _isTrustedGmailAuthorizationUrl(String url) {
-    final uri = Uri.tryParse(url);
-    if (uri == null ||
-        uri.scheme != 'https' ||
-        uri.host != 'accounts.google.com' ||
-        uri.port != 443 ||
-        uri.userInfo.isNotEmpty ||
-        uri.path != '/o/oauth2/v2/auth' ||
-        uri.fragment.isNotEmpty) {
-      return false;
-    }
-    final query = uri.queryParameters;
-    if (query['response_type'] != 'code' ||
-        query['code_challenge_method'] != 'S256' ||
-        (query['client_id'] ?? '').isEmpty ||
-        (query['state'] ?? '').isEmpty ||
-        (query['code_challenge'] ?? '').isEmpty) {
-      return false;
-    }
-    final redirect = Uri.tryParse(query['redirect_uri'] ?? '');
-    if (redirect == null ||
-        redirect.scheme != 'https' ||
-        redirect.host != 'osia-rendezvous.aymengherbi06.workers.dev' ||
-        redirect.port != 443 ||
-        redirect.userInfo.isNotEmpty ||
-        redirect.query.isNotEmpty ||
-        redirect.fragment.isNotEmpty) {
-      return false;
-    }
-    return RegExp(r'^/oauth/cb/[0-9a-f]{64}$').hasMatch(redirect.path);
+    return isTrustedGmailAuthorizationUrl(url);
   }
 
   /// Switch account on an OAuth connector: revoke AND forget the client
