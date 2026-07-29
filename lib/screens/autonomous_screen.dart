@@ -680,6 +680,12 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
           ),
         );
       });
+      await ensureAttachmentTransportReady(
+        ensureConnected: () => widget.wsService.ensureConnected(
+          reason: 'autonomous_attachment_upload',
+        ),
+        transportSession: () => widget.wsService.attachmentTransportSession,
+      );
       final transfer = AttachmentTransferClient(
         sendFrame: widget.wsService.sendAttachmentEvent,
         events: widget.wsService.attachmentProtocolStream.map(

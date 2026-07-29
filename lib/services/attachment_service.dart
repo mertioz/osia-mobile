@@ -61,6 +61,18 @@ class AttachmentCancellation {
   }
 }
 
+Future<String> ensureAttachmentTransportReady({
+  required Future<void> Function() ensureConnected,
+  required String Function() transportSession,
+}) async {
+  await ensureConnected();
+  final session = transportSession();
+  if (session.isEmpty) {
+    throw const AttachmentException('transport_unavailable');
+  }
+  return session;
+}
+
 class AttachmentException implements Exception {
   final String category;
   final String displayName;

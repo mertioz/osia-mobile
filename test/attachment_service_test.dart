@@ -648,6 +648,49 @@ void main() {
     );
   });
 
+  group('attachment transport readiness', () {
+    test(
+      'waits for the shared connection attempt before reading session',
+      () async {
+        final connected = Completer<void>();
+        final events = <String>[];
+
+        final ready = ensureAttachmentTransportReady(
+          ensureConnected: () async {
+            events.add('connect');
+            await connected.future;
+          },
+          transportSession: () {
+            events.add('session');
+            return 'lan:7:11';
+          },
+        );
+
+        await Future<void>.delayed(Duration.zero);
+        expect(events, <String>['connect']);
+        connected.complete();
+        expect(await ready, 'lan:7:11');
+        expect(events, <String>['connect', 'session']);
+      },
+    );
+
+    test('fails closed when no authenticated transport is ready', () async {
+      await expectLater(
+        ensureAttachmentTransportReady(
+          ensureConnected: () async {},
+          transportSession: () => '',
+        ),
+        throwsA(
+          isA<AttachmentException>().having(
+            (error) => error.category,
+            'category',
+            'transport_unavailable',
+          ),
+        ),
+      );
+    });
+  });
+
   test('display name normalization strips path syntax and bounds length', () {
     expect(attachmentSafeDisplayName(r'C:\private\public.txt'), 'public.txt');
     expect(attachmentSafeDisplayName('../../public.txt'), 'public.txt');

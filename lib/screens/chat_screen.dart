@@ -2061,6 +2061,11 @@ class _ChatScreenState extends State<ChatScreen> {
           totalFiles: attachments.length,
         );
       });
+      await ensureAttachmentTransportReady(
+        ensureConnected: () =>
+            _wsService.ensureConnected(reason: 'chat_attachment_upload'),
+        transportSession: () => _wsService.attachmentTransportSession,
+      );
       final transfer = AttachmentTransferClient(
         sendFrame: _wsService.sendAttachmentEvent,
         events: _wsService.attachmentProtocolStream.map(
