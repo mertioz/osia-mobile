@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../l10n.dart';
 import '../motion.dart';
+import '../services/attachment_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 import '../widgets/model_selector_sheet.dart';
@@ -102,6 +106,21 @@ class AutonomousModelResolution {
   const AutonomousModelResolution(this.selected, this.fallbackOccurred);
 }
 
+class _AutonomousAttachmentEntry {
+  _AutonomousAttachmentEntry(this.file);
+
+  final PreparedAttachment file;
+  AutonomousSourceCapability? capability;
+  String transferState = 'uploading';
+}
+
+@visibleForTesting
+bool autonomousAttachmentSelectionCanStart({
+  required Iterable<bool> ready,
+  required bool busy,
+  required bool hasFailure,
+}) => !busy && !hasFailure && ready.every((value) => value);
+
 @visibleForTesting
 AutonomousModelResolution resolveAutonomousModelSelection(
   List<ws.OsiaModel> models, {
@@ -170,6 +189,12 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
   /// Latest progress frame, or null before the first one arrives.
   ws.AutonomousProgressMessage? _latest;
   ws.BrowserProgressMessage? _browserProgress;
+  final List<_AutonomousAttachmentEntry> _attachments = [];
+  final Map<String, ws.DocumentProgressMessage> _documentProgress = {};
+  AttachmentProgress? _attachmentProgress;
+  AttachmentCancellation? _attachmentCancellation;
+  String? _attachmentFailure;
+  bool _sourcesSubmitted = false;
 
   /// Derived run state. Starts idle; flips to [_RunPhase.planning] the instant
   /// the user taps Start (optimistic) until the first frame refines it.
@@ -179,6 +204,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
   StreamSubscription<ws.OsiaMessage>? _msgSub;
   StreamSubscription<ws.AutonomousProgressMessage>? _autoSub;
   StreamSubscription<ws.BrowserProgressMessage>? _browserSub;
+  StreamSubscription<ws.DocumentProgressMessage>? _documentSub;
   StreamSubscription<ws.ConnectionState>? _connectionSub;
 
   /// Live notifier for an open model-selector sheet, so a late `models_list`
@@ -218,11 +244,34 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       if (!mounted) return;
       setState(() => _browserProgress = progress);
     });
+    _documentSub = widget.wsService.documentProgressStream.listen((progress) {
+      if (!mounted || progress.scopeType != 'autonomous') return;
+      setState(() => _documentProgress[progress.itemId] = progress);
+    });
     _connectionSub = widget.wsService.connectionStream.listen((_) {
       if (!mounted) return;
       setState(() {});
     });
     _browserProgress = widget.wsService.browserProgress;
+    final cachedProgress = widget.wsService.autonomousProgress;
+    if (cachedProgress != null) {
+      _latest = cachedProgress;
+      final event = (cachedProgress.event ?? '').toLowerCase();
+      final lifecycle =
+          const {'paused', 'interrupt', 'interrupted'}.contains(event)
+          ? event
+          : (cachedProgress.runState ?? event).toLowerCase();
+      _runPhase = _phaseFor(lifecycle, _runPhase);
+      final runId = cachedProgress.runId;
+      if (runId != null && runId.isNotEmpty) {
+        for (final progress in widget.wsService.documentProgressForScope(
+          'autonomous',
+          runId,
+        )) {
+          _documentProgress[progress.itemId] = progress;
+        }
+      }
+    }
 
     // Pull everything the screen needs. get_autonomous_status lets a client
     // that opens mid-run render the live progress immediately (the server
@@ -230,18 +279,22 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     widget.wsService.sendGetConfig();
     widget.wsService.sendGetModels();
     widget.wsService.sendGetAutonomousStatus();
+    widget.wsService.sendGetDocumentStatus();
   }
 
   @override
   void dispose() {
+    _attachmentCancellation?.cancel();
     _configSub?.cancel();
     _msgSub?.cancel();
     _autoSub?.cancel();
     _browserSub?.cancel();
+    _documentSub?.cancel();
     _connectionSub?.cancel();
     _modelLoadTimeout?.cancel();
     _selectorNotifier?.dispose();
     _objectiveCtrl.dispose();
+    _releaseUnboundAttachments();
     super.dispose();
   }
 
@@ -263,9 +316,33 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       return;
     }
 
+    if (_sourcesSubmitted &&
+        const {
+          'authorization_pending',
+          'running',
+          'task_done',
+          'state_updated',
+        }.contains(event)) {
+      _adoptSubmittedAttachments();
+    } else if (_sourcesSubmitted &&
+        const {'busy', 'plan_failed', 'aborted', 'cancelled'}.contains(event)) {
+      _sourcesSubmitted = false;
+    }
+
     setState(() {
+      final previousRunId = _latest?.runId;
+      if (previousRunId != null &&
+          previousRunId.isNotEmpty &&
+          msg.runId != null &&
+          msg.runId!.isNotEmpty &&
+          msg.runId != previousRunId) {
+        _documentProgress.clear();
+      }
       _latest = msg;
-      final lifecycle = (msg.runState ?? event).toLowerCase();
+      final lifecycle =
+          const {'paused', 'interrupt', 'interrupted'}.contains(event)
+          ? event
+          : (msg.runState ?? event).toLowerCase();
       // Older servers used `idle` for an unavailable resume checkpoint. Keep
       // that event compatible while honoring WOR-173's additive typed failure.
       _runPhase = event == 'idle' && msg.errorCategory != null
@@ -336,6 +413,20 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       _runPhase == _RunPhase.scopeExtension ||
       _runPhase == _RunPhase.revoked ||
       _runPhase == _RunPhase.outcomeUnknown;
+
+  bool get _attachmentBusy => switch (_attachmentProgress?.phase) {
+    AttachmentPhase.preparing ||
+    AttachmentPhase.hashing ||
+    AttachmentPhase.uploading ||
+    AttachmentPhase.verifying => true,
+    _ => false,
+  };
+
+  bool get _attachmentsReady => autonomousAttachmentSelectionCanStart(
+    ready: _attachments.map((entry) => entry.capability != null),
+    busy: _attachmentBusy,
+    hasFailure: _attachmentFailure != null,
+  );
 
   // ── Configured-only model filter ─────────────────────────────────────────
 
@@ -489,9 +580,217 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     widget.wsService.sendGetConfig();
   }
 
+  Future<void> _addDocuments() async {
+    if (_isActive ||
+        _attachmentBusy ||
+        _attachments.length >= attachmentMaxFiles) {
+      return;
+    }
+    if (_attachments.any((entry) => entry.transferState == 'failed')) return;
+    if (_attachmentFailure != null) setState(() => _attachmentFailure = null);
+
+    FilePickerResult? result;
+    try {
+      result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        allowMultiple: true,
+        withData: false,
+        withReadStream: true,
+      );
+    } on Object {
+      if (mounted) setState(() => _attachmentFailure = 'picker_failed');
+      return;
+    }
+    if (result == null || result.files.isEmpty) return;
+
+    final sources = <AttachmentSource>[];
+    for (final picked in result.files) {
+      final capturedStream = picked.readStream;
+      final capturedPath = picked.path;
+      sources.add(
+        AttachmentSource(
+          displayName: picked.name,
+          declaredSize: picked.size,
+          openRead: () {
+            if (capturedStream != null) return capturedStream;
+            if (capturedPath == null || capturedPath.isEmpty) {
+              throw const AttachmentException('source_expired');
+            }
+            return File(capturedPath).openRead();
+          },
+        ),
+      );
+    }
+
+    final cancellation = AttachmentCancellation();
+    _attachmentCancellation = cancellation;
+    setState(() {
+      _attachmentProgress = AttachmentProgress(
+        phase: AttachmentPhase.preparing,
+        totalFiles: _attachments.length + sources.length,
+      );
+    });
+    final newEntries = <_AutonomousAttachmentEntry>[];
+    try {
+      final temporary = await getTemporaryDirectory();
+      final preparer = AttachmentPreparer(
+        root: Directory(
+          '${temporary.path}${Platform.pathSeparator}osia_attachment_staging',
+        ),
+      );
+      final prepared = await preparer.prepare(
+        sources,
+        existing: _attachments.map((entry) => entry.file).toList(),
+        cancellation: cancellation,
+        onProgress: (progress) {
+          if (mounted) setState(() => _attachmentProgress = progress);
+        },
+      );
+      for (final candidate in prepared) {
+        if (attachmentIsDuplicate(
+          _attachments.map((entry) => entry.file),
+          candidate,
+        )) {
+          await candidate.delete();
+        } else {
+          newEntries.add(_AutonomousAttachmentEntry(candidate));
+        }
+      }
+      if (!mounted) {
+        for (final entry in newEntries) {
+          await entry.file.delete();
+        }
+        return;
+      }
+      if (newEntries.isEmpty) {
+        setState(() {
+          _attachmentCancellation = null;
+          _attachmentProgress = null;
+        });
+        return;
+      }
+      setState(() {
+        _attachments.addAll(newEntries);
+        _attachmentProgress = AttachmentProgress(
+          phase: AttachmentPhase.uploading,
+          totalFiles: newEntries.length,
+          totalBytes: newEntries.fold<int>(
+            0,
+            (sum, entry) => sum + entry.file.byteSize,
+          ),
+        );
+      });
+      final transfer = AttachmentTransferClient(
+        sendFrame: widget.wsService.sendAttachmentEvent,
+        events: widget.wsService.attachmentProtocolStream.map(
+          (message) => message.data,
+        ),
+        transportSession: () => widget.wsService.attachmentTransportSession,
+      );
+      final uploaded = await transfer.upload(
+        files: newEntries.map((entry) => entry.file).toList(),
+        conversationId: '',
+        clientRequestId: ws.WebSocketService.newClientRequestId(),
+        attachmentPurpose: 'autonomous',
+        cancellation: cancellation,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() {
+            _attachmentProgress = progress;
+            final state = switch (progress.phase) {
+              AttachmentPhase.verifying => 'verifying',
+              AttachmentPhase.ready => 'ready',
+              AttachmentPhase.failed || AttachmentPhase.canceled => 'failed',
+              _ => 'uploading',
+            };
+            for (final entry in newEntries) {
+              entry.transferState = state;
+            }
+          });
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        for (var index = 0; index < newEntries.length; index++) {
+          newEntries[index]
+            ..capability = uploaded.autonomousSources[index]
+            ..transferState = 'ready';
+        }
+        _attachmentCancellation = null;
+        _attachmentFailure = null;
+        _attachmentProgress = AttachmentProgress(
+          phase: AttachmentPhase.ready,
+          totalFiles: newEntries.length,
+          completedFiles: newEntries.length,
+        );
+      });
+    } on AttachmentException {
+      if (!mounted) return;
+      setState(() {
+        _attachmentCancellation = null;
+        _attachmentFailure = 'upload_failed';
+        _attachmentProgress = AttachmentProgress(
+          phase: AttachmentPhase.failed,
+          totalFiles: newEntries.length,
+        );
+        for (final entry in newEntries) {
+          entry.transferState = 'failed';
+        }
+      });
+    }
+  }
+
+  Future<void> _removeDocument(_AutonomousAttachmentEntry entry) async {
+    if (_isActive || _attachmentBusy) return;
+    final capability = entry.capability;
+    if (capability != null) {
+      widget.wsService.sendAutonomousReleaseSources([capability.sourceRef]);
+    }
+    await entry.file.delete();
+    if (!mounted) return;
+    setState(() {
+      _attachments.remove(entry);
+      if (!_attachments.any((item) => item.transferState == 'failed')) {
+        _attachmentFailure = null;
+      }
+      _attachmentProgress = _attachments.isEmpty
+          ? null
+          : AttachmentProgress(
+              phase: AttachmentPhase.ready,
+              totalFiles: _attachments.length,
+              completedFiles: _attachments.length,
+            );
+    });
+  }
+
+  void _adoptSubmittedAttachments() {
+    final adopted = List<_AutonomousAttachmentEntry>.of(_attachments);
+    _sourcesSubmitted = false;
+    if (mounted) setState(_attachments.clear);
+    for (final entry in adopted) {
+      unawaited(entry.file.delete());
+    }
+  }
+
+  void _releaseUnboundAttachments() {
+    final entries = List<_AutonomousAttachmentEntry>.of(_attachments);
+    if (!_sourcesSubmitted) {
+      final refs = entries
+          .map((entry) => entry.capability?.sourceRef)
+          .whereType<String>()
+          .toList(growable: false);
+      if (refs.isNotEmpty) widget.wsService.sendAutonomousReleaseSources(refs);
+    }
+    for (final entry in entries) {
+      unawaited(entry.file.delete());
+    }
+    _attachments.clear();
+  }
+
   void _start() {
     final objective = _objectiveCtrl.text.trim();
     final strings = OsiaL10n.of(context);
+    if (!_attachmentsReady) return;
     if (objective.isEmpty) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -514,7 +813,22 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     }
     FocusScope.of(context).unfocus();
     widget.wsService.setClientLocale(strings.languageCode);
-    widget.wsService.sendAutonomousStart(objective, model);
+    final sourceRefs = _attachments
+        .map((entry) => entry.capability!.sourceRef)
+        .toList(growable: false);
+    final bool sent;
+    if (sourceRefs.isEmpty) {
+      widget.wsService.sendAutonomousStart(objective, model);
+      sent = true;
+    } else {
+      sent = widget.wsService.sendAutonomousStartWithSources(
+        objective,
+        model,
+        sourceRefs,
+      );
+    }
+    if (!sent) return;
+    _sourcesSubmitted = _attachments.isNotEmpty;
     // Do not retain private objective text in the visible mobile widget tree.
     // Authorization review is reconstructed from structural plan labels and
     // safe capability summaries returned by the PC.
@@ -523,6 +837,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     setState(() {
       _latest = const ws.AutonomousProgressMessage();
       _runPhase = _RunPhase.planning;
+      _documentProgress.clear();
     });
   }
 
@@ -630,6 +945,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     final configuredCount = _configuredModels.length;
     final canStart =
         !_isActive &&
+        _attachmentsReady &&
         _objectiveCtrl.text.trim().isNotEmpty &&
         _selectedModel != null &&
         autonomousModelWireValue(_selectedModel!).isNotEmpty &&
@@ -717,10 +1033,72 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
               // ── Model (configured-only) ──
               StaggeredAppear(
                 index: 2,
-                child: _SectionLabel(label: strings.model, palette: palette),
+                child: _SectionLabel(
+                  label: strings.autonomousDocuments,
+                  palette: palette,
+                ),
               ),
               StaggeredAppear(
                 index: 3,
+                child: _OsiaCard(
+                  palette: palette,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          key: const Key('autonomous-add-documents'),
+                          onPressed:
+                              !_isActive &&
+                                  !_attachmentBusy &&
+                                  _attachments.length < attachmentMaxFiles &&
+                                  !_attachments.any(
+                                    (entry) => entry.transferState == 'failed',
+                                  )
+                              ? _addDocuments
+                              : null,
+                          icon: const Icon(Icons.add_rounded, size: 18),
+                          label: Text(strings.autonomousAddDocuments),
+                        ),
+                      ),
+                      for (
+                        var index = 0;
+                        index < _attachments.length;
+                        index++
+                      ) ...[
+                        if (index > 0)
+                          Divider(color: palette.border, height: 18),
+                        _buildAttachmentRow(
+                          _attachments[index],
+                          palette,
+                          strings,
+                        ),
+                      ],
+                      if (_attachmentFailure != null) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          strings.documentTransferFailed,
+                          key: const Key('autonomous-document-upload-failure'),
+                          style: TextStyle(
+                            color: palette.error,
+                            fontSize: 12.5,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              StaggeredAppear(
+                index: 4,
+                child: _SectionLabel(label: strings.model, palette: palette),
+              ),
+              StaggeredAppear(
+                index: 5,
                 child: _ModelPickerTile(
                   palette: palette,
                   label: _selectedModelLabel(strings),
@@ -742,7 +1120,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
 
               // ── Start ──
               StaggeredAppear(
-                index: 4,
+                index: 6,
                 child: PressableScale(
                   enabled: canStart,
                   child: SizedBox(
@@ -928,6 +1306,66 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
 
   /// Pretty label for the selected model — its server label when known, else
   /// the raw id, else the "choose a model" prompt.
+  Widget _buildAttachmentRow(
+    _AutonomousAttachmentEntry entry,
+    OsiaPalette palette,
+    OsiaStrings strings,
+  ) {
+    final safeType =
+        entry.capability?.typeLabel ??
+        (entry.file.extension.isEmpty ? 'document' : entry.file.extension);
+    return Row(
+      key: ValueKey('autonomous-document-${entry.file.fileId}'),
+      children: [
+        Icon(Icons.description_outlined, color: palette.accent, size: 20),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                entry.file.displayName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                '$safeType · ${_attachmentStateLabel(entry, strings)}',
+                style: TextStyle(
+                  color: entry.transferState == 'failed'
+                      ? palette.error
+                      : palette.textMuted,
+                  fontSize: 12.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: strings.autonomousRemoveDocument,
+          onPressed: !_isActive && !_attachmentBusy
+              ? () => _removeDocument(entry)
+              : null,
+          icon: const Icon(Icons.close_rounded, size: 18),
+        ),
+      ],
+    );
+  }
+
+  String _attachmentStateLabel(
+    _AutonomousAttachmentEntry entry,
+    OsiaStrings strings,
+  ) => switch (entry.transferState) {
+    'ready' => strings.documentTransferReady,
+    'verifying' => strings.documentTransferVerifying,
+    'failed' => strings.documentTransferFailed,
+    _ => strings.documentTransferUploading,
+  };
+
   String _selectedModelLabel(OsiaStrings strings) {
     final model = _selectedModel;
     if (model == null || model.id.isEmpty) {
@@ -1204,6 +1642,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
           );
     final done = latest?.tasksDone;
     final total = latest?.tasksTotal;
+    final finalAnswer = (latest?.finalAnswer ?? '').trim();
 
     return _OsiaCard(
       key: const ValueKey('status'),
@@ -1261,6 +1700,41 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
             const SizedBox(height: 8),
             _TaskProgressBar(done: done, total: total, palette: palette),
           ],
+          for (final document in _documentProgress.values) ...[
+            const SizedBox(height: 10),
+            Row(
+              key: ValueKey('autonomous-document-progress-${document.itemId}'),
+              children: [
+                Icon(
+                  document.phase == 'failed'
+                      ? Icons.error_outline_rounded
+                      : document.phase == 'ready'
+                      ? Icons.check_circle_outline_rounded
+                      : Icons.description_outlined,
+                  size: 18,
+                  color: document.phase == 'failed'
+                      ? palette.error
+                      : palette.accent,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    document.phase == 'failed'
+                        ? '${document.documentType} · '
+                              '${strings.documentProcessingFailed}'
+                        : '${document.documentType} · '
+                              '${strings.documentPhase(document.phase)}',
+                    style: TextStyle(
+                      color: document.phase == 'failed'
+                          ? palette.error
+                          : palette.textMuted,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
           if (diagnosticMessage.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(
@@ -1280,6 +1754,18 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                 fontSize: 13,
                 height: 1.4,
                 color: palette.textMuted,
+              ),
+            ),
+          ],
+          if (_runPhase == _RunPhase.done && finalAnswer.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            SelectableText(
+              finalAnswer,
+              key: const Key('autonomous-final-answer'),
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.45,
+                color: palette.textPrimary,
               ),
             ),
           ],

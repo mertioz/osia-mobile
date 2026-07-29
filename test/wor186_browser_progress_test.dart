@@ -47,6 +47,7 @@ Map<String, dynamic> _autonomousFrame(
   String event = 'running',
   String text = 'Autonomous work is running',
   bool terminal = false,
+  String? finalAnswer,
 }) => <String, dynamic>{
   'type': 'autonomous_progress',
   'schema_version': 1,
@@ -63,6 +64,7 @@ Map<String, dynamic> _autonomousFrame(
   'safe_progress_text': text,
   'artifact_safe_summary': null,
   'terminal': terminal,
+  'final_answer': finalAnswer,
   'tasks_done': terminal ? 1 : 0,
   'tasks_total': 1,
 };
@@ -79,6 +81,46 @@ ws.WebSocketService _service({List<Map<String, dynamic>>? sent}) =>
     );
 
 void main() {
+  test(
+    'autonomous final answer is accepted only on bounded done terminal',
+    () async {
+      final service = _service();
+      addTearDown(service.dispose);
+      service.setPermissionConnectionForTest(true);
+      final accepted = <ws.AutonomousProgressMessage>[];
+      final sub = service.autonomousStream.listen(accepted.add);
+      addTearDown(sub.cancel);
+
+      service.handleIncomingFrameForTest(
+        _autonomousFrame(
+          service,
+          event: 'done',
+          text: 'Autonomous work completed',
+          terminal: true,
+          finalAnswer: 'One consolidated synthetic answer.',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(accepted.single.finalAnswer, 'One consolidated synthetic answer.');
+
+      final rejected = _service();
+      addTearDown(rejected.dispose);
+      rejected.setPermissionConnectionForTest(true);
+      final rejectedFrames = <ws.AutonomousProgressMessage>[];
+      final rejectedSub = rejected.autonomousStream.listen(rejectedFrames.add);
+      addTearDown(rejectedSub.cancel);
+      rejected.handleIncomingFrameForTest(
+        _autonomousFrame(
+          rejected,
+          event: 'running',
+          finalAnswer: 'must not be accepted',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(rejectedFrames, isEmpty);
+    },
+  );
+
   test(
     'browser frames reject duplicate, older, wrong run/revision and leaks',
     () async {

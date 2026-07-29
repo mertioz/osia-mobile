@@ -19,16 +19,27 @@ class _FakeAutonomousWebSocketService extends ws.WebSocketService {
       StreamController<ws.ConfigData>.broadcast();
   final StreamController<ws.OsiaMessage> _messages =
       StreamController<ws.OsiaMessage>.broadcast();
+  final StreamController<ws.DocumentProgressMessage> _documents =
+      StreamController<ws.DocumentProgressMessage>.broadcast();
+  int resumeCalls = 0;
+  ws.AutonomousProgressMessage? cachedProgress;
 
   @override
   Stream<ws.AutonomousProgressMessage> get autonomousStream =>
       _autonomous.stream;
 
   @override
+  ws.AutonomousProgressMessage? get autonomousProgress => cachedProgress;
+
+  @override
   Stream<ws.ConfigData> get configStream => _config.stream;
 
   @override
   Stream<ws.OsiaMessage> get messageStream => _messages.stream;
+
+  @override
+  Stream<ws.DocumentProgressMessage> get documentProgressStream =>
+      _documents.stream;
 
   @override
   void sendGetAutonomousStatus() {}
@@ -39,13 +50,22 @@ class _FakeAutonomousWebSocketService extends ws.WebSocketService {
   @override
   void sendGetModels() {}
 
+  @override
+  void sendAutonomousResume() {
+    resumeCalls += 1;
+  }
+
   void emit(ws.AutonomousProgressMessage message) => _autonomous.add(message);
+
+  void emitDocument(ws.DocumentProgressMessage message) =>
+      _documents.add(message);
 
   @override
   void dispose() {
     _autonomous.close();
     _config.close();
     _messages.close();
+    _documents.close();
     super.dispose();
   }
 }
@@ -110,6 +130,15 @@ void main() {
     );
   });
 
+  test('parses one bounded autonomous terminal answer additively', () {
+    final parsed = ws.AutonomousProgressMessage.fromJson({
+      'event': 'done',
+      'terminal': true,
+      'final_answer': 'One consolidated synthetic answer.',
+    });
+    expect(parsed.finalAnswer, 'One consolidated synthetic answer.');
+  });
+
   test('localized category and metadata are consistent', () {
     expect(
       osiaStringsEn.autonomousFailureDiagnostic('planning_timeout'),
@@ -171,6 +200,132 @@ void main() {
     // This screen contains the repository's existing lazy PressableScale
     // controller, whose dispose-only lookup triggers a test-framework assertion.
     // Use the same narrow teardown guard as the adjacent navigation tests.
+    final previousFlutterErrorHandler = FlutterError.onError;
+    FlutterError.onError = (details) {
+      final exception = details.exceptionAsString();
+      final stack = details.stack?.toString() ?? '';
+      if (exception.contains('Looking up a deactivated widget') &&
+          stack.contains('_PressableScaleState.dispose')) {
+        return;
+      }
+      previousFlutterErrorHandler?.call(details);
+    };
+    try {
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    } finally {
+      FlutterError.onError = previousFlutterErrorHandler;
+      service.dispose();
+    }
+  });
+
+  testWidgets('renders a cached terminal received before the screen opened', (
+    tester,
+  ) async {
+    final service = _FakeAutonomousWebSocketService()
+      ..cachedProgress = ws.AutonomousProgressMessage.fromJson({
+        'event': 'done',
+        'run_state': 'completed',
+        'terminal': true,
+        'tasks_done': 3,
+        'tasks_total': 3,
+        'final_answer': 'One cached consolidated answer.',
+      });
+    await tester.pumpWidget(
+      OsiaTheme(
+        palette: osiaPaletteViolet,
+        child: OsiaL10n(
+          strings: osiaStringsEn,
+          child: MaterialApp(
+            theme: buildOsiaTheme(),
+            home: AutonomousScreen(wsService: service),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(find.text('One cached consolidated answer.'), findsOneWidget);
+    expect(find.textContaining('3 / 3'), findsOneWidget);
+    final previousFlutterErrorHandler = FlutterError.onError;
+    FlutterError.onError = (details) {
+      final exception = details.exceptionAsString();
+      final stack = details.stack?.toString() ?? '';
+      if (exception.contains('Looking up a deactivated widget') &&
+          stack.contains('_PressableScaleState.dispose')) {
+        return;
+      }
+      previousFlutterErrorHandler?.call(details);
+    };
+    try {
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    } finally {
+      FlutterError.onError = previousFlutterErrorHandler;
+      service.dispose();
+    }
+  });
+
+  testWidgets('clears retired document rows when the canonical run changes', (
+    tester,
+  ) async {
+    final service = _FakeAutonomousWebSocketService();
+    await tester.pumpWidget(
+      OsiaTheme(
+        palette: osiaPaletteViolet,
+        child: OsiaL10n(
+          strings: osiaStringsEn,
+          child: MaterialApp(
+            theme: buildOsiaTheme(),
+            home: AutonomousScreen(wsService: service),
+          ),
+        ),
+      ),
+    );
+    service.emit(
+      ws.AutonomousProgressMessage.fromJson({
+        'event': 'running',
+        'run_id': 'run-one',
+        'tasks_done': 1,
+        'tasks_total': 2,
+      }),
+    );
+    service.emitDocument(
+      const ws.DocumentProgressMessage(
+        eventId: 'document-event:one',
+        serverId: 'server-one',
+        sessionId: 'session-one',
+        scopeType: 'autonomous',
+        scopeId: 'run-one',
+        planRevision: 1,
+        sequence: 1,
+        itemId: 'item_111111111111111111111111',
+        documentType: 'docx',
+        phase: 'ready',
+        terminal: true,
+        failureCategory: '',
+        snapshot: false,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.textContaining('docx'), findsOneWidget);
+
+    service.emit(
+      ws.AutonomousProgressMessage.fromJson({
+        'event': 'done',
+        'run_id': 'run-two',
+        'terminal': true,
+        'tasks_done': 2,
+        'tasks_total': 2,
+        'final_answer': 'Authoritative replacement run.',
+      }),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.textContaining('docx'), findsNothing);
+    expect(find.text('Authoritative replacement run.'), findsOneWidget);
+
     final previousFlutterErrorHandler = FlutterError.onError;
     FlutterError.onError = (details) {
       final exception = details.exceptionAsString();
@@ -267,6 +422,112 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
 
     expect(find.textContaining('cannot be resumed safely'), findsOneWidget);
+
+    final previousFlutterErrorHandler = FlutterError.onError;
+    FlutterError.onError = (details) {
+      final exception = details.exceptionAsString();
+      final stack = details.stack?.toString() ?? '';
+      if (exception.contains('Looking up a deactivated widget') &&
+          stack.contains('_PressableScaleState.dispose')) {
+        return;
+      }
+      previousFlutterErrorHandler?.call(details);
+    };
+    try {
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    } finally {
+      FlutterError.onError = previousFlutterErrorHandler;
+      service.dispose();
+    }
+  });
+
+  testWidgets('renders the canonical autonomous terminal answer once', (
+    tester,
+  ) async {
+    final service = _FakeAutonomousWebSocketService();
+    await tester.pumpWidget(
+      OsiaTheme(
+        palette: osiaPaletteViolet,
+        child: OsiaL10n(
+          strings: osiaStringsEn,
+          child: MaterialApp(
+            theme: buildOsiaTheme(),
+            home: AutonomousScreen(wsService: service),
+          ),
+        ),
+      ),
+    );
+
+    service.emit(
+      ws.AutonomousProgressMessage.fromJson({
+        'event': 'done',
+        'terminal': true,
+        'tasks_done': 1,
+        'tasks_total': 1,
+        'final_answer': 'One consolidated synthetic answer.',
+      }),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(find.byKey(const Key('autonomous-final-answer')), findsOneWidget);
+    expect(find.text('One consolidated synthetic answer.'), findsOneWidget);
+
+    final previousFlutterErrorHandler = FlutterError.onError;
+    FlutterError.onError = (details) {
+      final exception = details.exceptionAsString();
+      final stack = details.stack?.toString() ?? '';
+      if (exception.contains('Looking up a deactivated widget') &&
+          stack.contains('_PressableScaleState.dispose')) {
+        return;
+      }
+      previousFlutterErrorHandler?.call(details);
+    };
+    try {
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    } finally {
+      FlutterError.onError = previousFlutterErrorHandler;
+      service.dispose();
+    }
+  });
+
+  testWidgets('interrupted event exposes resume despite in-progress state', (
+    tester,
+  ) async {
+    final service = _FakeAutonomousWebSocketService();
+    await tester.pumpWidget(
+      OsiaTheme(
+        palette: osiaPaletteViolet,
+        child: OsiaL10n(
+          strings: osiaStringsEn,
+          child: MaterialApp(
+            theme: buildOsiaTheme(),
+            home: AutonomousScreen(wsService: service),
+          ),
+        ),
+      ),
+    );
+
+    service.emit(
+      ws.AutonomousProgressMessage.fromJson({
+        'event': 'interrupted',
+        'run_state': 'in_progress',
+        'tasks_done': 2,
+        'tasks_total': 11,
+        'resumable': true,
+        'checkpoint_present': true,
+      }),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(find.text(osiaStringsEn.autonomousResume), findsOneWidget);
+    await tester.ensureVisible(find.text(osiaStringsEn.autonomousResume));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(osiaStringsEn.autonomousResume));
+    expect(service.resumeCalls, 1);
 
     final previousFlutterErrorHandler = FlutterError.onError;
     FlutterError.onError = (details) {

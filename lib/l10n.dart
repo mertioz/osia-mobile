@@ -915,6 +915,142 @@ class OsiaStrings {
     'es': 'Resultado anterior desconocido; continuación automática bloqueada',
   });
 
+  String get autonomousDocuments => _autonomousAuthorizationText(const {
+    'en': 'Documents',
+    'fr': 'Documents',
+    'zh': '文档',
+    'ja': '文書',
+    'de': 'Dokumente',
+    'es': 'Documentos',
+  });
+
+  String get autonomousAddDocuments => _autonomousAuthorizationText(const {
+    'en': 'Add',
+    'fr': 'Ajouter',
+    'zh': '添加',
+    'ja': '追加',
+    'de': 'Hinzufügen',
+    'es': 'Añadir',
+  });
+
+  String get autonomousRemoveDocument => _autonomousAuthorizationText(const {
+    'en': 'Remove document',
+    'fr': 'Retirer le document',
+    'zh': '移除文档',
+    'ja': '文書を削除',
+    'de': 'Dokument entfernen',
+    'es': 'Quitar documento',
+  });
+
+  String get documentTransferPreparing => _autonomousAuthorizationText(const {
+    'en': 'Preparing…',
+    'fr': 'Préparation…',
+    'zh': '正在准备…',
+    'ja': '準備中…',
+    'de': 'Wird vorbereitet…',
+    'es': 'Preparando…',
+  });
+
+  String get documentTransferUploading => _autonomousAuthorizationText(const {
+    'en': 'Uploading…',
+    'fr': 'Envoi…',
+    'zh': '正在上传…',
+    'ja': 'アップロード中…',
+    'de': 'Wird hochgeladen…',
+    'es': 'Subiendo…',
+  });
+
+  String get documentTransferVerifying => _autonomousAuthorizationText(const {
+    'en': 'Verifying…',
+    'fr': 'Vérification…',
+    'zh': '正在验证…',
+    'ja': '検証中…',
+    'de': 'Wird geprüft…',
+    'es': 'Verificando…',
+  });
+
+  String get documentTransferReady => _autonomousAuthorizationText(const {
+    'en': 'Ready',
+    'fr': 'Prêt',
+    'zh': '已就绪',
+    'ja': '準備完了',
+    'de': 'Bereit',
+    'es': 'Listo',
+  });
+
+  String get documentTransferFailed => _autonomousAuthorizationText(const {
+    'en': 'Upload failed. Remove the document and try again.',
+    'fr': "L'envoi a échoué. Retirez le document et réessayez.",
+    'zh': '上传失败。请移除文档后重试。',
+    'ja': 'アップロードに失敗しました。文書を削除して再試行してください。',
+    'de': 'Upload fehlgeschlagen. Dokument entfernen und erneut versuchen.',
+    'es': 'La carga falló. Quita el documento e inténtalo de nuevo.',
+  });
+
+  String get documentProcessingFailed => _autonomousAuthorizationText(const {
+    'en': 'Document processing failed',
+    'fr': 'Le traitement du document a échoué',
+    'zh': '文档处理失败',
+    'ja': '文書の処理に失敗しました',
+    'de': 'Dokumentverarbeitung fehlgeschlagen',
+    'es': 'Error al procesar el documento',
+  });
+
+  String documentPhase(String phase) {
+    const labels = <String, Map<String, String>>{
+      'identifying': {
+        'en': 'Identifying',
+        'fr': 'Identification',
+        'zh': '识别',
+        'ja': '識別',
+        'de': 'Erkennen',
+        'es': 'Identificando',
+      },
+      'inspecting': {
+        'en': 'Inspecting',
+        'fr': 'Inspection',
+        'zh': '检查',
+        'ja': '検査',
+        'de': 'Prüfen',
+        'es': 'Inspeccionando',
+      },
+      'extracting': {
+        'en': 'Extracting',
+        'fr': 'Extraction',
+        'zh': '提取',
+        'ja': '抽出',
+        'de': 'Extrahieren',
+        'es': 'Extrayendo',
+      },
+      'indexing': {
+        'en': 'Indexing',
+        'fr': 'Indexation',
+        'zh': '索引',
+        'ja': '索引作成',
+        'de': 'Indizieren',
+        'es': 'Indexando',
+      },
+      'ready': {
+        'en': 'Ready',
+        'fr': 'Prêt',
+        'zh': '已就绪',
+        'ja': '準備完了',
+        'de': 'Bereit',
+        'es': 'Listo',
+      },
+      'failed': {
+        'en': 'Failed',
+        'fr': 'Échec',
+        'zh': '失败',
+        'ja': '失敗',
+        'de': 'Fehlgeschlagen',
+        'es': 'Error',
+      },
+    };
+    final localized = labels[phase];
+    return localized?[languageCode] ?? localized?['en'] ?? phase;
+  }
+
   String get scheduledAuthorizationTitle => _autonomousAuthorizationText(const {
     'en': 'Scheduled task authorization',
     'fr': 'Autorisation de la tÃ¢che planifiÃ©e',

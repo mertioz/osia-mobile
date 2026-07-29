@@ -1412,6 +1412,7 @@ class AutonomousProgressMessage {
   final String? safeOperationPhase;
   final String? safeSiteDisplay;
   final String? safeProgressText;
+  final String? finalAnswer;
   final Map<String, dynamic>? artifactSafeSummary;
   final bool? terminal;
 
@@ -1477,6 +1478,7 @@ class AutonomousProgressMessage {
     this.safeOperationPhase,
     this.safeSiteDisplay,
     this.safeProgressText,
+    this.finalAnswer,
     this.artifactSafeSummary,
     this.terminal,
     this.event,
@@ -1580,6 +1582,7 @@ class AutonomousProgressMessage {
       safeOperationPhase: pickStr(['safe_operation_phase']),
       safeSiteDisplay: pickStr(['safe_site_display']),
       safeProgressText: pickStr(['safe_progress_text']),
+      finalAnswer: pickStr(['final_answer']),
       artifactSafeSummary: pickMap('artifact_safe_summary'),
       terminal: pickBool(['terminal']),
       event: pickStr(['event']),
@@ -1629,6 +1632,172 @@ class AutonomousProgressMessage {
       planSummary: pickMaps('plan_summary'),
       authorizationRequest: pickMap('authorization_request'),
       pendingScopeExtension: pickMap('pending_scope_extension'),
+    );
+  }
+}
+
+/// Sanitized document-processing state. The strict parser has no field for a
+/// source capability, artifact id, path, filename, content, query or parser.
+class DocumentProgressMessage {
+  const DocumentProgressMessage({
+    required this.eventId,
+    required this.serverId,
+    required this.sessionId,
+    required this.scopeType,
+    required this.scopeId,
+    required this.planRevision,
+    required this.sequence,
+    required this.itemId,
+    required this.documentType,
+    required this.phase,
+    required this.terminal,
+    required this.failureCategory,
+    required this.snapshot,
+    this.completedCount,
+    this.totalCount,
+  });
+
+  final String eventId;
+  final String serverId;
+  final String sessionId;
+  final String scopeType;
+  final String scopeId;
+  final int planRevision;
+  final int sequence;
+  final String itemId;
+  final String documentType;
+  final String phase;
+  final bool terminal;
+  final String failureCategory;
+  final bool snapshot;
+  final int? completedCount;
+  final int? totalCount;
+
+  static DocumentProgressMessage? tryParse(Map<String, dynamic> json) {
+    const keys = <String>{
+      'type',
+      'schema_version',
+      'event_id',
+      'server_id',
+      'session_id',
+      'scope_type',
+      'scope_id',
+      'plan_revision',
+      'sequence',
+      'item_id',
+      'document_type',
+      'phase',
+      'terminal',
+      'failure_category',
+      'counts',
+      'snapshot',
+    };
+    if (!_hasExactStringKeys(json, keys) ||
+        json['type'] != 'document_progress' ||
+        json['schema_version'] != 1 ||
+        json['event_id'] is! String ||
+        json['server_id'] is! String ||
+        json['session_id'] is! String ||
+        json['scope_type'] is! String ||
+        json['scope_id'] is! String ||
+        json['plan_revision'] is! int ||
+        json['sequence'] is! int ||
+        json['item_id'] is! String ||
+        json['document_type'] is! String ||
+        json['phase'] is! String ||
+        json['terminal'] is! bool ||
+        json['failure_category'] is! String ||
+        json['snapshot'] is! bool) {
+      return null;
+    }
+    final eventId = json['event_id'] as String;
+    final serverId = json['server_id'] as String;
+    final sessionId = json['session_id'] as String;
+    final scopeType = json['scope_type'] as String;
+    final scopeId = json['scope_id'] as String;
+    final planRevision = json['plan_revision'] as int;
+    final sequence = json['sequence'] as int;
+    final itemId = json['item_id'] as String;
+    final documentType = json['document_type'] as String;
+    final phase = json['phase'] as String;
+    final terminal = json['terminal'] as bool;
+    final failureCategory = json['failure_category'] as String;
+    final counts = json['counts'];
+    int? completed;
+    int? total;
+    if (counts != null) {
+      if (counts is! Map ||
+          !_hasExactStringKeys(counts, const {'completed', 'total'}) ||
+          counts['completed'] is! int ||
+          counts['total'] is! int) {
+        return null;
+      }
+      completed = counts['completed'] as int;
+      total = counts['total'] as int;
+      if (completed < 0 || total < completed || total > 1000000) return null;
+    }
+    const phases = <String>{
+      'identifying',
+      'inspecting',
+      'extracting',
+      'indexing',
+      'ready',
+      'failed',
+    };
+    const failures = <String>{
+      'active_content_detected',
+      'corrupted_document',
+      'drm_protected',
+      'encrypted_document',
+      'expired_source',
+      'external_reference_detected',
+      'extraction_failure',
+      'file_identity_mismatch',
+      'invalid_source_reference',
+      'missing_source',
+      'ocr_unavailable',
+      'protected_document',
+      'resource_limit_exceeded',
+      'source_changed',
+      'source_unavailable',
+      'unauthorized_source',
+      'unsupported_format',
+      'unsupported_legacy_format',
+    };
+    if (eventId.isEmpty ||
+        eventId.length > 128 ||
+        serverId.isEmpty ||
+        sessionId.isEmpty ||
+        sessionId.length > 128 ||
+        !const {'chat', 'autonomous'}.contains(scopeType) ||
+        !RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$').hasMatch(scopeId) ||
+        planRevision < 0 ||
+        sequence < 1 ||
+        !RegExp(r'^item_[0-9a-f]{24}$').hasMatch(itemId) ||
+        !RegExp(r'^[a-z0-9][a-z0-9.+-]{0,31}$').hasMatch(documentType) ||
+        !phases.contains(phase) ||
+        terminal != const {'ready', 'failed'}.contains(phase) ||
+        (phase == 'failed'
+            ? !failures.contains(failureCategory)
+            : failureCategory.isNotEmpty)) {
+      return null;
+    }
+    return DocumentProgressMessage(
+      eventId: eventId,
+      serverId: serverId,
+      sessionId: sessionId,
+      scopeType: scopeType,
+      scopeId: scopeId,
+      planRevision: planRevision,
+      sequence: sequence,
+      itemId: itemId,
+      documentType: documentType,
+      phase: phase,
+      terminal: terminal,
+      failureCategory: failureCategory,
+      snapshot: json['snapshot'] as bool,
+      completedCount: completed,
+      totalCount: total,
     );
   }
 }
@@ -2497,6 +2666,7 @@ class WebSocketService {
   bool _autonomousProgressLive = false;
   bool _awaitingAutonomousSnapshot = true;
   bool _expectNewAutonomousRun = false;
+  AutonomousProgressMessage? _autonomousProgress;
   String _browserProgressSessionId = '';
   String _browserProgressRunId = '';
   final Set<String> _retiredBrowserProgressSessions = <String>{};
@@ -2506,6 +2676,18 @@ class WebSocketService {
   bool _browserTerminalSeen = false;
   bool _browserProgressLive = false;
   BrowserProgressMessage? _browserProgress;
+  String _documentProgressSessionId = '';
+  final Set<String> _retiredDocumentProgressSessions = <String>{};
+  final Map<String, int> _lastDocumentSequence = <String, int>{};
+  final Map<String, int> _lastDocumentRevision = <String, int>{};
+  final Map<String, int> _lastDocumentPhaseRank = <String, int>{};
+  final Set<String> _terminalDocumentItems = <String>{};
+  final Set<String> _knownDocumentScopes = <String>{};
+  final Set<String> _canonicalTerminalDocumentScopes = <String>{};
+  final Map<String, DocumentProgressMessage> _documentProgress =
+      <String, DocumentProgressMessage>{};
+  bool _documentProgressLive = false;
+  bool _awaitingDocumentSnapshot = true;
   final Set<String> _seenProgressEventIds = <String>{};
   final Queue<String> _progressEventOrder = Queue<String>();
 
@@ -2620,6 +2802,9 @@ class WebSocketService {
 
   final StreamController<BrowserProgressMessage> _browserProgressCtrl =
       StreamController<BrowserProgressMessage>.broadcast();
+
+  final StreamController<DocumentProgressMessage> _documentProgressCtrl =
+      StreamController<DocumentProgressMessage>.broadcast();
 
   final StreamController<McpStatusMessage> _mcpStatusCtrl =
       StreamController<McpStatusMessage>.broadcast();
@@ -2781,10 +2966,27 @@ class WebSocketService {
   Stream<AutonomousProgressMessage> get autonomousStream =>
       _autonomousCtrl.stream;
 
+  /// Latest canonical Autonomous snapshot for screens opened after the
+  /// authenticated initial sync has already completed.
+  AutonomousProgressMessage? get autonomousProgress => _autonomousProgress;
+
   /// Strict live browser progress. The cached value is display-only while
   /// [browserProgressLive] is false during reconnect reconciliation.
   Stream<BrowserProgressMessage> get browserProgressStream =>
       _browserProgressCtrl.stream;
+
+  Stream<DocumentProgressMessage> get documentProgressStream =>
+      _documentProgressCtrl.stream;
+
+  bool get documentProgressLive =>
+      _documentProgressLive && _state == ConnectionState.connected;
+
+  List<DocumentProgressMessage> documentProgressForScope(
+    String scopeType,
+    String scopeId,
+  ) => _documentProgress.values
+      .where((item) => item.scopeType == scopeType && item.scopeId == scopeId)
+      .toList(growable: false);
 
   BrowserProgressMessage? get browserProgress => _browserProgress;
 
@@ -3153,6 +3355,10 @@ class WebSocketService {
     final frameType = (json['type'] ?? '').toString() == 'turn_status'
         ? 'turn_status'
         : 'turn_accepted';
+    final knownTurn = _turnByRequest[reqId] ?? '';
+    if (knownTurn.isNotEmpty && turnId.isNotEmpty && knownTurn != turnId) {
+      return;
+    }
     if (id.isNotEmpty) {
       _unboundRequestIds.remove(reqId);
       if (const <String>{
@@ -3170,6 +3376,7 @@ class WebSocketService {
         )) {
           return;
         }
+        _markDocumentCanonicalTerminal('chat', turnId);
         _finishConvStream(
           id,
           error: status != 'done',
@@ -3185,6 +3392,9 @@ class WebSocketService {
           frameType: frameType,
         )) {
           return;
+        }
+        if (reqId.isNotEmpty && turnId.isNotEmpty) {
+          _turnByRequest.putIfAbsent(reqId, () => turnId);
         }
         if (reqId.isNotEmpty) _acceptedRequests.add(reqId);
         _rememberRequest(id, reqId);
@@ -4149,12 +4359,41 @@ class WebSocketService {
   /// (a configured `"provider:model"` / model id). Progress arrives on
   /// [autonomousStream].
   void sendAutonomousStart(String objective, String model) {
+    sendAutonomousStartWithSources(objective, model, const []);
+  }
+
+  bool sendAutonomousStartWithSources(
+    String objective,
+    String model,
+    List<String> documentSources,
+  ) {
+    final sourcePattern = RegExp(r'^src_[0-9a-f]{32}$');
+    if (documentSources.length > 10 ||
+        documentSources.toSet().length != documentSources.length ||
+        documentSources.any((source) => !sourcePattern.hasMatch(source))) {
+      return false;
+    }
     _expectNewAutonomousRun = true;
-    _send({
+    return _send({
       'type': 'autonomous_start',
       'objective': objective,
       'model': model,
+      'document_sources': List<String>.unmodifiable(documentSources),
       if (_clientLocale.isNotEmpty) 'locale': _clientLocale,
+    });
+  }
+
+  bool sendAutonomousReleaseSources(List<String> documentSources) {
+    final sourcePattern = RegExp(r'^src_[0-9a-f]{32}$');
+    if (documentSources.isEmpty ||
+        documentSources.length > 10 ||
+        documentSources.toSet().length != documentSources.length ||
+        documentSources.any((source) => !sourcePattern.hasMatch(source))) {
+      return false;
+    }
+    return _send({
+      'type': 'autonomous_release_sources',
+      'document_sources': List<String>.unmodifiable(documentSources),
     });
   }
 
@@ -4247,6 +4486,30 @@ class WebSocketService {
   /// reconnect. Cached state stays explicitly non-live until it arrives.
   void sendGetBrowserStatus() {
     _send({'type': 'get_browser_status', 'schema_version': 1});
+  }
+
+  void sendGetDocumentStatus() {
+    _awaitingDocumentSnapshot = true;
+    final scopes = <String>{
+      ..._knownDocumentScopes,
+      for (final turnId in _turnByRequest.values)
+        if (turnId.isNotEmpty) _documentScopeKey('chat', turnId),
+      if (_autonomousProgressRunId.isNotEmpty &&
+          _autonomousProgressRunId != 'idle')
+        _documentScopeKey('autonomous', _autonomousProgressRunId),
+    };
+    _send({
+      'type': 'get_document_status',
+      'schema_version': 1,
+      'device_id': _permissionDeviceId,
+      'scopes': <Map<String, String>>[
+        for (final key in scopes.take(8))
+          <String, String>{
+            'scope_type': key.substring(0, key.indexOf('\u0000')),
+            'scope_id': key.substring(key.indexOf('\u0000') + 1),
+          },
+      ],
+    });
   }
 
   // ── MCP / Connectors (WOR-44 Phase 4) ──
@@ -4410,6 +4673,7 @@ class WebSocketService {
     _scheduledAuthorizationCtrl.close();
     _autonomousCtrl.close();
     _browserProgressCtrl.close();
+    _documentProgressCtrl.close();
     _mcpStatusCtrl.close();
     _mcpConfirmCtrl.close();
     _mcpOauthUrlCtrl.close();
@@ -4430,6 +4694,9 @@ class WebSocketService {
     _applicationEventOrder.clear();
     _lastApplicationSequence.clear();
     _pendingPermissionRevocations.clear();
+    _documentProgress.clear();
+    _knownDocumentScopes.clear();
+    _canonicalTerminalDocumentScopes.clear();
   }
 
   /// Strip any scheme, path, or port the user may have pasted into the
@@ -4522,6 +4789,7 @@ class WebSocketService {
     requestPermissionSnapshot();
     sendGetAutonomousStatus();
     sendGetBrowserStatus();
+    sendGetDocumentStatus();
   }
 
   String get _expectedPermissionServerId => sha256
@@ -4542,6 +4810,8 @@ class WebSocketService {
     _autonomousProgressLive = false;
     _awaitingAutonomousSnapshot = true;
     _browserProgressLive = false;
+    _documentProgressLive = false;
+    _awaitingDocumentSnapshot = true;
   }
 
   void _markProgressOffline() {
@@ -4572,6 +4842,7 @@ class WebSocketService {
     final site = json['safe_site_display'] as String;
     final progress = json['safe_progress_text'] as String;
     final event = (json['event'] ?? '').toString().toLowerCase();
+    final finalAnswer = json['final_answer'];
     if (eventId.isEmpty ||
         eventId.length > 128 ||
         sequence < 1 ||
@@ -4620,6 +4891,12 @@ class WebSocketService {
           'No Autonomous work is active',
           'Autonomous state updated',
         }.contains(progress) ||
+        (finalAnswer != null &&
+            (event != 'done' ||
+                json['terminal'] != true ||
+                finalAnswer is! String ||
+                finalAnswer.trim().isEmpty ||
+                finalAnswer.length > 8000)) ||
         _seenProgressEventIds.contains(eventId)) {
       return false;
     }
@@ -4697,6 +4974,115 @@ class WebSocketService {
     _awaitingAutonomousSnapshot = false;
     _expectNewAutonomousRun = false;
     return _rememberProgressEvent(eventId);
+  }
+
+  static String _documentScopeKey(String scopeType, String scopeId) =>
+      '$scopeType\u0000$scopeId';
+
+  static String _documentItemKey(DocumentProgressMessage progress) =>
+      '${_documentScopeKey(progress.scopeType, progress.scopeId)}'
+      '\u0000${progress.itemId}';
+
+  void _markDocumentCanonicalTerminal(String scopeType, String scopeId) {
+    if (scopeId.isEmpty) return;
+    _canonicalTerminalDocumentScopes.add(_documentScopeKey(scopeType, scopeId));
+  }
+
+  bool _ownsDocumentScope(DocumentProgressMessage progress) {
+    final scopeKey = _documentScopeKey(progress.scopeType, progress.scopeId);
+    if (_knownDocumentScopes.contains(scopeKey)) return true;
+    if (progress.scopeType == 'chat') {
+      return _turnByRequest.values.contains(progress.scopeId);
+    }
+    return _autonomousProgressRunId.isNotEmpty &&
+        _autonomousProgressRunId != 'idle' &&
+        progress.scopeId == _autonomousProgressRunId;
+  }
+
+  void _handleDocumentProgress(Map<String, dynamic> json) {
+    final progress = DocumentProgressMessage.tryParse(json);
+    if (progress == null ||
+        progress.serverId != _expectedPermissionServerId ||
+        _seenProgressEventIds.contains(progress.eventId) ||
+        !_ownsDocumentScope(progress)) {
+      return;
+    }
+    final scopeKey = _documentScopeKey(progress.scopeType, progress.scopeId);
+    if (_canonicalTerminalDocumentScopes.contains(scopeKey)) return;
+    if (_documentProgressSessionId.isEmpty) {
+      if (_retiredDocumentProgressSessions.contains(progress.sessionId)) {
+        return;
+      }
+      _documentProgressSessionId = progress.sessionId;
+    } else if (progress.sessionId != _documentProgressSessionId) {
+      if (_documentProgressLive ||
+          !_awaitingDocumentSnapshot ||
+          _retiredDocumentProgressSessions.contains(progress.sessionId)) {
+        return;
+      }
+      _retiredDocumentProgressSessions.add(_documentProgressSessionId);
+      while (_retiredDocumentProgressSessions.length > 8) {
+        _retiredDocumentProgressSessions.remove(
+          _retiredDocumentProgressSessions.first,
+        );
+      }
+      _documentProgressSessionId = progress.sessionId;
+      _lastDocumentSequence.clear();
+      _lastDocumentRevision.clear();
+      _lastDocumentPhaseRank.clear();
+      _terminalDocumentItems.clear();
+    }
+    if (progress.scopeType == 'chat' && progress.planRevision != 0) return;
+    if (progress.scopeType == 'autonomous' &&
+        _lastAutonomousPlanRevision >= 0 &&
+        progress.planRevision < _lastAutonomousPlanRevision) {
+      return;
+    }
+    final previousSequence = _lastDocumentSequence[scopeKey] ?? 0;
+    final previousRevision = _lastDocumentRevision[scopeKey] ?? -1;
+    if (progress.sequence <= previousSequence ||
+        progress.planRevision < previousRevision) {
+      return;
+    }
+    const phaseRank = <String, int>{
+      'identifying': 0,
+      'inspecting': 1,
+      'extracting': 2,
+      'indexing': 3,
+      'ready': 4,
+    };
+    final itemKey = _documentItemKey(progress);
+    final priorRank = _lastDocumentPhaseRank[itemKey] ?? -1;
+    final cached = _documentProgress[itemKey];
+    if (_terminalDocumentItems.contains(itemKey)) {
+      final authoritativeRepeat =
+          progress.snapshot &&
+          _awaitingDocumentSnapshot &&
+          cached != null &&
+          cached.phase == progress.phase &&
+          progress.terminal;
+      if (!authoritativeRepeat) return;
+    } else if (progress.phase != 'failed' &&
+        (phaseRank[progress.phase] ?? -1) <= priorRank) {
+      return;
+    }
+    _lastDocumentSequence[scopeKey] = progress.sequence;
+    _lastDocumentRevision[scopeKey] = progress.planRevision;
+    if (progress.phase != 'failed') {
+      _lastDocumentPhaseRank[itemKey] = phaseRank[progress.phase]!;
+    }
+    if (progress.terminal) _terminalDocumentItems.add(itemKey);
+    _knownDocumentScopes.add(scopeKey);
+    _documentProgress[itemKey] = progress;
+    while (_documentProgress.length > 80) {
+      _documentProgress.remove(_documentProgress.keys.first);
+    }
+    _documentProgressLive = true;
+    _awaitingDocumentSnapshot = false;
+    if (_rememberProgressEvent(progress.eventId) &&
+        !_documentProgressCtrl.isClosed) {
+      _documentProgressCtrl.add(progress);
+    }
   }
 
   void _handleBrowserProgress(Map<String, dynamic> json) {
@@ -7174,6 +7560,7 @@ class WebSocketService {
           }
         case 'response':
           if (content != null) {
+            _markDocumentCanonicalTerminal('chat', turnId);
             if (!_directFirstEnabled) _emit(ResponseMessage(content));
             // WOR-53: also replace this conversation's buffer with the
             // canonical full reply (parallel sink — no change to pacing).
@@ -7253,6 +7640,7 @@ class WebSocketService {
             // Early error frames without a conversation_id are ignored by
             // [_finishConvStream]'s null guard.
             if (content == 'done' || content == 'error') {
+              _markDocumentCanonicalTerminal('chat', turnId);
               if (kOsiaDebugPlaceholder) {
                 debugPrint(
                   '[OSIA WOR-75] terminal status received '
@@ -7274,6 +7662,7 @@ class WebSocketService {
         case 'response_done':
         case 'turn_complete':
         case 'done':
+          _markDocumentCanonicalTerminal('chat', turnId);
           _finishConvStream(
             convId,
             error: false,
@@ -7283,6 +7672,7 @@ class WebSocketService {
           );
         case 'error':
           if (convId != null && convId.isNotEmpty) {
+            _markDocumentCanonicalTerminal('chat', turnId);
             _finishConvStream(
               convId,
               error: true,
@@ -7517,6 +7907,20 @@ class WebSocketService {
           // never replace the terminal result.
           if (!_validAutonomousProgressFrame(json)) break;
           final canonicalProgress = AutonomousProgressMessage.fromJson(json);
+          _autonomousProgress = canonicalProgress;
+          final documentSnapshot = json['document_progress'];
+          if (documentSnapshot is List) {
+            for (final item in documentSnapshot.whereType<Map>()) {
+              _handleDocumentProgress(Map<String, dynamic>.from(item));
+            }
+          }
+          if (canonicalProgress.terminal == true &&
+              (canonicalProgress.runId ?? '').isNotEmpty) {
+            _markDocumentCanonicalTerminal(
+              'autonomous',
+              canonicalProgress.runId!,
+            );
+          }
           debugPrint(
             '[OSIA WS] autonomous_progress: event=${canonicalProgress.event} '
             '${canonicalProgress.tasksDone}/${canonicalProgress.tasksTotal}',
@@ -7533,6 +7937,7 @@ class WebSocketService {
           // its own [autonomousStream] (NOT the paced message queue) so it can't
           // disturb response-chunk streaming.
           final prog = AutonomousProgressMessage.fromJson(json);
+          _autonomousProgress = prog;
           debugPrint(
             '[OSIA WS] autonomous_progress: event=${prog.event} '
             '${prog.tasksDone}/${prog.tasksTotal}',
@@ -7542,6 +7947,8 @@ class WebSocketService {
           }
         case 'browser_progress':
           _handleBrowserProgress(json);
+        case 'document_progress':
+          _handleDocumentProgress(json);
         case 'mcp_status':
           // Live MCP connector status (WOR-44 Phase 4). Delivered on its own
           // [mcpStatusStream] (NOT the paced message queue) so it can't disturb

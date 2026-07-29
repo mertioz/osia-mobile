@@ -98,6 +98,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _mcpConfirmSub;
   StreamSubscription? _busySub;
   StreamSubscription? _attachmentProtocolSub;
+  StreamSubscription? _documentProgressSub;
   String? _connError;
   final List<String> _abandonedAudioRequestIds = <String>[];
   String? _currentResponseAudioRequestId;
@@ -205,6 +206,7 @@ class _ChatScreenState extends State<ChatScreen> {
   AttachmentCancellation? _attachmentCancellation;
   String? _submittedAttachmentRequestId;
   bool _clearAttachmentsWhenIdle = false;
+  ws.DocumentProgressMessage? _chatDocumentProgress;
 
   // True while we sent a turn and haven't yet seen status=done/error.
   bool _awaitingResponse = false;
@@ -407,6 +409,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _relayTransferSub = _wsService.relayTransferStream.listen(_onRelayTransfer);
     _attachmentProtocolSub = _wsService.attachmentProtocolStream.listen(
       _onAttachmentProtocol,
+    );
+    _documentProgressSub = _wsService.documentProgressStream.listen(
+      _onDocumentProgress,
     );
 
     // AI-hierarchy state arrives on its own config channel (kept off the
@@ -645,6 +650,7 @@ class _ChatScreenState extends State<ChatScreen> {
             _awaitingResponse = false;
             _thinking = false;
             _noResponse = false;
+            _chatDocumentProgress = null;
           });
         } else if (content == 'thinking') {
           // Server confirms it's working — clear any stale no-response tile.
@@ -674,6 +680,7 @@ class _ChatScreenState extends State<ChatScreen> {
             _awaitingResponse = false;
             _thinking = false;
             _noResponse = false;
+            _chatDocumentProgress = null;
           });
           break;
         }
@@ -1114,6 +1121,13 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  void _onDocumentProgress(ws.DocumentProgressMessage progress) {
+    if (!mounted || progress.scopeType != 'chat') return;
+    final currentTurn = _watchdogTurnId ?? '';
+    if (currentTurn.isEmpty || progress.scopeId != currentTurn) return;
+    setState(() => _chatDocumentProgress = progress);
+  }
+
   Future<void> _completeSubmittedAttachments(String requestId) async {
     if (requestId != _submittedAttachmentRequestId) return;
     final completed = List<PreparedAttachment>.of(_pendingAttachments);
@@ -1489,6 +1503,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     setState(() {
       _entries.clear();
+      _chatDocumentProgress = null;
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
@@ -1634,6 +1649,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _optimisticUserNoId = null;
     setState(() {
       _entries.clear();
+      _chatDocumentProgress = null;
       _awaitingResponse = false;
       _thinking = false;
       _noResponse = false;
@@ -1681,6 +1697,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _optimisticUserNoId = null;
     setState(() {
       _entries.clear();
+      _chatDocumentProgress = null;
       _awaitingResponse = false;
       _thinking = false;
       _noResponse = false;
@@ -1958,6 +1975,14 @@ class _ChatScreenState extends State<ChatScreen> {
   bool get _attachmentInteractionLocked =>
       _attachmentBusy || _submittedAttachmentRequestId != null;
 
+  String? _documentAttachmentStatusLabel(OsiaStrings strings) {
+    final document = _chatDocumentProgress;
+    if (document == null) return _attachmentStatusLabel;
+    return document.phase == 'failed'
+        ? strings.documentProcessingFailed
+        : '${document.documentType} · ${strings.documentPhase(document.phase)}';
+  }
+
   String? get _attachmentStatusLabel => _submittedAttachmentRequestId != null
       ? 'Waiting for PC…'
       : switch (_attachmentProgress?.phase) {
@@ -2150,6 +2175,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _textCtrl.clear();
     setState(() {
       _attachmentCancellation = null;
+      _chatDocumentProgress = null;
       _awaitingResponse = true;
       _thinking = true;
       _noResponse = false;
@@ -3020,6 +3046,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _mcpConfirmSub?.cancel();
     _busySub?.cancel();
     _attachmentProtocolSub?.cancel();
+    _documentProgressSub?.cancel();
     widget.connectionLifecycle.detach(_wsService);
     _wsService.dispose();
     _audioService.dispose();
@@ -3214,7 +3241,7 @@ class _ChatScreenState extends State<ChatScreen> {
               onRemoveAttachment: (index) =>
                   unawaited(_removePendingAttachment(index)),
               onClearAttachments: () => unawaited(_clearPendingAttachments()),
-              attachmentStatus: _attachmentStatusLabel,
+              attachmentStatus: _documentAttachmentStatusLabel(strings),
               attachmentProgress: _attachmentProgress?.fraction ?? 0,
               attachmentBusy: _attachmentInteractionLocked,
               onCancelAttachment: _attachmentBusy
