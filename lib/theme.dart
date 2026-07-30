@@ -169,7 +169,8 @@ OsiaPalette paletteForKey(String? key) {
 /// the settings screen.
 class ThemeController extends ChangeNotifier {
   OsiaPalette _palette;
-  ThemeController({OsiaPalette initial = osiaPaletteViolet}) : _palette = initial;
+  ThemeController({OsiaPalette initial = osiaPaletteViolet})
+    : _palette = initial;
 
   OsiaPalette get palette => _palette;
 
@@ -187,11 +188,7 @@ class ThemeController extends ChangeNotifier {
 class OsiaTheme extends InheritedWidget {
   final OsiaPalette palette;
 
-  const OsiaTheme({
-    super.key,
-    required this.palette,
-    required super.child,
-  });
+  const OsiaTheme({super.key, required this.palette, required super.child});
 
   static OsiaPalette of(BuildContext context) {
     final widget = context.dependOnInheritedWidgetOfExactType<OsiaTheme>();
@@ -202,27 +199,10 @@ class OsiaTheme extends InheritedWidget {
   bool updateShouldNotify(OsiaTheme old) => old.palette != palette;
 }
 
-// ── Legacy constants ──────────────────────────────────────────────────────
-// Kept so older imports keep compiling. New code should use
-// `OsiaTheme.of(context).<field>` to follow the active palette.
-
-const Color osiaBackground = Color(0xFF0D0B12);
-const Color osiaAccent = Color(0xFFC4B5F5);
-const Color osiaViolet = Color(0xFF7C3AED);
-const Color osiaSurface = Color(0xFF1A1625);
-const Color osiaBorder = Color(0xFF2A2438);
-const Color osiaTextMuted = Color(0xFF8B8A90);
-const Color osiaTextPrimary = Color(0xFFF5F3FF);
-const Color osiaThinking = _kIndicatorViolet;
-const Color osiaError = Color(0xFFEF4444);
-const Color osiaUserBubble = Color(0xFF2A2440);
-const Color osiaAssistantBubble = Color(0xFF181426);
-
 // ── ThemeData builder ─────────────────────────────────────────────────────
 
 ThemeData buildOsiaTheme([OsiaPalette palette = osiaPaletteViolet]) {
-  final base =
-      palette.isDark ? ThemeData.dark() : ThemeData.light();
+  final base = palette.isDark ? ThemeData.dark() : ThemeData.light();
   final textTheme = GoogleFonts.interTextTheme(base.textTheme);
 
   return ThemeData(
@@ -310,8 +290,7 @@ ThemeData buildOsiaTheme([OsiaPalette palette = osiaPaletteViolet]) {
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: palette.surface,
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(28),
         borderSide: BorderSide(color: palette.border),
@@ -324,14 +303,8 @@ ThemeData buildOsiaTheme([OsiaPalette palette = osiaPaletteViolet]) {
         borderRadius: BorderRadius.circular(28),
         borderSide: BorderSide(color: palette.accent, width: 1.5),
       ),
-      hintStyle: GoogleFonts.inter(
-        color: palette.textMuted,
-        fontSize: 15,
-      ),
-      labelStyle: GoogleFonts.inter(
-        color: palette.textMuted,
-        fontSize: 14,
-      ),
+      hintStyle: GoogleFonts.inter(color: palette.textMuted, fontSize: 15),
+      labelStyle: GoogleFonts.inter(color: palette.textMuted, fontSize: 14),
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
@@ -339,19 +312,12 @@ ThemeData buildOsiaTheme([OsiaPalette palette = osiaPaletteViolet]) {
         foregroundColor: Colors.white,
         elevation: 0,
         padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(28),
-        ),
-        textStyle: GoogleFonts.inter(
-          fontSize: 16,
-          fontWeight: FontWeight.w600,
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        textStyle: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600),
       ),
     ),
     iconButtonTheme: IconButtonThemeData(
-      style: IconButton.styleFrom(
-        foregroundColor: palette.accent,
-      ),
+      style: IconButton.styleFrom(foregroundColor: palette.accent),
     ),
     bottomSheetTheme: BottomSheetThemeData(
       backgroundColor: palette.surface,
@@ -366,14 +332,12 @@ ThemeData buildOsiaTheme([OsiaPalette palette = osiaPaletteViolet]) {
         color: palette.textPrimary,
         fontSize: 14,
       ),
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       behavior: SnackBarBehavior.floating,
     ),
     dialogTheme: DialogThemeData(
       backgroundColor: palette.surface,
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       titleTextStyle: GoogleFonts.inter(
         fontSize: 20,
         fontWeight: FontWeight.w600,
