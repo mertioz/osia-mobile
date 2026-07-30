@@ -54,149 +54,19 @@ class ModelReasoningOption {
         return strings.reasoningHigh;
       case 'xhigh':
         return strings.reasoningXhigh;
+      case 'ultra':
+        return 'Ultra';
     }
     return id;
   }
 }
 
-const ModelReasoningOption _defaultReasoningOption = ModelReasoningOption(
-  'auto',
-  isDefault: true,
-);
-
-const Set<String> _googleReasoningModels = {
-  'gemini-3.5-flash',
-  'gemini-3.1-pro-preview',
-  'gemini-3-flash-preview',
-  'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
-};
-
-const Set<String> _googleOffReasoningModels = {
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
-};
-
-const Set<String> _deepSeekReasoningModels = {
-  'deepseek-v4-pro',
-  'deepseek-v4-flash',
-};
-
-const Set<String> _openAiReasoningModels = {
-  'gpt-5.5',
-  'gpt-5.4',
-  'gpt-5.4-mini',
-};
-
-const Set<String> _claudeReasoningModels = {
-  'claude-opus-4-8',
-  'claude-opus-4-7',
-  'claude-opus-4-6',
-  'claude-sonnet-4-6',
-};
-
-const Set<String> _claudeXhighReasoningModels = {
-  'claude-opus-4-8',
-  'claude-opus-4-7',
-};
-
 @visibleForTesting
 List<ModelReasoningOption> reasoningOptionsForModel(ws.OsiaModel model) {
-  if (model.reasoningOptions.isNotEmpty) {
-    return [
-      for (final option in model.reasoningOptions)
-        ModelReasoningOption(option.id, isDefault: option.isDefault),
-    ];
-  }
-  final provider = _reasoningProviderFor(model);
-  final modelId = model.id.trim();
-  if (provider.isEmpty || modelId.isEmpty) return const [];
-
-  if (provider == 'deepseek' && _deepSeekReasoningModels.contains(modelId)) {
-    return const [
-      _defaultReasoningOption,
-      ModelReasoningOption('off'),
-      ModelReasoningOption('normal'),
-      ModelReasoningOption('max'),
-    ];
-  }
-
-  if (provider == 'openai' && _openAiReasoningModels.contains(modelId)) {
-    return const [
-      _defaultReasoningOption,
-      ModelReasoningOption('off'),
-      ModelReasoningOption('minimal'),
-      ModelReasoningOption('low'),
-      ModelReasoningOption('medium'),
-      ModelReasoningOption('high'),
-      ModelReasoningOption('xhigh'),
-    ];
-  }
-
-  if ((provider == 'anthropic' || provider == 'claude') &&
-      _claudeReasoningModels.contains(modelId)) {
-    return [
-      _defaultReasoningOption,
-      const ModelReasoningOption('off'),
-      const ModelReasoningOption('low'),
-      const ModelReasoningOption('medium'),
-      const ModelReasoningOption('high'),
-      if (_claudeXhighReasoningModels.contains(modelId))
-        const ModelReasoningOption('xhigh'),
-      const ModelReasoningOption('max'),
-    ];
-  }
-
-  if (provider == 'google' && _googleReasoningModels.contains(modelId)) {
-    return [
-      _defaultReasoningOption,
-      if (_googleOffReasoningModels.contains(modelId))
-        const ModelReasoningOption('off'),
-      const ModelReasoningOption('minimal'),
-      const ModelReasoningOption('low'),
-      const ModelReasoningOption('medium'),
-      const ModelReasoningOption('high'),
-    ];
-  }
-
-  if (provider == 'groq' && modelId.startsWith('openai/gpt-oss-')) {
-    return const [
-      _defaultReasoningOption,
-      ModelReasoningOption('low'),
-      ModelReasoningOption('medium'),
-      ModelReasoningOption('high'),
-    ];
-  }
-
-  if (provider == 'mistral' && modelId == 'mistral-medium-3-5') {
-    return const [
-      _defaultReasoningOption,
-      ModelReasoningOption('off'),
-      ModelReasoningOption('minimal'),
-      ModelReasoningOption('low'),
-      ModelReasoningOption('medium'),
-      ModelReasoningOption('high'),
-      ModelReasoningOption('xhigh'),
-    ];
-  }
-
-  return const [];
-}
-
-String _reasoningProviderFor(ws.OsiaModel model) {
-  final tagged = (model.provider ?? '').trim().toLowerCase();
-  if (tagged.isNotEmpty) return tagged;
-  final id = model.id.trim().toLowerCase();
-  if (id.contains('deepseek')) return 'deepseek';
-  if (id.contains('gemini')) return 'google';
-  if (id.startsWith('openai/gpt-oss-') || id.contains('gpt-oss')) {
-    return 'groq';
-  }
-  if (id.startsWith('gpt-')) return 'openai';
-  if (id.startsWith('claude-')) return 'anthropic';
-  if (id.startsWith('mistral-') || id == 'codestral-2508') return 'mistral';
-  return '';
+  return [
+    for (final option in model.reasoningOptions)
+      ModelReasoningOption(option.id, isDefault: option.isDefault),
+  ];
 }
 
 /// Bottom sheet that displays the list of models reported by the server.

@@ -4,96 +4,53 @@ import 'package:osia_mobile/widgets/model_selector_sheet.dart';
 
 void main() {
   group('reasoningOptionsForModel', () {
-    List<String> ids(String provider, String modelId) =>
-        reasoningOptionsForModel(
-          ws.OsiaModel(id: modelId, label: modelId, provider: provider),
-        ).map((option) => option.id).toList();
+    test('uses only authoritative PC catalogue metadata', () {
+      final model = ws.OsiaModel(
+        id: 'gpt-5.6-sol',
+        label: 'GPT-5.6-Sol',
+        provider: 'chatgpt_account',
+        reasoningOptions: const [
+          ws.OsiaModelReasoningOption(
+            id: 'auto',
+            label: 'Default',
+            isDefault: true,
+          ),
+          ws.OsiaModelReasoningOption(id: 'max', label: 'Max'),
+          ws.OsiaModelReasoningOption(id: 'ultra', label: 'Ultra'),
+        ],
+      );
 
-    test('matches verified provider/model option sets', () {
-      expect(ids('deepseek', 'deepseek-v4-pro'), [
+      expect(reasoningOptionsForModel(model).map((option) => option.id), [
         'auto',
-        'off',
-        'normal',
         'max',
-      ]);
-      expect(ids('deepseek', 'deepseek-v4-pro'), isNot(contains('low')));
-      expect(ids('deepseek', 'deepseek-v4-pro'), isNot(contains('medium')));
-      expect(ids('deepseek', 'deepseek-v4-pro'), isNot(contains('high')));
-
-      expect(ids('google', 'gemini-3.5-flash'), [
-        'auto',
-        'minimal',
-        'low',
-        'medium',
-        'high',
-      ]);
-      expect(ids('google', 'gemini-2.5-flash'), [
-        'auto',
-        'off',
-        'minimal',
-        'low',
-        'medium',
-        'high',
-      ]);
-      expect(ids('groq', 'openai/gpt-oss-120b'), [
-        'auto',
-        'low',
-        'medium',
-        'high',
-      ]);
-      expect(ids('mistral', 'mistral-medium-3-5'), [
-        'auto',
-        'off',
-        'minimal',
-        'low',
-        'medium',
-        'high',
-        'xhigh',
+        'ultra',
       ]);
     });
 
-    test('exposes OpenAI reasoning options for supported GPT models', () {
-      expect(ids('openai', 'gpt-5.5'), [
-        'auto',
-        'off',
-        'minimal',
-        'low',
-        'medium',
-        'high',
-        'xhigh',
-      ]);
-      expect(ids('openai', 'gpt-4.1'), isEmpty);
-    });
-
-    test('exposes Claude reasoning options by model support', () {
-      expect(ids('anthropic', 'claude-opus-4-8'), [
-        'auto',
-        'off',
-        'low',
-        'medium',
-        'high',
-        'xhigh',
-        'max',
-      ]);
-
-      expect(ids('anthropic', 'claude-sonnet-4-6'), [
-        'auto',
-        'off',
-        'low',
-        'medium',
-        'high',
-        'max',
-      ]);
-      expect(ids('anthropic', 'claude-sonnet-4-6'), contains('max'));
-      expect(ids('anthropic', 'claude-sonnet-4-6'), isNot(contains('xhigh')));
-      expect(ids('anthropic', 'claude-haiku-4-5-20251001'), isEmpty);
-    });
-
-    test('does not expose controls for unsupported models', () {
-      expect(ids('xai', 'grok-3'), isEmpty);
-      expect(ids('groq', 'llama-3.3-70b-versatile'), isEmpty);
-      expect(ids('mistral', 'mistral-large-2512'), isEmpty);
-    });
+    test(
+      'authoritative absence hides the selector without local inference',
+      () {
+        for (final model in [
+          const ws.OsiaModel(
+            id: 'deepseek-v4-pro',
+            label: 'DeepSeek V4 Pro',
+            provider: 'deepseek',
+          ),
+          const ws.OsiaModel(
+            id: 'gpt-5.5',
+            label: 'GPT-5.5',
+            provider: 'openai',
+          ),
+          const ws.OsiaModel(
+            id: 'gemini-3.5-flash',
+            label: 'Gemini 3.5 Flash',
+            provider: 'google',
+          ),
+        ]) {
+          expect(reasoningOptionsForModel(model), isEmpty);
+        }
+      },
+    );
   });
 
   group('OsiaReasoningConfig', () {
