@@ -34,6 +34,19 @@ enum _TurnPhase {
   streaming,
 }
 
+SnackBar buildMicrophonePermissionDeniedSnackBar({
+  required OsiaStrings strings,
+  required VoidCallback onOpenSettings,
+}) {
+  return SnackBar(
+    content: Text(strings.micPermissionDenied),
+    action: SnackBarAction(
+      label: strings.openSettingsAction,
+      onPressed: onOpenSettings,
+    ),
+  );
+}
+
 /// Main chat screen: conversation history, floating glass input,
 /// thinking indicator, model selector and connection badge.
 class ChatScreen extends StatefulWidget {
@@ -2704,17 +2717,14 @@ class _ChatScreenState extends State<ChatScreen> {
           final msg = _audioService.isPermissionPermanentlyDenied
               ? strings.micPermissionDenied
               : strings.micUnavailable;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(msg),
-              action: _audioService.isPermissionPermanentlyDenied
-                  ? SnackBarAction(
-                      label: strings.openSettingsAction,
-                      onPressed: () => _audioService.openMicrophoneSettings(),
-                    )
-                  : null,
-            ),
-          );
+          final snackBar = _audioService.isPermissionPermanentlyDenied
+              ? buildMicrophonePermissionDeniedSnackBar(
+                  strings: strings,
+                  onOpenSettings: () =>
+                      unawaited(_audioService.openMicrophoneSettings()),
+                )
+              : SnackBar(content: Text(msg));
+          ScaffoldMessenger.of(context).showSnackBar(snackBar);
         }
       }
     }

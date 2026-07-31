@@ -819,7 +819,7 @@ class _ThemeSwatch extends StatelessWidget {
                   ? Icon(
                       Icons.check_rounded,
                       size: 20,
-                      color: target.isDark ? Colors.white : Colors.black,
+                      color: target.foregroundOn(target.swatch),
                     )
                   : null,
             ),

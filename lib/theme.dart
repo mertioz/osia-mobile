@@ -42,6 +42,28 @@ class OsiaPalette {
     required this.isDark,
     required this.swatch,
   });
+
+  /// Pick the existing palette text token with the strongest contrast on
+  /// [fill]. This keeps button/icon foregrounds semantic across every theme.
+  Color foregroundOn(Color fill) {
+    final candidates = <Color>[textPrimary, background, surface];
+    return candidates.reduce(
+      (best, candidate) =>
+          _contrastRatio(candidate, fill) > _contrastRatio(best, fill)
+          ? candidate
+          : best,
+    );
+  }
+}
+
+double _contrastRatio(Color foreground, Color background) {
+  final lighter = foreground.computeLuminance() > background.computeLuminance()
+      ? foreground.computeLuminance()
+      : background.computeLuminance();
+  final darker = foreground.computeLuminance() > background.computeLuminance()
+      ? background.computeLuminance()
+      : foreground.computeLuminance();
+  return (lighter + 0.05) / (darker + 0.05);
 }
 
 /// Indicator violet — must stay this exact value regardless of palette,
@@ -204,6 +226,7 @@ class OsiaTheme extends InheritedWidget {
 ThemeData buildOsiaTheme([OsiaPalette palette = osiaPaletteViolet]) {
   final base = palette.isDark ? ThemeData.dark() : ThemeData.light();
   final textTheme = GoogleFonts.interTextTheme(base.textTheme);
+  final onSecondary = palette.foregroundOn(palette.secondary);
 
   return ThemeData(
     useMaterial3: true,
@@ -214,7 +237,7 @@ ThemeData buildOsiaTheme([OsiaPalette palette = osiaPaletteViolet]) {
       primary: palette.accent,
       onPrimary: palette.isDark ? palette.background : Colors.white,
       secondary: palette.secondary,
-      onSecondary: Colors.white,
+      onSecondary: onSecondary,
       surface: palette.surface,
       onSurface: palette.textPrimary,
       error: palette.error,
@@ -309,15 +332,26 @@ ThemeData buildOsiaTheme([OsiaPalette palette = osiaPaletteViolet]) {
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         backgroundColor: palette.secondary,
-        foregroundColor: Colors.white,
+        foregroundColor: onSecondary,
+        disabledBackgroundColor: palette.surfaceElevated,
+        disabledForegroundColor: palette.textMuted,
         elevation: 0,
         padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
         textStyle: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600),
       ),
     ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        foregroundColor: palette.accent,
+        disabledForegroundColor: palette.textMuted,
+      ),
+    ),
     iconButtonTheme: IconButtonThemeData(
-      style: IconButton.styleFrom(foregroundColor: palette.accent),
+      style: IconButton.styleFrom(
+        foregroundColor: palette.accent,
+        disabledForegroundColor: palette.textMuted,
+      ),
     ),
     bottomSheetTheme: BottomSheetThemeData(
       backgroundColor: palette.surface,
@@ -328,6 +362,8 @@ ThemeData buildOsiaTheme([OsiaPalette palette = osiaPaletteViolet]) {
     ),
     snackBarTheme: SnackBarThemeData(
       backgroundColor: palette.surface,
+      actionTextColor: palette.accent,
+      disabledActionTextColor: palette.textMuted,
       contentTextStyle: GoogleFonts.inter(
         color: palette.textPrimary,
         fontSize: 14,
