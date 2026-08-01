@@ -8,13 +8,15 @@ import 'screens/chat_screen.dart';
 import 'screens/connection_screen.dart';
 import 'screens/guide_screen.dart';
 import 'screens/legal_screen.dart';
+import 'services/audio_service.dart';
 import 'services/background_connection_service.dart';
 import 'services/connection_lifecycle_service.dart';
 import 'services/storage_service.dart';
 import 'theme.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AudioService.cleanupOrphanedRecordings();
   // Sweep any stale temp files left behind by previous picker sessions so
   // the plugin's internal cache stays in a clean state.
   FilePicker.platform

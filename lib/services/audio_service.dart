@@ -438,19 +438,135 @@ class AudioPlaybackController {
 class AudioService {
   final AudioRecorder _recorder;
   final AudioPlaybackController _playback;
+  final Future<Directory> Function() _temporaryDirectory;
+  final Future<String> Function(File) _consumeRecording;
+  final Future<void> Function(File) _deleteRecording;
+  late final Future<bool> Function() _ensureRecordingPermission;
 
   String? _recordingPath;
   bool _isRecording = false;
   bool _disposed = false;
+  Future<void>? _recordingTransition;
+
+  static final RegExp _ownedRecordingName = RegExp(
+    r'^osia_recording_[0-9]+\.wav$',
+  );
 
   /// Whether microphone permission has been permanently denied.
   bool _permissionDenied = false;
 
-  AudioService({AudioRecorder? recorder, AudioPlayer? player})
-    : _recorder = recorder ?? AudioRecorder(),
-      _playback = AudioPlaybackController(
-        _JustAudioPlaybackPlayer(player ?? AudioPlayer()),
-      );
+  AudioService({
+    AudioRecorder? recorder,
+    AudioPlayer? player,
+    @visibleForTesting AudioPlaybackController? playbackController,
+    @visibleForTesting Future<Directory> Function()? temporaryDirectory,
+    @visibleForTesting Future<String> Function(File)? consumeRecording,
+    @visibleForTesting Future<void> Function(File)? deleteRecording,
+    @visibleForTesting Future<bool> Function()? recordingPermission,
+  }) : _recorder = recorder ?? AudioRecorder(),
+       _playback =
+           playbackController ??
+           AudioPlaybackController(
+             _JustAudioPlaybackPlayer(player ?? AudioPlayer()),
+           ),
+       _temporaryDirectory = temporaryDirectory ?? getTemporaryDirectory,
+       _consumeRecording = consumeRecording ?? _readRecording,
+       _deleteRecording = deleteRecording ?? _deleteFile {
+    _ensureRecordingPermission =
+        recordingPermission ?? ensureMicrophonePermission;
+  }
+
+  static Future<String> _readRecording(File file) async {
+    return base64Encode(await file.readAsBytes());
+  }
+
+  static Future<void> _deleteFile(File file) => file.delete();
+
+  static String _fileName(String path) {
+    return path.replaceAll('\\', '/').split('/').last;
+  }
+
+  static void _logCleanupFailure(Object error) {
+    debugPrint('[OSIA Audio] Recording cleanup failed (${error.runtimeType}).');
+  }
+
+  /// Remove only orphaned OSIA recording WAVs from the application temp root.
+  ///
+  /// The scan is flat, does not follow links, and ignores non-regular files.
+  static Future<void> cleanupOrphanedRecordings({
+    @visibleForTesting Future<Directory> Function()? temporaryDirectory,
+    @visibleForTesting Future<void> Function(File)? deleteRecording,
+  }) async {
+    try {
+      final directory = await (temporaryDirectory ?? getTemporaryDirectory)();
+      await for (final entity in directory.list(
+        recursive: false,
+        followLinks: false,
+      )) {
+        if (!_ownedRecordingName.hasMatch(_fileName(entity.path))) continue;
+
+        FileSystemEntityType type;
+        try {
+          type = await FileSystemEntity.type(entity.path, followLinks: false);
+        } on FileSystemException {
+          // A concurrent cleanup may have removed the entry already.
+          continue;
+        }
+        if (type != FileSystemEntityType.file) continue;
+
+        try {
+          await (deleteRecording ?? _deleteFile)(File(entity.path));
+        } on FileSystemException catch (error) {
+          final currentType = await FileSystemEntity.type(
+            entity.path,
+            followLinks: false,
+          );
+          if (currentType != FileSystemEntityType.notFound) {
+            _logCleanupFailure(error);
+          }
+        } catch (error) {
+          _logCleanupFailure(error);
+        }
+      }
+    } catch (error) {
+      _logCleanupFailure(error);
+    }
+  }
+
+  @visibleForTesting
+  bool get hasOwnedRecording => _recordingPath != null;
+
+  Future<T> _runRecordingTransition<T>(Future<T> Function() operation) async {
+    if (_recordingTransition != null) {
+      throw StateError('recording transition already active');
+    }
+    final completed = Completer<void>();
+    final transition = completed.future;
+    _recordingTransition = transition;
+    try {
+      return await operation();
+    } finally {
+      completed.complete();
+      if (identical(_recordingTransition, transition)) {
+        _recordingTransition = null;
+      }
+    }
+  }
+
+  Future<void> _cleanupOwnedRecording() async {
+    final path = _recordingPath;
+    _recordingPath = null;
+    if (path == null) return;
+
+    try {
+      final type = await FileSystemEntity.type(path, followLinks: false);
+      if (type == FileSystemEntityType.notFound) return;
+      if (type != FileSystemEntityType.file) return;
+      await _deleteRecording(File(path));
+    } catch (error) {
+      _logCleanupFailure(error);
+    }
+  }
 
   // ── Permissions ────────────────────────────────────────────────────────
 
@@ -511,94 +627,118 @@ class AudioService {
   /// Audio is saved to a temporary WAV file which will be returned
   /// as base64 when [stopRecording] is called.
   Future<void> startRecording() async {
-    if (_isRecording) return;
-
-    // Double-check permission
-    final allowed = await ensureMicrophonePermission();
-    if (!allowed) {
-      throw Exception('Microphone permission not granted.');
+    if (_disposed) throw StateError('audio service disposed');
+    if (_isRecording || _recordingPath != null) {
+      throw StateError('recording already active');
     }
 
-    try {
-      final tempDir = await getTemporaryDirectory();
-      _recordingPath =
-          '${tempDir.path}/osia_recording_${DateTime.now().millisecondsSinceEpoch}.wav';
+    await _runRecordingTransition<void>(() async {
+      // Double-check permission
+      final allowed = await _ensureRecordingPermission();
+      if (!allowed) {
+        throw Exception('Microphone permission not granted.');
+      }
 
-      const config = RecordConfig(
-        encoder: AudioEncoder.wav,
-        numChannels: 1,
-        sampleRate: 16000,
-        bitRate: 256000,
-      );
+      var recorderStartAttempted = false;
+      try {
+        final tempDir = await _temporaryDirectory();
+        _recordingPath =
+            '${tempDir.path}/osia_recording_${DateTime.now().microsecondsSinceEpoch}.wav';
 
-      await _recorder.start(config, path: _recordingPath!);
-      _isRecording = true;
-      debugPrint('[OSIA Audio] Recording started → $_recordingPath');
-    } catch (e) {
-      debugPrint('[OSIA Audio] startRecording error: $e');
-      _isRecording = false;
-      rethrow;
-    }
+        const config = RecordConfig(
+          encoder: AudioEncoder.wav,
+          numChannels: 1,
+          sampleRate: 16000,
+          bitRate: 256000,
+        );
+
+        recorderStartAttempted = true;
+        await _recorder.start(config, path: _recordingPath!);
+        _isRecording = true;
+        debugPrint('[OSIA Audio] Recording started.');
+      } catch (error, stack) {
+        if (recorderStartAttempted) {
+          try {
+            await _recorder.cancel();
+          } catch (_) {}
+        }
+        _isRecording = false;
+        await _cleanupOwnedRecording();
+        debugPrint(
+          '[OSIA Audio] startRecording failed (${error.runtimeType}).',
+        );
+        Error.throwWithStackTrace(error, stack);
+      }
+    });
   }
 
   /// Stop recording and return the audio as a base64-encoded WAV string.
   ///
   /// Returns `null` if no recording was in progress or the file is missing.
   Future<String?> stopRecording() async {
-    if (!_isRecording) return null;
-
-    try {
-      final path = await _recorder.stop();
-      _isRecording = false;
-
-      final effectivePath = path ?? _recordingPath;
-      if (effectivePath == null) {
-        debugPrint('[OSIA Audio] No recording path after stop.');
-        return null;
-      }
-
-      final file = File(effectivePath);
-      if (!file.existsSync()) {
-        debugPrint('[OSIA Audio] Recording file not found: $effectivePath');
-        return null;
-      }
-
-      final bytes = await file.readAsBytes();
-      final base64 = base64Encode(bytes);
-      debugPrint(
-        '[OSIA Audio] Recording stopped → ${bytes.length} bytes, base64 len=${base64.length}',
-      );
-
-      // Clean up the temp file
-      try {
-        await file.delete();
-      } catch (_) {}
-
-      return base64;
-    } catch (e) {
-      _isRecording = false;
-      debugPrint('[OSIA Audio] stopRecording error: $e');
-      rethrow;
+    final activeTransition = _recordingTransition;
+    if (activeTransition != null) await activeTransition;
+    if (!_isRecording) {
+      await _cleanupOwnedRecording();
+      return null;
     }
+
+    return _runRecordingTransition<String?>(() async {
+      try {
+        final stoppedPath = await _recorder.stop();
+        _isRecording = false;
+
+        final ownedPath = _recordingPath;
+        if (ownedPath == null) {
+          debugPrint('[OSIA Audio] Recording path unavailable after stop.');
+          return null;
+        }
+        if (stoppedPath != null && stoppedPath != ownedPath) {
+          debugPrint('[OSIA Audio] Recorder returned an unexpected path.');
+        }
+
+        final type = await FileSystemEntity.type(ownedPath, followLinks: false);
+        if (type != FileSystemEntityType.file) {
+          debugPrint('[OSIA Audio] Recording file unavailable after stop.');
+          return null;
+        }
+
+        final base64 = await _consumeRecording(File(ownedPath));
+        debugPrint(
+          '[OSIA Audio] Recording consumed (base64_len=${base64.length}).',
+        );
+        return base64;
+      } catch (error, stack) {
+        try {
+          await _recorder.cancel();
+        } catch (_) {}
+        debugPrint('[OSIA Audio] stopRecording failed (${error.runtimeType}).');
+        Error.throwWithStackTrace(error, stack);
+      } finally {
+        _isRecording = false;
+        await _cleanupOwnedRecording();
+      }
+    });
   }
 
   /// Cancel recording without returning data.
   Future<void> cancelRecording() async {
-    if (!_isRecording) return;
-    try {
-      await _recorder.cancel();
-      _isRecording = false;
-      // Clean up
-      if (_recordingPath != null) {
-        final file = File(_recordingPath!);
-        if (file.existsSync()) {
-          await file.delete();
+    final activeTransition = _recordingTransition;
+    if (activeTransition != null) await activeTransition;
+    await _runRecordingTransition<void>(() async {
+      try {
+        if (_isRecording) {
+          await _recorder.cancel();
         }
+      } catch (error) {
+        debugPrint(
+          '[OSIA Audio] cancelRecording failed (${error.runtimeType}).',
+        );
+      } finally {
+        _isRecording = false;
+        await _cleanupOwnedRecording();
       }
-    } catch (e) {
-      debugPrint('[OSIA Audio] cancelRecording error: $e');
-      _isRecording = false;
-    }
+    });
   }
 
   // ── Playback ───────────────────────────────────────────────────────────
@@ -623,9 +763,10 @@ class AudioService {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    final shutdown = <Future<void>>[_playback.dispose()];
-    if (_isRecording) shutdown.add(cancelRecording());
-    await Future.wait<void>(shutdown);
+    final transition = _recordingTransition;
+    if (transition != null) await transition;
+    await cancelRecording();
+    await _playback.dispose();
     await _recorder.dispose();
   }
 }
