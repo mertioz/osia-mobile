@@ -1824,7 +1824,7 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   whisperProvidersDesc:
       'Choose how OSIA turns your speech into text. faster-whisper runs locally for free, while Groq Whisper needs an API key.',
   personalityDesc:
-      'Give OSIA a consistent character and add custom skills it can use. These shape how OSIA talks and what extra abilities it has.',
+      "Personality shapes OSIA's tone. Skills are reusable instructions; they do not add tools, permissions, or capabilities.",
   heartbeatDesc:
       "Let OSIA watch your device's CPU, memory, disk and temperatures. It can alert you aloud when a metric crosses a threshold you set.",
   apiKey: 'API key',
@@ -2218,7 +2218,7 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   whisperProvidersDesc:
       "Choisissez comment OSIA transforme votre voix en texte. faster-whisper s'exécute localement gratuitement, tandis que Groq Whisper nécessite une clé API.",
   personalityDesc:
-      "Donnez à OSIA un caractère cohérent et ajoutez des skills personnalisés qu'il peut utiliser. Ils façonnent la manière dont OSIA parle et ses capacités supplémentaires.",
+      "La personnalité façonne le ton d'OSIA. Les skills sont des instructions réutilisables ; ils n'ajoutent ni outils, ni autorisations, ni capacités.",
   heartbeatDesc:
       "Laissez OSIA surveiller le processeur, la mémoire, le disque et les températures de votre appareil. Il peut vous alerter à voix haute quand une mesure dépasse un seuil que vous définissez.",
   apiKey: 'Clé API',
@@ -2599,7 +2599,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   voiceProvidersDesc: '选择 OSIA 如何朗读其回复。本地语音在您的设备上免费运行；云端语音需要相应提供商的 API 密钥。',
   whisperProvidersDesc:
       '选择 OSIA 如何将您的语音转换为文字。faster-whisper 在本地免费运行，而 Groq Whisper 需要 API 密钥。',
-  personalityDesc: '赋予 OSIA 一致的性格，并添加它可以使用的自定义技能。它们决定了 OSIA 的说话方式及其额外能力。',
+  personalityDesc: '个性设定影响 OSIA 的语气。技能是可复用的指令；它们不会添加工具、权限或功能。',
   heartbeatDesc: '让 OSIA 监测您设备的 CPU、内存、磁盘和温度。当某项指标超过您设定的阈值时，它可以语音提醒您。',
   apiKey: 'API 密钥',
   apiKeyHint: '粘贴您的 API 密钥',
@@ -2969,7 +2969,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   whisperProvidersDesc:
       'OSIA があなたの音声を文字に変換する方法を選びます。faster-whisper はローカルで無料で動作し、Groq Whisper には API キーが必要です。',
   personalityDesc:
-      'OSIA に一貫した性格を与え、使用できるカスタムスキルを追加します。これらは OSIA の話し方と追加の能力を形づくります。',
+      '性格設定は OSIA の話し方を調整します。スキルは再利用可能な指示であり、ツール・権限・機能を追加するものではありません。',
   heartbeatDesc:
       'OSIA がデバイスの CPU・メモリ・ディスク・温度を監視できます。指標が設定したしきい値を超えたとき、音声で知らせます。',
   apiKey: 'API キー',
@@ -3365,7 +3365,7 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   whisperProvidersDesc:
       'Wählen Sie, wie OSIA Ihre Sprache in Text umwandelt. faster-whisper läuft lokal und kostenlos, während Groq Whisper einen API-Schlüssel benötigt.',
   personalityDesc:
-      'Geben Sie OSIA einen beständigen Charakter und fügen Sie eigene Skills hinzu, die es nutzen kann. Sie prägen, wie OSIA spricht und welche zusätzlichen Fähigkeiten es hat.',
+      'Die Persönlichkeit prägt OSIAs Ton. Skills sind wiederverwendbare Anweisungen; sie fügen keine Tools, Berechtigungen oder Fähigkeiten hinzu.',
   heartbeatDesc:
       'Lassen Sie OSIA CPU, Arbeitsspeicher, Festplatte und Temperaturen Ihres Geräts überwachen. Es kann Sie laut warnen, wenn ein Messwert einen von Ihnen festgelegten Schwellenwert überschreitet.',
   apiKey: 'API-Schlüssel',
@@ -3765,7 +3765,7 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   whisperProvidersDesc:
       'Elige cómo OSIA convierte tu voz en texto. faster-whisper funciona localmente y gratis, mientras que Groq Whisper necesita una clave API.',
   personalityDesc:
-      'Da a OSIA un carácter coherente y añade skills personalizados que pueda usar. Estos definen cómo habla OSIA y qué capacidades adicionales tiene.',
+      'La personalidad define el tono de OSIA. Los skills son instrucciones reutilizables; no añaden herramientas, permisos ni capacidades.',
   heartbeatDesc:
       'Deja que OSIA vigile la CPU, la memoria, el disco y las temperaturas de tu dispositivo. Puede avisarte en voz alta cuando una métrica supere un umbral que tú definas.',
   apiKey: 'Clave API',

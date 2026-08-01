@@ -4809,28 +4809,53 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
   final TextEditingController _personalityCtrl = TextEditingController();
   late List<ws.ConfigSkill> _skills;
   int _tab = 0;
+  bool _personalityDirty = false;
+  bool _applyingRemotePersonality = false;
+  String? _pendingPersonalitySave;
   StreamSubscription<ws.ConfigData>? _configSub;
 
   @override
   void initState() {
     super.initState();
     _personalityCtrl.text = widget.config.personality;
+    _personalityCtrl.addListener(_onPersonalityEdited);
     _skills = List<ws.ConfigSkill>.from(widget.config.skills);
     _configSub = widget.wsService.configStream.listen((data) {
-      // Refresh skills only — never clobber the personality editor, which may
-      // hold unsaved edits.
-      if (mounted) setState(() => _skills = data.skills);
+      if (!mounted) return;
+      if (_pendingPersonalitySave == data.personality &&
+          _personalityCtrl.text == data.personality) {
+        _pendingPersonalitySave = null;
+        _personalityDirty = false;
+      }
+      if (!_personalityDirty && _personalityCtrl.text != data.personality) {
+        _applyingRemotePersonality = true;
+        _personalityCtrl.text = data.personality;
+        _applyingRemotePersonality = false;
+      }
+      setState(() => _skills = data.skills);
     });
+  }
+
+  void _onPersonalityEdited() {
+    if (!_applyingRemotePersonality) {
+      _personalityDirty = true;
+      if (_pendingPersonalitySave != _personalityCtrl.text) {
+        _pendingPersonalitySave = null;
+      }
+    }
   }
 
   @override
   void dispose() {
     _configSub?.cancel();
+    _personalityCtrl.removeListener(_onPersonalityEdited);
     _personalityCtrl.dispose();
     super.dispose();
   }
 
   void _savePersonality() {
+    _pendingPersonalitySave = _personalityCtrl.text;
+    _personalityDirty = true;
     widget.wsService.sendSetPersonality(_personalityCtrl.text);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(OsiaL10n.of(context).personalitySaved)),
