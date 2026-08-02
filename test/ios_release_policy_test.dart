@@ -273,7 +273,7 @@ void main() {
       final pubspec = _read('pubspec.yaml');
       final workflow = _read('codemagic.yaml');
 
-      expect(pubspec, contains('version: 1.0.1+3'));
+      expect(pubspec, contains('version: 1.0.2+3'));
       expect(pubspec, isNot(contains('version: 1.0.1+2')));
       expect(workflow, contains(r'configured="$(sed -nE'));
       expect(workflow, contains(r'if [ "$latest" -ge "$configured" ]; then'));
