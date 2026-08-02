@@ -304,6 +304,7 @@ class OsiaStrings {
   final String skillNewHint;
   final String skillContentHint;
   final String skillSaved;
+  final String skillActivationRejected;
   final String skillDeleteTitle;
   final String skillDeleteBodyTemplate; // {name}
 
@@ -673,6 +674,7 @@ class OsiaStrings {
     required this.skillNewHint,
     required this.skillContentHint,
     required this.skillSaved,
+    required this.skillActivationRejected,
     required this.skillDeleteTitle,
     required this.skillDeleteBodyTemplate,
     required this.catSystemStatus,
@@ -1917,6 +1919,8 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   skillNewHint: 'Skill name',
   skillContentHint: 'Skill instructions (Markdown)…',
   skillSaved: 'Skill saved',
+  skillActivationRejected:
+      'The PC kept this skill off because it is invalid, unavailable, or missing a declared tool.',
   skillDeleteTitle: 'Delete skill?',
   skillDeleteBodyTemplate: '"{name}" will be permanently deleted.',
   catSystemStatus: 'System status',
@@ -2313,6 +2317,8 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   skillNewHint: 'Nom du skill',
   skillContentHint: 'Instructions du skill (Markdown)…',
   skillSaved: 'Skill enregistré',
+  skillActivationRejected:
+      'Le PC a laissé ce skill désactivé car il est invalide, indisponible ou dépend d’un outil absent.',
   skillDeleteTitle: 'Supprimer le skill ?',
   skillDeleteBodyTemplate: '« {name} » sera supprimé définitivement.',
   catSystemStatus: 'État système',
@@ -2688,6 +2694,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   skillNewHint: '技能名称',
   skillContentHint: '技能说明（Markdown）…',
   skillSaved: '技能已保存',
+  skillActivationRejected: 'PC 保持此技能关闭，因为它无效、不可用或缺少声明的工具。',
   skillDeleteTitle: '删除技能？',
   skillDeleteBodyTemplate: '"{name}" 将被永久删除。',
   catSystemStatus: '系统状态',
@@ -3061,6 +3068,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   skillNewHint: 'スキル名',
   skillContentHint: 'スキルの指示（Markdown）…',
   skillSaved: 'スキルを保存しました',
+  skillActivationRejected: 'このスキルは無効、利用不可、または宣言されたツールが不足しているため、PC 側でオフのままです。',
   skillDeleteTitle: 'スキルを削除しますか？',
   skillDeleteBodyTemplate: '「{name}」は完全に削除されます。',
   catSystemStatus: 'システム状態',
@@ -3460,6 +3468,8 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   skillNewHint: 'Skill-Name',
   skillContentHint: 'Skill-Anweisungen (Markdown)…',
   skillSaved: 'Skill gespeichert',
+  skillActivationRejected:
+      'Der PC ließ diesen Skill deaktiviert, weil er ungültig oder nicht verfügbar ist oder ein deklariertes Tool fehlt.',
   skillDeleteTitle: 'Skill löschen?',
   skillDeleteBodyTemplate: '„{name}" wird dauerhaft gelöscht.',
   catSystemStatus: 'Systemstatus',
@@ -3860,6 +3870,8 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   skillNewHint: 'Nombre del skill',
   skillContentHint: 'Instrucciones del skill (Markdown)…',
   skillSaved: 'Skill guardado',
+  skillActivationRejected:
+      'El PC mantuvo este skill desactivado porque no es válido, no está disponible o le falta una herramienta declarada.',
   skillDeleteTitle: '¿Eliminar skill?',
   skillDeleteBodyTemplate: '«{name}» se eliminará permanentemente.',
   catSystemStatus: 'Estado del sistema',

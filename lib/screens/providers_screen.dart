@@ -9,6 +9,7 @@ import '../l10n.dart';
 import '../motion.dart';
 import '../nav.dart';
 import '../services/websocket_service.dart' as ws;
+import '../skill_activation_guard.dart';
 import '../theme.dart';
 import '../widgets/model_selector_sheet.dart';
 
@@ -4808,6 +4809,7 @@ class _PersonalityScreen extends StatefulWidget {
 class _PersonalityScreenState extends State<_PersonalityScreen> {
   final TextEditingController _personalityCtrl = TextEditingController();
   late List<ws.ConfigSkill> _skills;
+  late final SkillActivationGuard _skillActivationGuard;
   int _tab = 0;
   bool _personalityDirty = false;
   bool _applyingRemotePersonality = false;
@@ -4820,6 +4822,9 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
     _personalityCtrl.text = widget.config.personality;
     _personalityCtrl.addListener(_onPersonalityEdited);
     _skills = List<ws.ConfigSkill>.from(widget.config.skills);
+    _skillActivationGuard = SkillActivationGuard(
+      initialRevision: _skillStateRevision(widget.config),
+    );
     _configSub = widget.wsService.configStream.listen((data) {
       if (!mounted) return;
       if (_pendingPersonalitySave == data.personality &&
@@ -4832,8 +4837,54 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
         _personalityCtrl.text = data.personality;
         _applyingRemotePersonality = false;
       }
-      setState(() => _skills = data.skills);
+      final revision = _skillStateRevision(data);
+      if (_skillActivationGuard.acceptSnapshot(revision)) {
+        final requested = _requestedSkillStates(data);
+        var activationRejected = false;
+        final reconciled = <ws.ConfigSkill>[
+          for (final skill in data.skills)
+            () {
+              final decision = _skillActivationGuard.reconcile(
+                name: skill.name,
+                requested: requested[skill.name] ?? true,
+                effective: skill.enabled,
+              );
+              activationRejected = activationRejected || decision.rejected;
+              return ws.ConfigSkill(
+                name: skill.name,
+                enabled: decision.enabled,
+                text: skill.text,
+              );
+            }(),
+        ];
+        _skillActivationGuard.retainSkills(
+          reconciled.map((skill) => skill.name),
+        );
+        setState(() => _skills = reconciled);
+        if (activationRejected) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(OsiaL10n.of(context).skillActivationRejected),
+            ),
+          );
+        }
+      }
     });
+  }
+
+  static int _skillStateRevision(ws.ConfigData data) {
+    final raw = data.settings['skills_state_revision'];
+    return raw is int && raw >= 0 ? raw : 0;
+  }
+
+  static Map<String, bool> _requestedSkillStates(ws.ConfigData data) {
+    final raw = data.settings['skills_enabled'];
+    if (raw is! Map) return const <String, bool>{};
+    return <String, bool>{
+      for (final entry in raw.entries)
+        if (entry.key.toString().isNotEmpty)
+          entry.key.toString(): entry.value == true,
+    };
   }
 
   void _onPersonalityEdited() {
@@ -4863,6 +4914,7 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
   }
 
   void _toggleSkill(ws.ConfigSkill skill, bool value) {
+    _skillActivationGuard.begin(skill.name, value);
     setState(() {
       _skills = [
         for (final s in _skills)
@@ -4872,6 +4924,7 @@ class _PersonalityScreenState extends State<_PersonalityScreen> {
       ];
     });
     widget.wsService.sendSetSkill(skill.name, enabled: value);
+    widget.wsService.sendGetConfig();
   }
 
   Future<void> _editSkill(ws.ConfigSkill skill) async {
