@@ -102,7 +102,10 @@ EXPECTED_OSIA_ALLOWLISTS = {
         ("tools/test_memory_store.py", "pem-private-key"),
         ("tools/test_mobile_model_catalogue.py", "high-entropy-credential"),
     },
-    "mobile": set(),
+    "mobile": {
+        ("codemagic.yaml", "personal-local-path"),
+        ("test/wor193_deletion_confirmation_test.dart", "personal-local-path"),
+    },
     "worker": set(),
     "site": set(),
 }

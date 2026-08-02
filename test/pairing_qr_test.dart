@@ -11,7 +11,7 @@ import 'package:osia_mobile/screens/pairing_scanner_screen.dart';
 import 'package:osia_mobile/services/storage_service.dart';
 import 'package:osia_mobile/theme.dart';
 
-const _currentToken = '0123456789abcdefabcd';
+const _currentToken = '00000000000000000000';
 
 String _repeat(String value, int count) => List.filled(count, value).join();
 

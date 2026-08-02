@@ -154,8 +154,12 @@ USER_DATA_NAME_RE = re.compile(
     r"pairing_record|oauth_token|api_keys?)(?:[._-]|$)"
 )
 
-# No built-in exceptions are needed in this repository.
-OSIA_ALLOWLIST: set[tuple[str, str]] = set()
+# Exact path+rule exceptions for a public CI builder path and synthetic test data.
+# They are regression-tested; structured provider rules remain active everywhere.
+OSIA_ALLOWLIST: set[tuple[str, str]] = {
+    ("codemagic.yaml", "personal-local-path"),
+    ("test/wor193_deletion_confirmation_test.dart", "personal-local-path"),
+}
 
 
 @dataclass(frozen=True, order=True)
