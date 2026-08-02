@@ -34,6 +34,57 @@ enum _TurnPhase {
   streaming,
 }
 
+/// Monotonic operation-identity guard for canonical conversation snapshots.
+/// The PC store is append-only for messages, so a shorter or divergent history
+/// received after a newer one is stale and must never replace the UI.
+class CanonicalHistoryLedger {
+  final Map<String, List<String>> _known = <String, List<String>>{};
+
+  bool accept(
+    String conversationId,
+    List<ws.HistoryMessage> messages, {
+    bool allowEquivalent = false,
+  }) {
+    if (conversationId.isEmpty) return true;
+    final incoming = messages
+        .map(
+          (message) => message.messageId.isNotEmpty
+              ? 'id:${message.messageId}'
+              : 'legacy:${message.role}\u0000${message.content}',
+        )
+        .toList(growable: false);
+    final known = _known[conversationId];
+    if (known == null) {
+      _known[conversationId] = incoming;
+      return true;
+    }
+
+    final shared = known.length < incoming.length
+        ? known.length
+        : incoming.length;
+    for (var index = 0; index < shared; index++) {
+      if (known[index] != incoming[index]) return false;
+    }
+    if (incoming.length < known.length) return false;
+    if (incoming.length == known.length) return allowEquivalent;
+    _known[conversationId] = incoming;
+    return true;
+  }
+
+  void forget(String conversationId) => _known.remove(conversationId);
+}
+
+ws.Conversation? canonicalConversationForActiveId(
+  List<ws.Conversation> conversations,
+  String? activeId,
+) {
+  if (activeId == null) return null;
+  for (final conversation in conversations) {
+    if (conversation.id == activeId) return conversation;
+  }
+  return null;
+}
+
 SnackBar buildMicrophonePermissionDeniedSnackBar({
   required OsiaStrings strings,
   required VoidCallback onOpenSettings,
@@ -172,6 +223,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // (see [ConversationHistoryMessage]), and on new/delete/settings. Voice turns
   // store their STT transcript here when it arrives.
   final Map<String, String> _optimisticUser = {};
+  final CanonicalHistoryLedger _canonicalHistory = CanonicalHistoryLedger();
   // A turn sent on a brand-new conversation that has no id yet. Migrated into
   // [_optimisticUser] under the real id once the server assigns one (see the
   // ActiveConversationMessage handler).
@@ -712,7 +764,34 @@ class _ChatScreenState extends State<ChatScreen> {
           _noResponse = false;
         });
       case ws.ConversationsMessage(:final conversations):
-        setState(() => _conversations = conversations);
+        final activeId = _activeConversationId;
+        final active = canonicalConversationForActiveId(
+          conversations,
+          activeId,
+        );
+        final activeWasDeleted = activeId != null && active == null;
+        if (activeWasDeleted) {
+          _canonicalHistory.forget(activeId);
+          _cancelPendingConvLoad();
+          _cancelFirstTokenTimer();
+          _stopRecoveryPoll();
+          _stopTypewriter();
+          _optimisticUser.remove(activeId);
+          _pendingTurn = null;
+        }
+        setState(() {
+          _conversations = conversations;
+          if (activeWasDeleted) {
+            _entries.clear();
+            _activeConversationId = null;
+            _activeConversationTitle = null;
+            _thinking = false;
+            _noResponse = false;
+            _streamingIndex = null;
+          } else if (active != null) {
+            _activeConversationTitle = active.title;
+          }
+        });
       case ws.ActiveConversationMessage(:final id, :final title):
         // Defensive mirror of the conversation_history guard below: an inbound
         // active_conversation must never silently repoint the view off the
@@ -777,6 +856,15 @@ class _ChatScreenState extends State<ChatScreen> {
           return;
         }
         final effectiveConvId = hasId ? id : viewing;
+        if (effectiveConvId != null &&
+            effectiveConvId.isNotEmpty &&
+            !_canonicalHistory.accept(
+              effectiveConvId,
+              messages,
+              allowEquivalent: pendingId == effectiveConvId,
+            )) {
+          return;
+        }
         // Reply present == the history ENDS IN AN ASSISTANT message. Use the
         // exact 'assistant' role (not "anything but user"): a turn mid-tool-call
         // can end in a 'tool'/'system' entry while the real reply isn't persisted
@@ -1751,6 +1839,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (confirmed != true) return;
 
     _wsService.sendDeleteConversation(conv.id);
+    _canonicalHistory.forget(conv.id);
     if (_pendingConvLoadId == conv.id) _cancelPendingConvLoad();
     // Feature 1: the conversation is gone — drop its optimistic user message.
     _optimisticUser.remove(conv.id);
