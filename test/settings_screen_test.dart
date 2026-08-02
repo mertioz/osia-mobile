@@ -276,6 +276,26 @@ void main() {
     },
   );
 
+  testWidgets(
+    'permissions remains one compact Settings entry and opens its screen',
+    (tester) async {
+      await pumpSettings(tester);
+      final entry = find.byKey(const Key('settings-permissions-entry'));
+      await tester.scrollUntilVisible(
+        entry,
+        260,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(entry, findsOneWidget);
+      expect(find.byKey(const Key('permissions-screen')), findsNothing);
+      expect(find.byKey(const Key('permission-history')), findsNothing);
+
+      await tester.tap(entry);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('permissions-screen')), findsOneWidget);
+    },
+  );
+
   testWidgets('shows notification toggle in the requested Settings order', (
     tester,
   ) async {

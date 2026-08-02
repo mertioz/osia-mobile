@@ -4131,8 +4131,153 @@ extension PermissionOsiaStrings on OsiaStrings {
     'Vollzugriff',
     'Acceso total',
   );
-  String get permissionMixedAccess =>
-      _permissionText('Mixed', 'Mixte', '混合', '混合', 'Gemischt', 'Mixto');
+  String get permissionMixedAccess => permissionCustomAccess;
+  String get permissionCustomAccess => _permissionText(
+    'Custom Access',
+    'Accès personnalisé',
+    '自定义访问',
+    'カスタムアクセス',
+    'Benutzerdefinierter Zugriff',
+    'Acceso personalizado',
+  );
+  String get permissionAskEachTime => _permissionText(
+    'Ask every time',
+    'Demander à chaque fois',
+    '每次询问',
+    '毎回確認',
+    'Jedes Mal fragen',
+    'Preguntar cada vez',
+  );
+  String get permissionPcOffline => _permissionText(
+    'PC offline',
+    'PC hors ligne',
+    '电脑离线',
+    'PC はオフラインです',
+    'PC offline',
+    'PC sin conexión',
+  );
+  String get permissionPcConfirmationRequired => _permissionText(
+    'Confirmation required on the PC',
+    'Confirmation requise sur le PC',
+    '需要在电脑上确认',
+    'PC での確認が必要です',
+    'Bestätigung am PC erforderlich',
+    'Se requiere confirmación en el PC',
+  );
+  String get permissionSyncError => _permissionText(
+    'Permission sync unavailable',
+    'Synchronisation des autorisations indisponible',
+    '权限同步不可用',
+    '権限を同期できません',
+    'Berechtigungssynchronisierung nicht verfügbar',
+    'Sincronización de permisos no disponible',
+  );
+  String get permissionCurrentMode => _permissionText(
+    'Current mode',
+    'Mode actuel',
+    '当前模式',
+    '現在のモード',
+    'Aktueller Modus',
+    'Modo actual',
+  );
+  String get permissionModes =>
+      _permissionText('Mode', 'Mode', '模式', 'モード', 'Modus', 'Modo');
+  String get permissionCategories => _permissionText(
+    'Categories',
+    'Catégories',
+    '类别',
+    'カテゴリー',
+    'Kategorien',
+    'Categorías',
+  );
+  String get permissionDefaultDescription => _permissionText(
+    'OSIA asks before sensitive actions.',
+    'OSIA demande avant les actions sensibles.',
+    'OSIA 会在敏感操作前询问。',
+    'OSIA は重要な操作の前に確認します。',
+    'OSIA fragt vor sensiblen Aktionen nach.',
+    'OSIA pregunta antes de acciones sensibles.',
+  );
+  String get permissionCustomDescription => _permissionText(
+    'Choose which ordinary actions can run automatically.',
+    'Choisissez les actions ordinaires exécutables automatiquement.',
+    '选择可自动执行的常规操作。',
+    '自動実行できる通常操作を選択します。',
+    'Wählen Sie automatisch erlaubte normale Aktionen.',
+    'Elige qué acciones ordinarias pueden ejecutarse automáticamente.',
+  );
+  String get permissionFullDescription => _permissionText(
+    'Requires the existing local PC confirmation.',
+    'Nécessite la confirmation locale existante sur le PC.',
+    '需要在电脑上完成本地确认。',
+    'PC で既存のローカル確認が必要です。',
+    'Erfordert die bestehende lokale PC-Bestätigung.',
+    'Requiere la confirmación local existente en el PC.',
+  );
+  String get permissionChooseCategories => _permissionText(
+    'Adjust a category below to create Custom Access.',
+    'Modifiez une catégorie ci-dessous pour créer un Accès personnalisé.',
+    '在下方调整类别以创建自定义访问。',
+    '下のカテゴリーを変更してカスタムアクセスを作成します。',
+    'Passen Sie unten eine Kategorie für benutzerdefinierten Zugriff an.',
+    'Ajusta una categoría para crear Acceso personalizado.',
+  );
+  String get permissionContractIncompatible => _permissionText(
+    'Update OSIA on your PC to manage permissions here.',
+    'Mettez OSIA à jour sur votre PC pour gérer les autorisations ici.',
+    '请更新电脑上的 OSIA 以在此管理权限。',
+    'ここで権限を管理するには PC の OSIA を更新してください。',
+    'Aktualisieren Sie OSIA auf dem PC, um Berechtigungen hier zu verwalten.',
+    'Actualiza OSIA en el PC para gestionar aquí los permisos.',
+  );
+  String get permissionRequestTimedOut => _permissionText(
+    'The confirmed PC state was restored.',
+    'Le dernier état confirmé du PC a été restauré.',
+    '已恢复电脑上最后确认的状态。',
+    'PC で最後に確認された状態に戻しました。',
+    'Der zuletzt bestätigte PC-Stand wurde wiederhergestellt.',
+    'Se restauró el último estado confirmado del PC.',
+  );
+  String get permissionConfirmAction => _permissionText(
+    'Confirm',
+    'Confirmer',
+    '确认',
+    '確認',
+    'Bestätigen',
+    'Confirmar',
+  );
+  String get permissionRevokeAllTemporary => _permissionText(
+    'Revoke all temporary permissions',
+    'Révoquer toutes les autorisations temporaires',
+    '撤销所有临时权限',
+    '一時的な権限をすべて取り消す',
+    'Alle temporären Berechtigungen widerrufen',
+    'Revocar todos los permisos temporales',
+  );
+  String get permissionRevokeConfirmation => _permissionText(
+    'This removes the selected temporary permission immediately.',
+    'Cette action révoque immédiatement l’autorisation temporaire sélectionnée.',
+    '这会立即撤销所选临时权限。',
+    '選択した一時権限を直ちに取り消します。',
+    'Dies widerruft die ausgewählte temporäre Berechtigung sofort.',
+    'Esto revoca inmediatamente el permiso temporal seleccionado.',
+  );
+  String get permissionRevokeAllConfirmation => _permissionText(
+    'This removes every active temporary permission.',
+    'Cette action révoque toutes les autorisations temporaires actives.',
+    '这会撤销所有有效的临时权限。',
+    '有効な一時権限をすべて取り消します。',
+    'Dies widerruft alle aktiven temporären Berechtigungen.',
+    'Esto revoca todos los permisos temporales activos.',
+  );
+  String get permissionDisableFullConfirmation => _permissionText(
+    'Full Access will be disabled immediately.',
+    'L’Accès complet sera désactivé immédiatement.',
+    '完全访问将立即停用。',
+    'フルアクセスは直ちに無効になります。',
+    'Vollzugriff wird sofort deaktiviert.',
+    'El Acceso total se desactivará inmediatamente.',
+  );
   String get permissionPcEnableOnly => _permissionText(
     'Full Access can only be enabled on your PC.',
     'L’Accès complet peut uniquement être activé sur votre PC.',
@@ -4339,6 +4484,105 @@ extension PermissionOsiaStrings on OsiaStrings {
       'Sensible Aktionen',
       'Acciones sensibles',
     ),
+  };
+
+  String permissionContractText(String key) => switch (key) {
+    'permissions.category.files_modify' => permissionCategoryLabel(
+      'files_modify',
+    ),
+    'permissions.category.files_delete' => permissionCategoryLabel(
+      'files_delete',
+    ),
+    'permissions.category.commands' => permissionCategoryLabel('commands'),
+    'permissions.category.browser_account' => permissionCategoryLabel(
+      'browser_account',
+    ),
+    'permissions.category.connectors' => permissionCategoryLabel('connectors'),
+    'permissions.category.send_publish_submit' => permissionCategoryLabel(
+      'send_publish_submit',
+    ),
+    'permissions.category.purchases_payments' => permissionCategoryLabel(
+      'purchases_payments',
+    ),
+    'permissions.category.autonomous_actions' => permissionCategoryLabel(
+      'autonomous_actions',
+    ),
+    'permissions.category.scheduled_actions' => permissionCategoryLabel(
+      'scheduled_actions',
+    ),
+    'permissions.switch.files_modify' => _permissionText(
+      'Create or edit files without asking each time.',
+      'Créer ou modifier des fichiers sans demander à chaque fois.',
+      '无需每次询问即可创建或编辑文件。',
+      '毎回確認せずにファイルを作成・編集します。',
+      'Dateien ohne jedes Mal zu fragen erstellen oder ändern.',
+      'Crear o editar archivos sin preguntar cada vez.',
+    ),
+    'permissions.switch.files_delete' => _permissionText(
+      'Delete ordinary files without asking each time.',
+      'Supprimer des fichiers ordinaires sans demander à chaque fois.',
+      '无需每次询问即可删除普通文件。',
+      '毎回確認せずに通常のファイルを削除します。',
+      'Normale Dateien ohne jedes Mal zu fragen löschen.',
+      'Eliminar archivos ordinarios sin preguntar cada vez.',
+    ),
+    'permissions.switch.commands' => _permissionText(
+      'Run classified commands and scripts automatically.',
+      'Exécuter automatiquement les commandes et scripts classifiés.',
+      '自动运行已分类的命令和脚本。',
+      '分類済みのコマンドとスクリプトを自動実行します。',
+      'Klassifizierte Befehle und Skripte automatisch ausführen.',
+      'Ejecutar automáticamente comandos y scripts clasificados.',
+    ),
+    'permissions.switch.browser_account' => _permissionText(
+      'Allow ordinary browser and account actions.',
+      'Autoriser les actions ordinaires de navigateur et de compte.',
+      '允许常规浏览器和账户操作。',
+      '通常のブラウザーとアカウント操作を許可します。',
+      'Normale Browser- und Kontoaktionen erlauben.',
+      'Permitir acciones ordinarias del navegador y la cuenta.',
+    ),
+    'permissions.switch.connectors' => _permissionText(
+      'Use Gmail, MCP and connected services automatically.',
+      'Utiliser automatiquement Gmail, MCP et les services connectés.',
+      '自动使用 Gmail、MCP 和已连接服务。',
+      'Gmail、MCP、接続済みサービスを自動使用します。',
+      'Gmail, MCP und verbundene Dienste automatisch nutzen.',
+      'Usar automáticamente Gmail, MCP y servicios conectados.',
+    ),
+    'permissions.switch.send_publish_submit' => _permissionText(
+      'Allow ordinary sends, publications and submissions.',
+      'Autoriser les envois, publications et soumissions ordinaires.',
+      '允许常规发送、发布和提交。',
+      '通常の送信、公開、提出を許可します。',
+      'Normale Sendungen, Veröffentlichungen und Übermittlungen erlauben.',
+      'Permitir envíos, publicaciones y entregas ordinarias.',
+    ),
+    'permissions.switch.purchases_payments' => _permissionText(
+      'Apply the payment limits confirmed on the PC.',
+      'Appliquer les limites de paiement confirmées sur le PC.',
+      '应用在电脑上确认的付款限制。',
+      'PC で確認された支払い制限を適用します。',
+      'Die am PC bestätigten Zahlungslimits anwenden.',
+      'Aplicar los límites de pago confirmados en el PC.',
+    ),
+    'permissions.switch.autonomous_actions' => _permissionText(
+      'Allow ordinary actions in Autonomous runs.',
+      'Autoriser les actions ordinaires dans les exécutions autonomes.',
+      '允许自主运行中的常规操作。',
+      '自律実行での通常操作を許可します。',
+      'Normale Aktionen in autonomen Läufen erlauben.',
+      'Permitir acciones ordinarias en ejecuciones autónomas.',
+    ),
+    'permissions.switch.scheduled_actions' => _permissionText(
+      'Allow ordinary scheduled and background actions.',
+      'Autoriser les actions planifiées et en arrière-plan ordinaires.',
+      '允许常规计划任务和后台操作。',
+      '通常のスケジュール済み・バックグラウンド操作を許可します。',
+      'Normale geplante und Hintergrundaktionen erlauben.',
+      'Permitir acciones ordinarias programadas y en segundo plano.',
+    ),
+    _ => '',
   };
 
   String permissionActionLabel(String key) => switch (key) {

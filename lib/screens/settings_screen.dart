@@ -219,6 +219,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ).push(slideFadeRoute(MemoryScreen(wsService: widget.wsService)));
   }
 
+  void _openPermissions() {
+    Navigator.of(
+      context,
+    ).push(slideFadeRoute(PermissionsScreen(wsService: widget.wsService)));
+  }
+
   void _openGuide() {
     Navigator.of(context).push(
       slideFadeRoute(
@@ -433,7 +439,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 showHeader: false,
               ),
 
-              PermissionsSettingsSection(wsService: widget.wsService),
+              PermissionsSettingsEntry(
+                wsService: widget.wsService,
+                onTap: _openPermissions,
+              ),
 
               // ── Memory ───────────────────────────────────────────────
               const SizedBox(height: 18),
