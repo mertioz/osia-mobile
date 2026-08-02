@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
-
 import 'l10n.dart';
 import 'permission_contract.dart';
 import 'services/websocket_service.dart' as ws;
@@ -358,7 +357,7 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
       case _PermissionChangeKind.fullAccess:
         if (snapshot.fullAccessActive) {
           _finishPending(true);
-        } else if (snapshot.policyEpoch != pending.basePolicyEpoch) {
+        } else {
           _finishPending(false);
         }
     }
@@ -417,9 +416,7 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
     );
     setState(() => _pendingChange = pending);
     _pendingTimer?.cancel();
-    final pendingTimeout = kind == _PermissionChangeKind.fullAccess
-        ? const Duration(minutes: 2)
-        : widget.requestTimeout;
+    final pendingTimeout = widget.requestTimeout;
     _pendingTimer = Timer(pendingTimeout, () {
       if (mounted && _pendingChange?.requestId == requestId) {
         _finishPending(false, timedOut: true);
@@ -435,9 +432,18 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
       'operation': operation,
       'category_id': categoryId,
       'enabled': enabled,
+      'auth_method': kind == _PermissionChangeKind.fullAccess
+          ? 'osia_confirmation'
+          : '',
+      'auth_nonce': kind == _PermissionChangeKind.fullAccess
+          ? 'confirmation:${ws.WebSocketService.newClientRequestId()}'
+          : '',
       'expires_at':
           DateTime.now().millisecondsSinceEpoch / 1000.0 +
-          min(120, max(5, widget.requestTimeout.inSeconds)),
+          min(
+            kind == _PermissionChangeKind.fullAccess ? 20 : 120,
+            max(5, widget.requestTimeout.inSeconds),
+          ),
     });
   }
 
@@ -466,13 +472,17 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
   Future<void> _requestFullAccess() async {
     final strings = OsiaL10n.of(context);
     if (!_controlsEnabled || _snapshot?.fullAccessActive == true) return;
+    final sessionId = _snapshot!.sessionId;
     final confirmed = await _confirm(
       title: strings.permissionFullAccess,
-      body:
-          '${strings.permissionFullDescription}\n\n'
-          '${strings.permissionPcConfirmationRequired}',
+      body: strings.permissionFullWarning,
     );
-    if (confirmed) _submitChange(_PermissionChangeKind.fullAccess);
+    if (!confirmed || !mounted) return;
+    if (!_controlsEnabled || _snapshot?.sessionId != sessionId) {
+      _showResult(false);
+      return;
+    }
+    _submitChange(_PermissionChangeKind.fullAccess);
   }
 
   Future<void> _submitRevocation(
@@ -603,8 +613,8 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
               if (pendingFull) ...[
                 const SizedBox(height: 10),
                 _PendingRow(
-                  key: const Key('full-access-pending-pc'),
-                  label: strings.permissionPcConfirmationRequired,
+                  key: const Key('full-access-activation-pending'),
+                  label: strings.permissionFullActivationPending,
                   palette: palette,
                 ),
               ],

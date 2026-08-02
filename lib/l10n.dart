@@ -4207,12 +4207,28 @@ extension PermissionOsiaStrings on OsiaStrings {
     'Elige qué acciones ordinarias pueden ejecutarse automáticamente.',
   );
   String get permissionFullDescription => _permissionText(
-    'Requires the existing local PC confirmation.',
-    'Nécessite la confirmation locale existante sur le PC.',
-    '需要在电脑上完成本地确认。',
-    'PC で既存のローカル確認が必要です。',
-    'Erfordert die bestehende lokale PC-Bestätigung.',
-    'Requiere la confirmación local existente en el PC.',
+    'Confirm in OSIA, then wait for the confirmed PC state.',
+    'Confirmez dans OSIA, puis attendez l’état confirmé du PC.',
+    '在 OSIA 中确认，然后等待电脑确认状态。',
+    'OSIA で確認し、PC の確認済み状態を待ちます。',
+    'In OSIA bestätigen und den bestätigten PC-Stand abwarten.',
+    'Confirma en OSIA y espera el estado confirmado del PC.',
+  );
+  String get permissionFullWarning => _permissionText(
+    'Full Access lets OSIA perform ordinary actions without asking. Critical destruction protections remain active.',
+    'L’Accès complet permet à OSIA d’effectuer les actions ordinaires sans demander. Les protections critiques restent actives.',
+    '完全访问允许 OSIA 无需询问即可执行常规操作。关键破坏保护仍然有效。',
+    'フルアクセスでは OSIA が通常操作を確認なしで実行できます。重要な破壊保護は継続します。',
+    'Vollzugriff erlaubt OSIA normale Aktionen ohne Nachfrage. Kritische Schutzmechanismen bleiben aktiv.',
+    'El Acceso total permite acciones ordinarias sin preguntar. Las protecciones críticas siguen activas.',
+  );
+  String get permissionFullActivationPending => _permissionText(
+    'Activation… Waiting for the confirmed PC state.',
+    'Activation… En attente de l’état confirmé du PC.',
+    '正在启用… 正在等待电脑确认状态。',
+    '有効化中… PC の確認済み状態を待っています。',
+    'Aktivierung… Warten auf den bestätigten PC-Stand.',
+    'Activando… Esperando el estado confirmado del PC.',
   );
   String get permissionChooseCategories => _permissionText(
     'Adjust a category below to create Custom Access.',

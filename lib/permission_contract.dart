@@ -1,6 +1,6 @@
 import 'services/websocket_service.dart' as ws;
 
-const int permissionContractSchemaVersion = 1;
+const int permissionContractSchemaVersion = 2;
 
 bool _hasExactKeys(Map<Object?, Object?> value, Set<String> keys) =>
     value.length == keys.length && value.keys.every(keys.contains);
@@ -41,7 +41,7 @@ class PermissionContract {
         !_hasExactKeys(raw, topKeys) ||
         raw['schema_version'] != permissionContractSchemaVersion ||
         raw['custom_access'] != 'derived' ||
-        raw['full_access_activation'] != 'local_pc_ceremony' ||
+        raw['full_access_activation'] != 'mobile_osia_confirmation' ||
         raw['mobile_changes'] != 'canonical_requests') {
       return null;
     }

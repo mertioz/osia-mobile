@@ -6,9 +6,9 @@ import 'package:osia_mobile/services/websocket_service.dart' as ws;
 import 'package:osia_mobile/theme.dart';
 
 Map<String, dynamic> _contract() => <String, dynamic>{
-  'schema_version': 1,
+  'schema_version': 2,
   'custom_access': 'derived',
-  'full_access_activation': 'local_pc_ceremony',
+  'full_access_activation': 'mobile_osia_confirmation',
   'mobile_changes': 'canonical_requests',
   'categories': <Map<String, dynamic>>[
     for (final key in ws.permissionCategoryKeys)
@@ -313,7 +313,7 @@ void main() {
   );
 
   testWidgets(
-    'Full Access waits for the local PC ceremony and never claims success',
+    'Full Access confirmation sends once and waits for canonical PC success',
     (tester) async {
       final sent = <Map<String, dynamic>>[];
       final service = _service(sent);
@@ -326,28 +326,53 @@ void main() {
       await tester.tap(fullAccess);
       await tester.pump();
       expect(
-        find.textContaining('Confirmation required on the PC'),
+        find.textContaining('Critical destruction protections'),
         findsOneWidget,
       );
+      expect(find.textContaining('authentication'), findsNothing);
       await _confirm(tester);
+      await tester.pump();
       final envelope = sent.last['value'] as Map<String, dynamic>;
       expect(envelope['operation'], 'request_full_access');
+      expect(envelope['contract_schema_version'], 2);
+      expect(envelope['auth_method'], 'osia_confirmation');
+      expect(envelope['auth_nonce'], startsWith('confirmation:mobile-'));
+      final remainingLifetime =
+          (envelope['expires_at'] as num).toDouble() -
+          DateTime.now().millisecondsSinceEpoch / 1000.0;
+      expect(remainingLifetime, greaterThan(18));
+      expect(remainingLifetime, lessThanOrEqualTo(20));
       expect(service.permissionSnapshot!.fullAccessActive, isFalse);
-      expect(find.byKey(const Key('full-access-pending-pc')), findsOneWidget);
+      expect(
+        find.byKey(const Key('full-access-activation-pending')),
+        findsOneWidget,
+      );
       expect(find.text('Confirmed by your PC.'), findsNothing);
 
       service.handleIncomingFrameForTest(
         _snapshot(service, sequence: 2, epoch: 3),
       );
       await tester.pump();
-      expect(find.byKey(const Key('full-access-pending-pc')), findsOneWidget);
+      expect(
+        find.byKey(const Key('full-access-activation-pending')),
+        findsNothing,
+      );
+      expect(find.text('The PC did not apply that change.'), findsOneWidget);
+
+      await tester.tap(fullAccess);
+      await tester.pump();
+      await _confirm(tester);
+      await tester.pump();
 
       service.handleIncomingFrameForTest(
         _snapshot(service, sequence: 3, epoch: 4, fullAccess: true),
       );
       await tester.pump();
       expect(service.permissionSnapshot!.fullAccessActive, isTrue);
-      expect(find.byKey(const Key('full-access-pending-pc')), findsNothing);
+      expect(
+        find.byKey(const Key('full-access-activation-pending')),
+        findsNothing,
+      );
       expect(find.text('Confirmed by your PC.'), findsOneWidget);
     },
   );
@@ -409,6 +434,60 @@ void main() {
       );
       await tester.pump();
       expect(service.permissionSnapshot!.temporaryPermissions, isEmpty);
+    },
+  );
+
+  testWidgets('Full Access OSIA confirmation cancellation sends no request', (
+    tester,
+  ) async {
+    final sent = <Map<String, dynamic>>[];
+    final service = _service(sent);
+    addTearDown(service.dispose);
+    service.handleIncomingFrameForTest(_snapshot(service));
+    await _pumpScreen(tester, service);
+
+    int activationRequests() => sent.where((frame) {
+      if (frame['type'] != 'set_setting') return false;
+      final value = frame['value'];
+      return value is Map && value['operation'] == 'request_full_access';
+    }).length;
+
+    final fullAccess = find.byKey(const Key('mode-full-access'));
+    await tester.ensureVisible(fullAccess);
+    await tester.tap(fullAccess);
+    await tester.pump();
+    await tester.tap(find.text('Cancel'));
+    await tester.pump();
+    expect(activationRequests(), 0);
+    expect(service.permissionSnapshot!.fullAccessActive, isFalse);
+  });
+
+  testWidgets(
+    'disconnect while OSIA confirmation is open sends no request and fails closed',
+    (tester) async {
+      final sent = <Map<String, dynamic>>[];
+      final service = _service(sent);
+      addTearDown(service.dispose);
+      service.handleIncomingFrameForTest(_snapshot(service));
+      await _pumpScreen(tester, service);
+
+      final fullAccess = find.byKey(const Key('mode-full-access'));
+      await tester.ensureVisible(fullAccess);
+      await tester.tap(fullAccess);
+      await tester.pump();
+      service.setPermissionConnectionForTest(false);
+      await tester.pump();
+      await _confirm(tester);
+      await tester.pump();
+
+      final activationRequests = sent.where((frame) {
+        if (frame['type'] != 'set_setting') return false;
+        final value = frame['value'];
+        return value is Map && value['operation'] == 'request_full_access';
+      });
+      expect(activationRequests, isEmpty);
+      expect(service.permissionSnapshot!.fullAccessActive, isFalse);
+      expect(find.text('PC offline'), findsOneWidget);
     },
   );
 
