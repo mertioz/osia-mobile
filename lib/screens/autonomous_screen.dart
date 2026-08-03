@@ -57,6 +57,11 @@ enum _RunPhase {
 }
 
 @visibleForTesting
+bool shouldShowAutonomousBrowserProgress(ws.BrowserProgressMessage? progress) {
+  return progress != null && progress.phase != 'snapshot';
+}
+
+@visibleForTesting
 bool sameAutonomousModelIdentity(ws.OsiaModel? left, ws.OsiaModel? right) {
   if (left == null || right == null) return left == right;
   return (left.provider ?? '').trim().toLowerCase() ==
@@ -1186,7 +1191,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                 ),
               ),
 
-              if (_browserProgress != null) ...[
+              if (shouldShowAutonomousBrowserProgress(_browserProgress)) ...[
                 const SizedBox(height: 16),
                 _buildBrowserProgressCard(palette, strings),
               ],

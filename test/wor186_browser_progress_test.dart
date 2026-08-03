@@ -81,6 +81,32 @@ ws.WebSocketService _service({List<Map<String, dynamic>>? sent}) =>
     );
 
 void main() {
+  test('WOR-223 hides only typed browser snapshot cards', () {
+    final service = _service();
+    addTearDown(service.dispose);
+    final snapshot = ws.BrowserProgressMessage.tryParse(
+      _browserFrame(
+        service,
+        phase: 'snapshot',
+        text: 'Browser state refreshed',
+      ),
+    );
+    final meaningful = ws.BrowserProgressMessage.tryParse(
+      _browserFrame(
+        service,
+        eventId: 'browser-event:meaningful',
+        phase: 'waiting',
+        text: 'Waiting for the download',
+      ),
+    );
+
+    expect(snapshot, isNotNull);
+    expect(shouldShowAutonomousBrowserProgress(snapshot), isFalse);
+    expect(meaningful, isNotNull);
+    expect(shouldShowAutonomousBrowserProgress(meaningful), isTrue);
+    expect(shouldShowAutonomousBrowserProgress(null), isFalse);
+  });
+
   test(
     'autonomous final answer is accepted only on bounded done terminal',
     () async {
