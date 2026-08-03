@@ -1635,6 +1635,8 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     final latest = _latest;
     final objective = (latest?.objective ?? '').trim();
     final phaseName = (latest?.phaseName ?? '').trim();
+    final runProvider = (latest?.provider ?? '').trim();
+    final runModel = (latest?.model ?? '').trim();
     final errorCategory = latest?.errorCategory;
     final diagnosticMessage = errorCategory == null
         ? ''
@@ -1687,6 +1689,15 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                 height: 1.4,
                 color: palette.textPrimary,
               ),
+            ),
+          ],
+          if (runProvider.isNotEmpty && runModel.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _MetaRow(
+              key: const ValueKey('autonomous-run-model'),
+              label: strings.model,
+              value: '$runProvider — $runModel',
+              palette: palette,
             ),
           ],
           if (_runPhase != _RunPhase.failed &&
@@ -1987,6 +1998,7 @@ class _MetaRow extends StatelessWidget {
   final OsiaPalette palette;
   final bool valueOnly;
   const _MetaRow({
+    super.key,
     required this.label,
     required this.value,
     required this.palette,

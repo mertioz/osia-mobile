@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:osia_mobile/l10n.dart';
@@ -10,6 +12,14 @@ class _RecordingService extends ws.WebSocketService {
     : super(ip: '127.0.0.1', token: 'test', autoReconnect: false);
 
   final starts = <(String, String)>[];
+  final StreamController<ws.AutonomousProgressMessage> _autonomous =
+      StreamController<ws.AutonomousProgressMessage>.broadcast();
+
+  @override
+  Stream<ws.AutonomousProgressMessage> get autonomousStream =>
+      _autonomous.stream;
+
+  void emit(ws.AutonomousProgressMessage message) => _autonomous.add(message);
 
   @override
   void sendGetConfig() {}
@@ -23,6 +33,12 @@ class _RecordingService extends ws.WebSocketService {
   @override
   void sendAutonomousStart(String objective, String model) {
     starts.add((objective, model));
+  }
+
+  @override
+  void dispose() {
+    _autonomous.close();
+    super.dispose();
   }
 }
 
@@ -183,4 +199,98 @@ void main() {
     await tester.pump();
     expect(service.starts, [('Harmless objective', 'deepseek:shared')]);
   });
+
+  testWidgets(
+    'active chat-inherited run displays its pair without changing manual selection',
+    (tester) async {
+      final service = _RecordingService();
+      addTearDown(service.dispose);
+      await tester.pumpWidget(_app(service));
+      service.handleIncomingFrameForTest(
+        _catalogueFrame(
+          current: 'shared',
+          currentProvider: 'deepseek',
+          providers: const [
+            {
+              'providerId': 'deepseek',
+              'displayName': 'DeepSeek',
+              'models': [
+                {
+                  'id': 'shared',
+                  'displayName': 'DeepSeek Shared',
+                  'providerId': 'deepseek',
+                },
+              ],
+            },
+            {
+              'providerId': 'chatgpt_account',
+              'displayName': 'ChatGPT',
+              'models': [
+                {
+                  'id': 'gpt-5.6-luna',
+                  'displayName': 'GPT-5.6 Luna',
+                  'providerId': 'chatgpt_account',
+                },
+              ],
+            },
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      Map<String, dynamic> progress({
+        required int sequence,
+        required String event,
+        required bool terminal,
+      }) => {
+        'type': 'autonomous_progress',
+        'schema_version': 1,
+        'event_id': 'wor224-event-$sequence',
+        'sequence': sequence,
+        'server_id': service.expectedPermissionServerIdForTest,
+        'session_id': 'wor224-session',
+        'run_id': 'wor224-run',
+        'plan_revision': 1,
+        'authorization_revision': 1,
+        'event': event,
+        'terminal': terminal,
+        'tasks_done': terminal ? 1 : 0,
+        'tasks_total': 1,
+        'provider': 'chatgpt_account',
+        'model': 'gpt-5.6-luna',
+      };
+
+      service.emit(
+        ws.AutonomousProgressMessage.fromJson(
+          progress(sequence: 1, event: 'running', terminal: false),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+      final runModel = find.byKey(
+        const ValueKey('autonomous-run-model'),
+      );
+      expect(runModel, findsOneWidget);
+      final modelText = tester.widget<RichText>(
+        find.descendant(of: runModel, matching: find.byType(RichText)),
+      );
+      expect(
+        modelText.text.toPlainText(),
+        contains('chatgpt_account — gpt-5.6-luna'),
+      );
+
+      service.emit(
+        ws.AutonomousProgressMessage.fromJson(
+          progress(sequence: 2, event: 'done', terminal: true),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+      await tester.enterText(find.byType(TextField), 'Manual objective');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Start'));
+      await tester.pump();
+      expect(service.starts, [('Manual objective', 'deepseek:shared')]);
+    },
+  );
 }
