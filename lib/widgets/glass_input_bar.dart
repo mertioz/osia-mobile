@@ -38,6 +38,8 @@ class GlassInputBar extends StatelessWidget {
   /// manual-tap-to-focus behaviour is unchanged either way. Additive only.
   final FocusNode? focusNode;
   final bool enabled;
+  final String? hintText;
+  final bool auxiliaryControlsEnabled;
   final bool isRecording;
   final bool hasText;
   final VoidCallback onSend;
@@ -66,6 +68,8 @@ class GlassInputBar extends StatelessWidget {
     required this.textController,
     this.focusNode,
     this.enabled = true,
+    this.hintText,
+    this.auxiliaryControlsEnabled = true,
     required this.isRecording,
     required this.hasText,
     required this.onSend,
@@ -186,7 +190,7 @@ class GlassInputBar extends StatelessWidget {
                       horizontal: 8,
                       vertical: 12,
                     ),
-                    hintText: strings.messageHint,
+                    hintText: hintText ?? strings.messageHint,
                     hintStyle: TextStyle(
                       color: palette.textMuted,
                       fontSize: 15,
@@ -205,20 +209,26 @@ class GlassInputBar extends StatelessWidget {
                 children: [
                   _GlassIconButton(
                     icon: Icons.add_rounded,
-                    onTap: enabled && !attachmentBusy ? onAttach : null,
+                    onTap:
+                        enabled && auxiliaryControlsEnabled && !attachmentBusy
+                        ? onAttach
+                        : null,
                     tooltip: strings.attachFile,
                   ),
                   const SizedBox(width: 2),
                   Expanded(
                     child: Align(
                       alignment: Alignment.centerLeft,
-                      child: _ModelPill(label: modelLabel, onTap: onModelTap),
+                      child: _ModelPill(
+                        label: modelLabel,
+                        onTap: auxiliaryControlsEnabled ? onModelTap : null,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 4),
                   _GlassMicButton(
                     isRecording: isRecording,
-                    enabled: enabled,
+                    enabled: enabled && auxiliaryControlsEnabled,
                     onTap: onMicTap,
                   ),
                   const SizedBox(width: 6),
@@ -237,7 +247,7 @@ class GlassInputBar extends StatelessWidget {
 /// selector sheet; the label cross-fades when the selection changes.
 class _ModelPill extends StatelessWidget {
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   const _ModelPill({required this.label, required this.onTap});
 
   @override

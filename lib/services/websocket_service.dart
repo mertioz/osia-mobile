@@ -2856,6 +2856,11 @@ class WebSocketService {
   /// and stream hydration, while busy gates new sends for the same conversation.
   final Set<String> _busyConvs = {};
 
+  /// Suspended durable tool turns that accept only bounded waiting commands.
+  /// The value is the last additive `turn_status`; it is never persisted and
+  /// is cleared only by the canonical terminal for that same conversation.
+  final Map<String, String> _waitingTurnStatusByConv = <String, String>{};
+
   /// Active client_request_id by conversation. This lets a retry of the SAME
   /// request reattach while a genuinely new request stays blocked by busy.
   final Map<String, String> _activeRequestByConv = {};
@@ -3051,6 +3056,21 @@ class WebSocketService {
   /// (WOR-103).
   bool isConversationBusy(String id) => _busyConvs.contains(id);
 
+  static const Set<String> _waitingTurnStatuses = <String>{
+    'waiting_tool_result',
+    'waiting_verification',
+    'verifying',
+    'resuming',
+    'action_in_progress',
+    'action_running',
+    'cancellation_requested',
+  };
+
+  bool isConversationWaiting(String id) =>
+      _waitingTurnStatusByConv.containsKey(id);
+
+  String waitingTurnStatus(String id) => _waitingTurnStatusByConv[id] ?? '';
+
   static String newClientRequestId() {
     final random = Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));
@@ -3109,6 +3129,7 @@ class WebSocketService {
     _turnByRequest.clear();
     _unboundRequestIds.clear();
     _pendingConvs.clear();
+    _waitingTurnStatusByConv.clear();
     _mediaByConversation.clear();
     for (final conversationId in _busyConvs.toList()) {
       _setConversationBusy(conversationId, false);
@@ -3167,7 +3188,9 @@ class WebSocketService {
         _unboundRequestIds.contains(requestId) ||
         _acceptedRequests.contains(requestId) ||
         media?.requestId == requestId;
-    if (!ownsRequest) {
+    final recoveredBinding =
+        json['recovered'] == true && type == 'turn_accepted';
+    if (!ownsRequest && !recoveredBinding) {
       debugPrint('[OSIA WS] rejected unowned canonical event type=$type');
       return false;
     }
@@ -3339,6 +3362,7 @@ class WebSocketService {
         turnId: turnId,
       );
     } else {
+      _waitingTurnStatusByConv.remove(id);
       _setConversationBusy(id, false, clientRequestId: reqId, turnId: turnId);
     }
   }
@@ -3376,6 +3400,7 @@ class WebSocketService {
         )) {
           return;
         }
+        _waitingTurnStatusByConv.remove(id);
         _markDocumentCanonicalTerminal('chat', turnId);
         _finishConvStream(
           id,
@@ -3399,6 +3424,9 @@ class WebSocketService {
         if (reqId.isNotEmpty) _acceptedRequests.add(reqId);
         _rememberRequest(id, reqId);
         _pendingConvs.add(id);
+        if (_waitingTurnStatuses.contains(status)) {
+          _waitingTurnStatusByConv[id] = status;
+        }
         _setConversationBusy(id, true, clientRequestId: reqId, turnId: turnId);
       }
     } else if (reqId.isNotEmpty) {
@@ -3545,6 +3573,7 @@ class WebSocketService {
   void clearPending(String id) {
     if (id.isEmpty) return;
     final removed = _pendingConvs.remove(id);
+    _waitingTurnStatusByConv.remove(id);
     if (kOsiaDebugPlaceholder) {
       debugPrint(
         '[OSIA WOR-75] clearPending removed=$removed → '
@@ -3862,6 +3891,36 @@ class WebSocketService {
       if (id.isNotEmpty) _setConversationBusy(id, true);
     }
     return sent;
+  }
+
+  /// Send one bounded control command for the already-suspended turn.
+  ///
+  /// It intentionally does not replace the active turn correlation or mark a
+  /// new local turn pending. The existing `text` message name is preserved;
+  /// the additive flag only prevents a terminal-race command from becoming a
+  /// new provider turn on the PC.
+  bool sendWaitingTurnCommand(
+    String content, {
+    required String conversationId,
+  }) {
+    final command = content.trim();
+    if (conversationId.isEmpty ||
+        command.isEmpty ||
+        command.length > 160 ||
+        !isConversationWaiting(conversationId)) {
+      return false;
+    }
+    final requestId = newClientRequestId();
+    return _send({
+      'type': 'text',
+      'content': command,
+      'conversation_id': conversationId,
+      'request_id': requestId,
+      'client_request_id': requestId,
+      'waiting_turn_command': true,
+      'tts_enabled': false,
+      if (_clientLocale.isNotEmpty) 'locale': _clientLocale,
+    });
   }
 
   /// Accept one already-committed attachment batch as a normal text turn.
@@ -4683,6 +4742,7 @@ class WebSocketService {
     _streamBuffers.clear();
     _pendingConvs.clear();
     _busyConvs.clear();
+    _waitingTurnStatusByConv.clear();
     _activeRequestByConv.clear();
     _activeConvByRequest.clear();
     _acceptedRequests.clear();
@@ -5671,6 +5731,7 @@ class WebSocketService {
     final st = _streamBuffers[convId];
     if (st != null) st.streaming = false;
     _pendingConvs.remove(convId); // WOR-75/WOR-53/WOR-62: turn finished.
+    _waitingTurnStatusByConv.remove(convId);
     if (keepMediaPhase &&
         clientRequestId.isNotEmpty &&
         turnId.isNotEmpty &&
@@ -5892,13 +5953,12 @@ class WebSocketService {
     );
     if (_intentionalClose) return;
     if (hadActiveTurn) {
-      _failActiveApplicationTurns();
-      if (!_errorCtrl.isClosed) {
-        _errorCtrl.add(
-          'Secure LAN connection closed during an active request. '
-          'Automatic transport switching is disabled.',
-        );
-      }
+      // Keep the accepted request correlation intact and reconnect only the
+      // same LAN route.  The PC may still settle the durable attempt while its
+      // listener restarts; recovered canonical frames (or the chat history
+      // refresh on reconnect) must resolve that original turn.  Clearing it
+      // here produced a false Retry and made the authoritative final unowned.
+      _scheduleReconnect();
       return;
     }
     _scheduleReconnect();
@@ -7241,6 +7301,41 @@ class WebSocketService {
           _setState(ConnectionState.disconnected);
         }
       }
+      return;
+    }
+
+    final recoveringActiveLanTurn =
+        lanDirectV1 &&
+        _lastTransportKind == ApplicationTransportKind.lan &&
+        _hasActiveApplicationTurn;
+    if (recoveringActiveLanTurn) {
+      // A reconnect to the SAME authenticated LAN endpoint is continuation,
+      // not transport switching.  Do not try WebRTC, relay application commit,
+      // or legacy fallback while the original request remains unresolved.
+      try {
+        final manualConfig =
+            lanDirectConfig ?? LanDirectConfig.fromEnvironment();
+        if (manualConfig != null) {
+          if (await _tryLanConnect(manualConfig, connectGeneration)) return;
+        } else if (storage != null) {
+          final pairId = RelayService.derivePairCredentials(token).pairId;
+          final savedIdentity = await storage!.getLanPairing(pairId);
+          if (!_isCurrentConnect(connectGeneration)) return;
+          if (savedIdentity != null) {
+            final discovered = await _discoverLanConfig(savedIdentity);
+            if (!_isCurrentConnect(connectGeneration)) return;
+            if (discovered != null &&
+                await _tryLanConnect(discovered, connectGeneration)) {
+              return;
+            }
+          }
+        }
+      } catch (_) {
+        debugPrint('[OSIA LAN] active-turn reconnect attempt failed');
+      }
+      if (!_isCurrentConnect(connectGeneration)) return;
+      _setState(ConnectionState.disconnected);
+      _scheduleReconnect();
       return;
     }
 

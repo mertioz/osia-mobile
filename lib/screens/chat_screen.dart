@@ -752,7 +752,15 @@ class _ChatScreenState extends State<ChatScreen> {
         if (_submittedAttachmentRequestId == clientRequestId) {
           unawaited(_completeSubmittedAttachments(clientRequestId));
         }
-        _noteTurnActivity(clientRequestId: clientRequestId, turnId: turnId);
+        final waitingTurn = _wsService.isConversationWaiting(conversationId);
+        if (waitingTurn) {
+          // A durable suspended turn has an authoritative pending status, so
+          // neither the first-token nor accepted-silence watchdog may invent a
+          // no-response/Retry state while it waits for verification.
+          _cancelFirstTokenTimer();
+        } else {
+          _noteTurnActivity(clientRequestId: clientRequestId, turnId: turnId);
+        }
         setState(() {
           if (conversationId.isNotEmpty &&
               (_activeConversationId == null ||
@@ -1144,10 +1152,13 @@ class _ChatScreenState extends State<ChatScreen> {
     )) {
       return;
     }
-    final rejected = event.busy && event.message.isNotEmpty;
+    final waitingTurn = _activeConversationWaiting;
+    final rejected = event.busy && event.message.isNotEmpty && !waitingTurn;
     if (rejected) {
       _cancelFirstTokenTimer();
       _pendingTurn = null;
+    } else if (event.busy && waitingTurn) {
+      _cancelFirstTokenTimer();
     } else if (event.busy) {
       _noteTurnActivity(
         clientRequestId: event.clientRequestId,
@@ -1163,6 +1174,10 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!event.busy) {
         _awaitingResponse = false;
         _thinking = false;
+      } else if (waitingTurn) {
+        _awaitingResponse = true;
+        _thinking = true;
+        _noResponse = false;
       } else if (rejected) {
         _awaitingResponse = false;
         _thinking = false;
@@ -2063,6 +2078,43 @@ class _ChatScreenState extends State<ChatScreen> {
     return _wsService.isConversationBusy(id);
   }
 
+  bool get _activeConversationWaiting {
+    final id = _activeConversationId;
+    return id != null && id.isNotEmpty && _wsService.isConversationWaiting(id);
+  }
+
+  String _waitingComposerHint(OsiaStrings strings) {
+    final id = _activeConversationId ?? '';
+    final status = _wsService.waitingTurnStatus(id);
+    final phase = switch (status) {
+      'verifying' => 'verifying',
+      'resuming' => 'resuming',
+      'action_running' || 'action_in_progress' => 'running',
+      'cancellation_requested' => 'cancelling',
+      _ => 'waiting',
+    };
+    return switch (strings.languageCode) {
+      'fr' => switch (phase) {
+        'verifying' => 'Vérification en cours — écrivez statut ou annuler…',
+        'resuming' => 'Reprise de l’action en cours…',
+        'running' => 'Action en cours — écrivez statut ou annuler…',
+        'cancelling' => 'Annulation demandée — vérification en cours…',
+        _ => 'En attente de vérification — reprends, statut ou annuler…',
+      },
+      'zh' => '正在等待验证 — 输入 resume、status 或 cancel…',
+      'ja' => '検証待ち — resume、status、cancel を入力…',
+      'de' => 'Warten auf Prüfung — resume, status oder cancel…',
+      'es' => 'Esperando verificación — resume, status o cancel…',
+      _ => switch (phase) {
+        'verifying' => 'Verification in progress — type status or cancel…',
+        'resuming' => 'Resuming the current action…',
+        'running' => 'Action running — type status or cancel…',
+        'cancelling' => 'Cancellation requested — checking state…',
+        _ => 'Waiting for verification — type resume, status, or cancel…',
+      },
+    };
+  }
+
   int get _pendingAttachmentBytes =>
       _pendingAttachments.fold<int>(0, (sum, file) => sum + file.byteSize);
 
@@ -2099,10 +2151,18 @@ class _ChatScreenState extends State<ChatScreen> {
           _ => null,
         };
 
-  bool get _canSend =>
-      !_activeConversationBusy &&
-      !_attachmentInteractionLocked &&
-      (_textCtrl.text.trim().isNotEmpty || _pendingAttachments.isNotEmpty);
+  bool get _canSend {
+    final text = _textCtrl.text.trim();
+    if (_activeConversationWaiting) {
+      return !_attachmentInteractionLocked &&
+          _pendingAttachments.isEmpty &&
+          text.isNotEmpty &&
+          text.length <= 160;
+    }
+    return !_activeConversationBusy &&
+        !_attachmentInteractionLocked &&
+        (text.isNotEmpty || _pendingAttachments.isNotEmpty);
+  }
 
   /// True when OSIA pauses to think *mid-stream*: the thinking flag is set
   /// while a streaming assistant bubble already holds some text. Mirrors the
@@ -2132,6 +2192,28 @@ class _ChatScreenState extends State<ChatScreen> {
     final attachments = List<PreparedAttachment>.of(_pendingAttachments);
     final hasFiles = attachments.isNotEmpty;
     if (text.isEmpty && !hasFiles || _attachmentInteractionLocked) return;
+    if (_activeConversationWaiting) {
+      final conversationId = _activeConversationId ?? '';
+      if (hasFiles || text.length > 160) return;
+      final sent = _wsService.sendWaitingTurnCommand(
+        text,
+        conversationId: conversationId,
+      );
+      if (!sent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('The waiting command was not sent.')),
+        );
+        return;
+      }
+      _textCtrl.clear();
+      _cancelFirstTokenTimer();
+      setState(() {
+        _awaitingResponse = true;
+        _thinking = true;
+        _noResponse = false;
+      });
+      return;
+    }
     if (_activeConversationBusy) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -3325,7 +3407,12 @@ class _ChatScreenState extends State<ChatScreen> {
               textController: _textCtrl,
               focusNode: _inputFocusNode,
               enabled:
-                  !_activeConversationBusy && !_attachmentInteractionLocked,
+                  (_activeConversationWaiting || !_activeConversationBusy) &&
+                  !_attachmentInteractionLocked,
+              hintText: _activeConversationWaiting
+                  ? _waitingComposerHint(strings)
+                  : null,
+              auxiliaryControlsEnabled: !_activeConversationWaiting,
               isRecording: _audioService.isRecording,
               hasText: _canSend,
               onSend: _sendText,

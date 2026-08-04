@@ -252,5 +252,26 @@ void main() {
       contains('reconnect blocked while an application request is active'),
     );
     expect(selection, contains('!_hasActiveApplicationTurn'));
+    expect(selection, contains('recoveringActiveLanTurn'));
+    expect(
+      selection,
+      contains(
+        'A reconnect to the SAME authenticated LAN endpoint is continuation',
+      ),
+    );
+
+    final closeStart = source.indexOf('void _onLanTransportClosed(');
+    final closeEnd = source.indexOf(
+      '\n  Future<bool> _tryWebRtcConnect(',
+      closeStart,
+    );
+    final closeHandler = source.substring(closeStart, closeEnd);
+    expect(closeHandler, contains('if (hadActiveTurn)'));
+    expect(closeHandler, contains('_scheduleReconnect();'));
+    expect(closeHandler, isNot(contains('_failActiveApplicationTurns();')));
+    expect(
+      closeHandler,
+      isNot(contains('Secure LAN connection closed during an active request')),
+    );
   });
 }
