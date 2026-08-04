@@ -1,5 +1,16 @@
 enum ApplicationTransportKind { lan, webrtc, relay, legacy }
 
+/// Whether an outbound application frame starts or joins the one active turn.
+/// Waiting-turn commands carry a fresh request id for server-side idempotence,
+/// but remain controls for the existing turn and must not replace its transport
+/// correlation.
+bool isApplicationTurnStartingFrame(Map<String, dynamic> frame) {
+  final type = frame['type']?.toString() ?? '';
+  if (type == 'text' && frame['waiting_turn_command'] == true) return false;
+  return const <String>{'text', 'audio', 'speak'}.contains(type) ||
+      (type == 'file' && frame['is_image'] == true);
+}
+
 class ApplicationTransportLease {
   ApplicationTransportLease._(this._coordinator, this.kind, this.owner);
 

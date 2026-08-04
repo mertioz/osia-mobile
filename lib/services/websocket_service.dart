@@ -38,6 +38,24 @@ const bool kWebRtcDirectV1 = bool.fromEnvironment(
   'webrtc_direct_v1',
   defaultValue: true,
 );
+
+bool isWaitingTurnCancelCommand(String content) {
+  final normalized = content
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .trim();
+  return const <String>{
+    'cancel',
+    'cancel action',
+    'stop action',
+    'annule',
+    'annuler',
+    'annule l action',
+    'arrete l action',
+  }.contains(normalized);
+}
+
 const Set<String> _relayControlFields = <String>{
   'v',
   'type',
@@ -1461,6 +1479,7 @@ class AutonomousProgressMessage {
   final int? authorizationRevision;
   final int? policyEpoch;
   final String? runState;
+  final String? durableState;
   final String? authorizationStatus;
   final String? authorizationSource;
   final int? grantCount;
@@ -1508,6 +1527,7 @@ class AutonomousProgressMessage {
     this.authorizationRevision,
     this.policyEpoch,
     this.runState,
+    this.durableState,
     this.authorizationStatus,
     this.authorizationSource,
     this.grantCount,
@@ -1619,6 +1639,7 @@ class AutonomousProgressMessage {
       ]),
       policyEpoch: pickInt(['policy_epoch', 'policyEpoch']),
       runState: pickStr(['run_state', 'runState']),
+      durableState: pickStr(['durable_state', 'durableState']),
       authorizationStatus: pickStr([
         'authorization_status',
         'authorizationStatus',
@@ -3057,6 +3078,7 @@ class WebSocketService {
   bool isConversationBusy(String id) => _busyConvs.contains(id);
 
   static const Set<String> _waitingTurnStatuses = <String>{
+    'action_starting',
     'waiting_tool_result',
     'waiting_verification',
     'verifying',
@@ -3064,6 +3086,7 @@ class WebSocketService {
     'action_in_progress',
     'action_running',
     'cancellation_requested',
+    'blocked_unknown_effect',
   };
 
   bool isConversationWaiting(String id) =>
@@ -3718,6 +3741,16 @@ class WebSocketService {
   }
 
   @visibleForTesting
+  void markDirectTransportConnectedForTest(ApplicationTransportKind kind) {
+    _connectedViaLan = kind == ApplicationTransportKind.lan;
+    _connectedViaWebRtc = kind == ApplicationTransportKind.webrtc;
+    _setState(ConnectionState.connected);
+  }
+
+  @visibleForTesting
+  void handleChannelDoneForTest() => _onDone();
+
+  @visibleForTesting
   Duration get relayNativePingIntervalForTest => _relayNativePingInterval;
 
   @visibleForTesting
@@ -3902,12 +3935,20 @@ class WebSocketService {
   bool sendWaitingTurnCommand(
     String content, {
     required String conversationId,
+    bool allowPreDispatchCancel = false,
   }) {
     final command = content.trim();
+    final waiting = isConversationWaiting(conversationId);
+    final preDispatchCancel =
+        (allowPreDispatchCancel ||
+            isConversationBusy(conversationId) ||
+            isPending(conversationId) ||
+            _activeRequestByConv.containsKey(conversationId)) &&
+        isWaitingTurnCancelCommand(command);
     if (conversationId.isEmpty ||
         command.isEmpty ||
         command.length > 160 ||
-        !isConversationWaiting(conversationId)) {
+        (!waiting && !preDispatchCancel)) {
       return false;
     }
     final requestId = newClientRequestId();
@@ -4902,6 +4943,7 @@ class WebSocketService {
     final site = json['safe_site_display'] as String;
     final progress = json['safe_progress_text'] as String;
     final event = (json['event'] ?? '').toString().toLowerCase();
+    final durableState = json['durable_state'];
     final finalAnswer = json['final_answer'];
     if (eventId.isEmpty ||
         eventId.length > 128 ||
@@ -4917,6 +4959,19 @@ class WebSocketService {
         progress.isEmpty ||
         progress.length > 300 ||
         json['safe_operation_phase'] != event ||
+        (durableState != null &&
+            (durableState is! String ||
+                !const <String>{
+                  '',
+                  'action_starting',
+                  'action_in_progress',
+                  'waiting_tool',
+                  'verifying_tool',
+                  'resuming',
+                  'cancellation_requested',
+                  'blocked_unknown_effect',
+                  'cancelled_proven',
+                }.contains(durableState))) ||
         !const <String>{
           'aborted',
           'authorization_denied',
@@ -8136,13 +8191,15 @@ class WebSocketService {
     final relayDroppedWhileConnected =
         _connectedViaRelay && _state == ConnectionState.connected;
     final relayDroppedRequestId = _relayLastOutboundRequestId;
+    final directTransportActive = _connectedViaLan || _connectedViaWebRtc;
     _channel = null;
-    _releaseTransportLease();
+    if (!directTransportActive) _releaseTransportLease();
     _connectedViaRelay = false;
     _relayConfig = null;
     _resetRelayE2eState();
     _completeRelayReady(false);
     _relayReadyCompleter = null;
+    if (directTransportActive) return;
     _markPermissionsOffline();
     _setState(ConnectionState.disconnected);
     if (relayDroppedWhileConnected && !_intentionalClose) {

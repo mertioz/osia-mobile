@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import 'relay_crypto_service.dart';
 import 'relay_service.dart';
+import 'transport_coordinator.dart';
 
 const bool kLanDirectV1 = bool.fromEnvironment(
   'lan_direct_v1',
@@ -291,9 +292,7 @@ class LanDirectTransport {
         frame['client_request_id']?.toString() ??
         '';
     final turnId = frame['turn_id']?.toString() ?? '';
-    final startsTurn =
-        const <String>{'text', 'audio', 'speak'}.contains(type) ||
-        (type == 'file' && frame['is_image'] == true);
+    final startsTurn = isApplicationTurnStartingFrame(frame);
     if (!active ||
         socket == null ||
         socket.readyState != WebSocket.open ||

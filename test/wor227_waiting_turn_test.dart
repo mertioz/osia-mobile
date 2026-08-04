@@ -8,6 +8,7 @@ import 'package:osia_mobile/screens/chat_screen.dart';
 import 'package:osia_mobile/services/background_connection_service.dart';
 import 'package:osia_mobile/services/connection_lifecycle_service.dart';
 import 'package:osia_mobile/services/storage_service.dart';
+import 'package:osia_mobile/services/transport_coordinator.dart';
 import 'package:osia_mobile/services/websocket_service.dart' as ws;
 import 'package:osia_mobile/theme.dart';
 
@@ -31,6 +32,7 @@ class _WaitingWebSocketService extends ws.WebSocketService {
   final List<String> waitingCommands = <String>[];
   final List<String> normalTurns = <String>[];
   bool waiting = true;
+  bool busy = true;
   String waitingStatus = 'waiting_verification';
 
   @override
@@ -40,7 +42,7 @@ class _WaitingWebSocketService extends ws.WebSocketService {
   ws.ConnectionState get state => ws.ConnectionState.connected;
 
   @override
-  bool isConversationBusy(String id) => waiting;
+  bool isConversationBusy(String id) => busy;
 
   @override
   bool isConversationWaiting(String id) => waiting;
@@ -52,9 +54,10 @@ class _WaitingWebSocketService extends ws.WebSocketService {
   bool sendWaitingTurnCommand(
     String content, {
     required String conversationId,
+    bool allowPreDispatchCancel = false,
   }) {
     waitingCommands.add(content);
-    return waiting && conversationId == 'conv-waiting';
+    return (waiting || busy) && conversationId == 'conv-waiting';
   }
 
   @override
@@ -279,6 +282,20 @@ void main() {
       );
       expect(find.byIcon(Icons.add_rounded), findsOneWidget);
 
+      service.emitStatus('action_starting');
+      await tester.pump();
+      expect(find.text('Démarrage de l’action…'), findsOneWidget);
+      service.emitStatus('blocked_unknown_effect');
+      await tester.pump();
+      expect(
+        find.text(
+          'Résultat impossible à établir — l’action n’a pas été répétée.',
+        ),
+        findsOneWidget,
+      );
+      service.emitStatus('waiting_verification');
+      await tester.pump();
+
       for (final command in <String>[
         'reprends et vérifie',
         'resume and verify the current action',
@@ -306,4 +323,166 @@ void main() {
       languageController.dispose();
     },
   );
+
+  test('busy pre-dispatch turn accepts only a bounded cancel command', () {
+    final sent = <Map<String, dynamic>>[];
+    final service = ws.WebSocketService(
+      ip: '127.0.0.1',
+      token: 'token',
+      autoReconnect: false,
+      lanDirectV1: true,
+      webRtcDirectV1: false,
+      sendFrameForTest: (frame) {
+        sent.add(frame);
+        return true;
+      },
+    );
+    addTearDown(service.dispose);
+
+    expect(
+      service.sendText(
+        'original request',
+        conversationId: 'conv-recovered',
+        clientRequestId: 'request-recovered',
+      ),
+      isTrue,
+    );
+    service.handleIncomingFrameForTest(
+      _turnFrame('turn_accepted', 1, status: 'working'),
+    );
+    service.handleIncomingFrameForTest(<String, dynamic>{
+      ..._turnFrame('conversation_busy_changed', 2),
+      'busy': false,
+    });
+
+    expect(service.isConversationBusy('conv-recovered'), isFalse);
+    expect(service.isConversationWaiting('conv-recovered'), isFalse);
+    expect(
+      service.sendWaitingTurnCommand(
+        'status',
+        conversationId: 'conv-recovered',
+      ),
+      isFalse,
+    );
+    expect(
+      service.sendWaitingTurnCommand(
+        'cancel',
+        conversationId: 'conv-recovered',
+        allowPreDispatchCancel: true,
+      ),
+      isTrue,
+    );
+    expect(sent, hasLength(2));
+    expect(sent.last['content'], 'cancel');
+    expect(sent.last['waiting_turn_command'], isTrue);
+  });
+
+  testWidgets('busy composer sends cancel before an attempt exists', (
+    tester,
+  ) async {
+    final storage = StorageService();
+    final service = _WaitingWebSocketService()
+      ..waiting = false
+      ..busy = true;
+    final background = BackgroundConnectionService(
+      storage: storage,
+      platform: _NoopBackgroundPlatform(),
+    );
+    final lifecycle = ConnectionLifecycleService(
+      backgroundConnectionService: background,
+    );
+    final themeController = ThemeController();
+    final languageController = LanguageController();
+
+    await tester.pumpWidget(
+      OsiaTheme(
+        palette: osiaPaletteViolet,
+        child: OsiaL10n(
+          strings: osiaStringsEn,
+          child: MaterialApp(
+            theme: buildOsiaTheme(),
+            home: ChatScreen(
+              storage: storage,
+              themeController: themeController,
+              languageController: languageController,
+              connectionLifecycle: lifecycle,
+              backgroundConnectionService: background,
+              handoff: ChatHandoff(
+                service: service,
+                bufferedMessages: const <ws.OsiaMessage>[
+                  ws.ConversationsMessage(<ws.Conversation>[
+                    ws.Conversation(id: 'conv-waiting', title: 'Busy test'),
+                  ]),
+                  ws.ActiveConversationMessage(
+                    id: 'conv-waiting',
+                    title: 'Busy test',
+                  ),
+                  ws.ConversationHistoryMessage(
+                    id: 'conv-waiting',
+                    messages: <ws.HistoryMessage>[],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final input = find.byType(TextField);
+    expect(input, findsOneWidget);
+    expect(
+      find.text('OSIA is working â€” type cancel before the action startsâ€¦'),
+      findsOneWidget,
+    );
+    await tester.enterText(input, 'cancel');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pump();
+
+    expect(service.waitingCommands, <String>['cancel']);
+    expect(service.normalTurns, isEmpty);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    themeController.dispose();
+    languageController.dispose();
+  });
+
+  test('relay channel close preserves an active direct transport lease', () {
+    final direct = ws.WebSocketService(
+      ip: '127.0.0.1',
+      token: 'token',
+      autoReconnect: false,
+    );
+    final competing = ws.WebSocketService(
+      ip: '127.0.0.1',
+      token: 'token',
+      autoReconnect: false,
+    );
+    addTearDown(direct.dispose);
+    addTearDown(competing.dispose);
+
+    expect(
+      direct.acquireApplicationTransportForTest(ApplicationTransportKind.lan),
+      isTrue,
+    );
+    direct.markDirectTransportConnectedForTest(ApplicationTransportKind.lan);
+
+    direct.handleChannelDoneForTest();
+
+    expect(direct.state, ws.ConnectionState.connected);
+    expect(
+      applicationTransportCoordinator.activeKind,
+      ApplicationTransportKind.lan,
+    );
+    expect(
+      competing.acquireApplicationTransportForTest(
+        ApplicationTransportKind.relay,
+      ),
+      isFalse,
+    );
+  });
 }

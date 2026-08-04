@@ -47,6 +47,14 @@ enum _RunPhase {
   planning,
   authorizationPending,
   running,
+  actionStarting,
+  actionInProgress,
+  waitingTool,
+  verifyingTool,
+  resuming,
+  cancellationRequested,
+  blockedUnknownEffect,
+  cancelledProven,
   scopeExtension,
   revoked,
   outcomeUnknown,
@@ -54,6 +62,62 @@ enum _RunPhase {
   done,
   failed,
   aborted,
+}
+
+const Set<String> _explicitDurableRunEvents = <String>{
+  'action_starting',
+  'action_in_progress',
+  'waiting_tool',
+  'verifying_tool',
+  'resuming',
+  'cancellation_requested',
+  'blocked_unknown_effect',
+  'cancelled_proven',
+};
+
+String _canonicalRunLifecycle(ws.AutonomousProgressMessage message) {
+  final event = (message.event ?? '').toLowerCase();
+  final durableState = (message.durableState ?? '').toLowerCase();
+  if (_explicitDurableRunEvents.contains(durableState)) {
+    return durableState;
+  }
+  if (const {'paused', 'interrupt', 'interrupted'}.contains(event) ||
+      _explicitDurableRunEvents.contains(event)) {
+    return event;
+  }
+  return (message.runState ?? event).toLowerCase();
+}
+
+@visibleForTesting
+String autonomousDurableStateLabel(OsiaStrings strings, String state) {
+  if (strings.languageCode == 'fr') {
+    return switch (state) {
+      'action_starting' => 'Démarrage de l’action…',
+      'action_in_progress' => 'Action en cours…',
+      'waiting_tool' => 'En attente de vérification du résultat…',
+      'verifying_tool' => 'Vérification du résultat…',
+      'resuming' => 'Reprise de la mission…',
+      'cancellation_requested' =>
+        'Annulation demandée — vérification du résultat…',
+      'blocked_unknown_effect' =>
+        'Résultat impossible à établir — mission bloquée, sans répétition de l’action.',
+      'cancelled_proven' => 'Action annulée avant tout effet confirmé.',
+      _ => strings.autonomousRunning,
+    };
+  }
+  return switch (state) {
+    'action_starting' => 'Starting the action…',
+    'action_in_progress' => 'Action in progress…',
+    'waiting_tool' => 'Waiting to verify the result…',
+    'verifying_tool' => 'Verifying the result…',
+    'resuming' => 'Resuming the mission…',
+    'cancellation_requested' => 'Cancellation requested — checking the result…',
+    'blocked_unknown_effect' =>
+      'The result could not be established — mission blocked without repeating the action.',
+    'cancelled_proven' =>
+      'The action was cancelled before any effect was confirmed.',
+    _ => strings.autonomousRunning,
+  };
 }
 
 @visibleForTesting
@@ -261,11 +325,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     final cachedProgress = widget.wsService.autonomousProgress;
     if (cachedProgress != null) {
       _latest = cachedProgress;
-      final event = (cachedProgress.event ?? '').toLowerCase();
-      final lifecycle =
-          const {'paused', 'interrupt', 'interrupted'}.contains(event)
-          ? event
-          : (cachedProgress.runState ?? event).toLowerCase();
+      final lifecycle = _canonicalRunLifecycle(cachedProgress);
       _runPhase = _phaseFor(lifecycle, _runPhase);
       final runId = cachedProgress.runId;
       if (runId != null && runId.isNotEmpty) {
@@ -344,10 +404,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         _documentProgress.clear();
       }
       _latest = msg;
-      final lifecycle =
-          const {'paused', 'interrupt', 'interrupted'}.contains(event)
-          ? event
-          : (msg.runState ?? event).toLowerCase();
+      final lifecycle = _canonicalRunLifecycle(msg);
       // Older servers used `idle` for an unavailable resume checkpoint. Keep
       // that event compatible while honoring WOR-173's additive typed failure.
       _runPhase = event == 'idle' && msg.errorCategory != null
@@ -368,6 +425,22 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         return _RunPhase.planning;
       case 'authorization_pending':
         return _RunPhase.authorizationPending;
+      case 'action_starting':
+        return _RunPhase.actionStarting;
+      case 'action_in_progress':
+        return _RunPhase.actionInProgress;
+      case 'waiting_tool':
+        return _RunPhase.waitingTool;
+      case 'verifying_tool':
+        return _RunPhase.verifyingTool;
+      case 'resuming':
+        return _RunPhase.resuming;
+      case 'cancellation_requested':
+        return _RunPhase.cancellationRequested;
+      case 'blocked_unknown_effect':
+        return _RunPhase.blockedUnknownEffect;
+      case 'cancelled_proven':
+        return _RunPhase.cancelledProven;
       case 'suspended_scope_extension':
       case 'scope_extension_denied':
         return _RunPhase.scopeExtension;
@@ -415,6 +488,13 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       _runPhase == _RunPhase.planning ||
       _runPhase == _RunPhase.authorizationPending ||
       _runPhase == _RunPhase.running ||
+      _runPhase == _RunPhase.actionStarting ||
+      _runPhase == _RunPhase.actionInProgress ||
+      _runPhase == _RunPhase.waitingTool ||
+      _runPhase == _RunPhase.verifyingTool ||
+      _runPhase == _RunPhase.resuming ||
+      _runPhase == _RunPhase.cancellationRequested ||
+      _runPhase == _RunPhase.blockedUnknownEffect ||
       _runPhase == _RunPhase.scopeExtension ||
       _runPhase == _RunPhase.revoked ||
       _runPhase == _RunPhase.outcomeUnknown;
@@ -1793,7 +1873,13 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
           ],
           // Active runs show the choreographed thinking indicator.
           if (_runPhase == _RunPhase.planning ||
-              _runPhase == _RunPhase.running) ...[
+              _runPhase == _RunPhase.running ||
+              _runPhase == _RunPhase.actionStarting ||
+              _runPhase == _RunPhase.actionInProgress ||
+              _runPhase == _RunPhase.waitingTool ||
+              _runPhase == _RunPhase.verifyingTool ||
+              _runPhase == _RunPhase.resuming ||
+              _runPhase == _RunPhase.cancellationRequested) ...[
             const SizedBox(height: 8),
             const Align(
               alignment: Alignment.centerLeft,
@@ -1812,6 +1898,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       case _RunPhase.failed:
         return Icons.error_rounded;
       case _RunPhase.aborted:
+      case _RunPhase.cancelledProven:
         return Icons.stop_circle_rounded;
       case _RunPhase.paused:
         return Icons.pause_circle_rounded;
@@ -1822,8 +1909,19 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       case _RunPhase.revoked:
         return Icons.lock_outline_rounded;
       case _RunPhase.outcomeUnknown:
+      case _RunPhase.blockedUnknownEffect:
         return Icons.help_outline_rounded;
+      case _RunPhase.waitingTool:
+        return Icons.hourglass_top_rounded;
+      case _RunPhase.verifyingTool:
+        return Icons.verified_outlined;
+      case _RunPhase.resuming:
+        return Icons.play_circle_outline_rounded;
+      case _RunPhase.cancellationRequested:
+        return Icons.pending_actions_rounded;
       case _RunPhase.planning:
+      case _RunPhase.actionStarting:
+      case _RunPhase.actionInProgress:
       case _RunPhase.running:
       case _RunPhase.idle:
         return Icons.rocket_launch_rounded;
@@ -1834,6 +1932,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
     switch (_runPhase) {
       case _RunPhase.failed:
       case _RunPhase.aborted:
+      case _RunPhase.blockedUnknownEffect:
         return palette.error;
       case _RunPhase.paused:
         return palette.textMuted;
@@ -1841,9 +1940,16 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       case _RunPhase.outcomeUnknown:
         return palette.error;
       case _RunPhase.done:
+      case _RunPhase.cancelledProven:
       case _RunPhase.planning:
       case _RunPhase.authorizationPending:
       case _RunPhase.scopeExtension:
+      case _RunPhase.actionStarting:
+      case _RunPhase.actionInProgress:
+      case _RunPhase.waitingTool:
+      case _RunPhase.verifyingTool:
+      case _RunPhase.resuming:
+      case _RunPhase.cancellationRequested:
       case _RunPhase.running:
       case _RunPhase.idle:
         return palette.accent;
@@ -1856,6 +1962,22 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
         return strings.autonomousPlanning;
       case _RunPhase.running:
         return strings.autonomousRunning;
+      case _RunPhase.actionStarting:
+        return autonomousDurableStateLabel(strings, 'action_starting');
+      case _RunPhase.actionInProgress:
+        return autonomousDurableStateLabel(strings, 'action_in_progress');
+      case _RunPhase.waitingTool:
+        return autonomousDurableStateLabel(strings, 'waiting_tool');
+      case _RunPhase.verifyingTool:
+        return autonomousDurableStateLabel(strings, 'verifying_tool');
+      case _RunPhase.resuming:
+        return autonomousDurableStateLabel(strings, 'resuming');
+      case _RunPhase.cancellationRequested:
+        return autonomousDurableStateLabel(strings, 'cancellation_requested');
+      case _RunPhase.blockedUnknownEffect:
+        return autonomousDurableStateLabel(strings, 'blocked_unknown_effect');
+      case _RunPhase.cancelledProven:
+        return autonomousDurableStateLabel(strings, 'cancelled_proven');
       case _RunPhase.authorizationPending:
         return strings.autonomousReviewPlan;
       case _RunPhase.scopeExtension:

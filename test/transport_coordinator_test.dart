@@ -29,6 +29,24 @@ Map<String, dynamic> _canonicalFrame(Map<String, Object?> frame) {
 }
 
 void main() {
+  test('waiting command does not replace direct active-turn correlation', () {
+    expect(
+      isApplicationTurnStartingFrame(<String, dynamic>{
+        'type': 'text',
+        'request_id': 'request-control',
+        'waiting_turn_command': true,
+      }),
+      isFalse,
+    );
+    expect(
+      isApplicationTurnStartingFrame(<String, dynamic>{
+        'type': 'text',
+        'request_id': 'request-new-turn',
+      }),
+      isTrue,
+    );
+  });
+
   test('only one application transport lease can be active', () {
     final coordinator = ApplicationTransportCoordinator();
     final lan = coordinator.tryAcquire(ApplicationTransportKind.lan, Object());

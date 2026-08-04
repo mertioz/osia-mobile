@@ -2087,18 +2087,23 @@ class _ChatScreenState extends State<ChatScreen> {
     final id = _activeConversationId ?? '';
     final status = _wsService.waitingTurnStatus(id);
     final phase = switch (status) {
+      'action_starting' => 'starting',
       'verifying' => 'verifying',
       'resuming' => 'resuming',
       'action_running' || 'action_in_progress' => 'running',
       'cancellation_requested' => 'cancelling',
+      'blocked_unknown_effect' => 'blocked',
       _ => 'waiting',
     };
     return switch (strings.languageCode) {
       'fr' => switch (phase) {
+        'starting' => 'Démarrage de l’action…',
         'verifying' => 'Vérification en cours — écrivez statut ou annuler…',
         'resuming' => 'Reprise de l’action en cours…',
         'running' => 'Action en cours — écrivez statut ou annuler…',
         'cancelling' => 'Annulation demandée — vérification en cours…',
+        'blocked' =>
+          'Résultat impossible à établir — l’action n’a pas été répétée.',
         _ => 'En attente de vérification — reprends, statut ou annuler…',
       },
       'zh' => '正在等待验证 — 输入 resume、status 或 cancel…',
@@ -2106,14 +2111,22 @@ class _ChatScreenState extends State<ChatScreen> {
       'de' => 'Warten auf Prüfung — resume, status oder cancel…',
       'es' => 'Esperando verificación — resume, status o cancel…',
       _ => switch (phase) {
+        'starting' => 'Starting the action…',
         'verifying' => 'Verification in progress — type status or cancel…',
         'resuming' => 'Resuming the current action…',
         'running' => 'Action running — type status or cancel…',
         'cancelling' => 'Cancellation requested — checking state…',
+        'blocked' =>
+          'The result could not be established — the action was not repeated.',
         _ => 'Waiting for verification — type resume, status, or cancel…',
       },
     };
   }
+
+  String _busyCancellationHint(OsiaStrings strings) =>
+      strings.languageCode == 'fr'
+      ? 'OSIA travaille â€” Ã©crivez annuler avant le dÃ©marrage de lâ€™actionâ€¦'
+      : 'OSIA is working â€” type cancel before the action startsâ€¦';
 
   int get _pendingAttachmentBytes =>
       _pendingAttachments.fold<int>(0, (sum, file) => sum + file.byteSize);
@@ -2159,6 +2172,12 @@ class _ChatScreenState extends State<ChatScreen> {
           text.isNotEmpty &&
           text.length <= 160;
     }
+    if (_activeConversationBusy) {
+      return !_attachmentInteractionLocked &&
+          _pendingAttachments.isEmpty &&
+          text.length <= 160 &&
+          ws.isWaitingTurnCancelCommand(text);
+    }
     return !_activeConversationBusy &&
         !_attachmentInteractionLocked &&
         (text.isNotEmpty || _pendingAttachments.isNotEmpty);
@@ -2198,6 +2217,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final sent = _wsService.sendWaitingTurnCommand(
         text,
         conversationId: conversationId,
+        allowPreDispatchCancel: true,
       );
       if (!sent) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2215,6 +2235,24 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     if (_activeConversationBusy) {
+      final conversationId = _activeConversationId ?? '';
+      if (!hasFiles && ws.isWaitingTurnCancelCommand(text)) {
+        final sent = _wsService.sendWaitingTurnCommand(
+          text,
+          conversationId: conversationId,
+          allowPreDispatchCancel: true,
+        );
+        if (sent) {
+          _textCtrl.clear();
+          _cancelFirstTokenTimer();
+          setState(() {
+            _awaitingResponse = true;
+            _thinking = true;
+            _noResponse = false;
+          });
+          return;
+        }
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('OSIA is still working in this conversation.'),
@@ -3406,13 +3444,14 @@ class _ChatScreenState extends State<ChatScreen> {
               key: _inputBarKey,
               textController: _textCtrl,
               focusNode: _inputFocusNode,
-              enabled:
-                  (_activeConversationWaiting || !_activeConversationBusy) &&
-                  !_attachmentInteractionLocked,
+              enabled: !_attachmentInteractionLocked,
               hintText: _activeConversationWaiting
                   ? _waitingComposerHint(strings)
+                  : _activeConversationBusy
+                  ? _busyCancellationHint(strings)
                   : null,
-              auxiliaryControlsEnabled: !_activeConversationWaiting,
+              auxiliaryControlsEnabled:
+                  !_activeConversationWaiting && !_activeConversationBusy,
               isRecording: _audioService.isRecording,
               hasText: _canSend,
               onSend: _sendText,

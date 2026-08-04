@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import 'relay_crypto_service.dart';
+import 'transport_coordinator.dart';
 import 'webrtc_signaling.dart';
 
 const int _maxApplicationFrameBytes = 16 * 1024 * 1024;
@@ -632,9 +633,7 @@ class WebRtcDirectTransport {
         frame['client_request_id']?.toString() ??
         '';
     final turnId = frame['turn_id']?.toString() ?? '';
-    final startsTurn =
-        const <String>{'text', 'audio', 'speak'}.contains(type) ||
-        (type == 'file' && frame['is_image'] == true);
+    final startsTurn = isApplicationTurnStartingFrame(frame);
     if (!active ||
         type == 'auth' ||
         utf8.encode(jsonEncode(frame)).length > _maxApplicationFrameBytes ||
