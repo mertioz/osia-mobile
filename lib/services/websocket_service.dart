@@ -1454,6 +1454,8 @@ class AutonomousProgressMessage {
 
   /// Server-side id of the run / current task, when provided.
   final String? taskId;
+  final String? operationId;
+  final String? toolAttemptId;
 
   /// Why the run ended or paused (carried on terminal / interrupt frames).
   final String? reason;
@@ -1507,6 +1509,8 @@ class AutonomousProgressMessage {
     this.status,
     this.objective,
     this.taskId,
+    this.operationId,
+    this.toolAttemptId,
     this.reason,
     this.stage,
     this.errorCategory,
@@ -1612,6 +1616,8 @@ class AutonomousProgressMessage {
       status: pickStr(['status', 'message']),
       objective: pickStr(['objective']),
       taskId: pickStr(['task_id', 'taskId']),
+      operationId: pickStr(['operation_id', 'operationId']),
+      toolAttemptId: pickStr(['tool_attempt_id', 'toolAttemptId']),
       reason: pickStr(['reason']),
       stage: stageCode == null
           ? null
@@ -2888,6 +2894,10 @@ class WebSocketService {
   final Map<String, String> _activeConvByRequest = {};
   final Set<String> _acceptedRequests = {};
   final Map<String, String> _turnByRequest = <String, String>{};
+  final Map<String, String> _toolAttemptByRequest = <String, String>{};
+  final Set<String> _pendingChatCancellationRequests = <String>{};
+  final Map<String, String> _sentChatCancellationTargets = <String, String>{};
+  String _autonomousCancellationTarget = '';
   final Set<String> _unboundRequestIds = <String>{};
   final Set<String> _seenCronNotifications = {};
   final Set<String> _respondedScheduledAuthorizationRequests = {};
@@ -3077,7 +3087,15 @@ class WebSocketService {
   /// (WOR-103).
   bool isConversationBusy(String id) => _busyConvs.contains(id);
 
+  /// Whether the conversation has cancellable text/tool work, excluding the
+  /// separate post-turn media phase that may briefly keep it busy.
+  bool isConversationWorkActive(String id) =>
+      _pendingConvs.contains(id) ||
+      _waitingTurnStatusByConv.containsKey(id) ||
+      (_busyConvs.contains(id) && !_mediaByConversation.containsKey(id));
+
   static const Set<String> _waitingTurnStatuses = <String>{
+    'working',
     'action_starting',
     'waiting_tool_result',
     'waiting_verification',
@@ -3087,12 +3105,53 @@ class WebSocketService {
     'action_running',
     'cancellation_requested',
     'blocked_unknown_effect',
+    'cancelled_proven',
   };
 
   bool isConversationWaiting(String id) =>
       _waitingTurnStatusByConv.containsKey(id);
 
   String waitingTurnStatus(String id) => _waitingTurnStatusByConv[id] ?? '';
+
+  bool isConversationCancellationRequested(
+    String id, {
+    String clientRequestId = '',
+  }) {
+    final requestId = clientRequestId.isNotEmpty
+        ? clientRequestId
+        : _activeRequestByConv[id] ?? '';
+    return requestId.isNotEmpty &&
+        _pendingChatCancellationRequests.contains(requestId);
+  }
+
+  static const Set<String> _activeAutonomousStates = <String>{
+    'planning',
+    'authorization_pending',
+    'running',
+    'action_starting',
+    'action_in_progress',
+    'waiting_tool',
+    'verifying_tool',
+    'blocked_unknown_effect',
+    'resuming',
+    'cancellation_requested',
+  };
+
+  bool get hasActiveAutonomousWork {
+    final progress = _autonomousProgress;
+    if (progress == null || progress.terminal == true) return false;
+    final runId = progress.runId ?? '';
+    if (runId.isEmpty || runId == 'idle') return false;
+    return _activeAutonomousStates.contains(progress.durableState) ||
+        _activeAutonomousStates.contains(progress.runState) ||
+        _activeAutonomousStates.contains(progress.event) ||
+        progress.event == 'state_updated';
+  }
+
+  bool get autonomousCancellationRequested =>
+      _autonomousCancellationTarget.isNotEmpty ||
+      _autonomousProgress?.durableState == 'cancellation_requested' ||
+      _autonomousProgress?.runState == 'cancellation_requested';
 
   static String newClientRequestId() {
     final random = Random.secure();
@@ -3130,6 +3189,9 @@ class WebSocketService {
       _activeConvByRequest.remove(req);
       _acceptedRequests.remove(req);
       _turnByRequest.remove(req);
+      _toolAttemptByRequest.remove(req);
+      _pendingChatCancellationRequests.remove(req);
+      _sentChatCancellationTargets.remove(req);
     }
   }
 
@@ -3138,6 +3200,9 @@ class WebSocketService {
     _unboundRequestIds.remove(clientRequestId);
     _acceptedRequests.remove(clientRequestId);
     _turnByRequest.remove(clientRequestId);
+    _toolAttemptByRequest.remove(clientRequestId);
+    _pendingChatCancellationRequests.remove(clientRequestId);
+    _sentChatCancellationTargets.remove(clientRequestId);
     final conversationId = _activeConvByRequest.remove(clientRequestId);
     if (conversationId != null &&
         _activeRequestByConv[conversationId] == clientRequestId) {
@@ -3150,6 +3215,10 @@ class WebSocketService {
     _activeConvByRequest.clear();
     _acceptedRequests.clear();
     _turnByRequest.clear();
+    _toolAttemptByRequest.clear();
+    _pendingChatCancellationRequests.clear();
+    _sentChatCancellationTargets.clear();
+    _autonomousCancellationTarget = '';
     _unboundRequestIds.clear();
     _pendingConvs.clear();
     _waitingTurnStatusByConv.clear();
@@ -3397,6 +3466,7 @@ class WebSocketService {
         json['client_request_id']?.toString() ??
         '';
     final turnId = json['turn_id']?.toString() ?? '';
+    final toolAttemptId = json['tool_attempt_id']?.toString() ?? '';
     final messageId = json['message_id']?.toString() ?? '';
     final status = json['status']?.toString() ?? 'accepted';
     final frameType = (json['type'] ?? '').toString() == 'turn_status'
@@ -3444,13 +3514,25 @@ class WebSocketService {
         if (reqId.isNotEmpty && turnId.isNotEmpty) {
           _turnByRequest.putIfAbsent(reqId, () => turnId);
         }
+        if (reqId.isNotEmpty && toolAttemptId.isNotEmpty) {
+          _toolAttemptByRequest[reqId] = toolAttemptId;
+        }
         if (reqId.isNotEmpty) _acceptedRequests.add(reqId);
         _rememberRequest(id, reqId);
         _pendingConvs.add(id);
+        if (const <String>{
+          'cancellation_requested',
+          'cancelled_proven',
+        }.contains(status)) {
+          _pendingChatCancellationRequests.add(reqId);
+        }
         if (_waitingTurnStatuses.contains(status)) {
           _waitingTurnStatusByConv[id] = status;
         }
         _setConversationBusy(id, true, clientRequestId: reqId, turnId: turnId);
+        if (_pendingChatCancellationRequests.contains(reqId)) {
+          _dispatchChatCancellation(reqId);
+        }
       }
     } else if (reqId.isNotEmpty) {
       _acceptedRequests.add(reqId);
@@ -3464,6 +3546,44 @@ class WebSocketService {
         status: status,
       ),
     );
+  }
+
+  void _handleCancellationControl(Map<String, dynamic> json) {
+    if (json['state'] != 'rejected') return;
+    final scope = json['scope']?.toString() ?? '';
+    if (scope == 'chat') {
+      final requestId =
+          json['request_id']?.toString() ??
+          json['client_request_id']?.toString() ??
+          '';
+      if (requestId.isEmpty) return;
+      _pendingChatCancellationRequests.remove(requestId);
+      _sentChatCancellationTargets.remove(requestId);
+      final conversationId =
+          json['conversation_id']?.toString() ??
+          _activeConvByRequest[requestId] ??
+          '';
+      if (conversationId.isNotEmpty) {
+        _setConversationBusy(
+          conversationId,
+          _hasLiveConversationTurn(conversationId),
+          clientRequestId: requestId,
+          turnId: _turnByRequest[requestId] ?? '',
+        );
+      }
+      return;
+    }
+    if (scope == 'autonomous') {
+      final runId = json['run_id']?.toString() ?? '';
+      if (runId.isEmpty ||
+          _autonomousCancellationTarget.startsWith('$runId\u0000')) {
+        _autonomousCancellationTarget = '';
+        final progress = _autonomousProgress;
+        if (progress != null && !_autonomousCtrl.isClosed) {
+          _autonomousCtrl.add(progress);
+        }
+      }
+    }
   }
 
   @visibleForTesting
@@ -3962,6 +4082,88 @@ class WebSocketService {
       'tts_enabled': false,
       if (_clientLocale.isNotEmpty) 'locale': _clientLocale,
     });
+  }
+
+  /// Request cancellation of the exact canonical chat turn already in flight.
+  /// If the PC has not accepted the turn yet, the intent remains bound to the
+  /// existing request id and is dispatched as soon as its turn id arrives.
+  bool requestChatCancellation({
+    String conversationId = '',
+    String clientRequestId = '',
+  }) {
+    final requestId = clientRequestId.isNotEmpty
+        ? clientRequestId
+        : _activeRequestByConv[conversationId] ?? '';
+    if (requestId.isEmpty) return false;
+    final boundConversation = _activeConvByRequest[requestId] ?? '';
+    if (conversationId.isNotEmpty &&
+        boundConversation.isNotEmpty &&
+        boundConversation != conversationId) {
+      return false;
+    }
+    if (!_unboundRequestIds.contains(requestId) &&
+        !_acceptedRequests.contains(requestId) &&
+        boundConversation.isEmpty) {
+      return false;
+    }
+    _pendingChatCancellationRequests.add(requestId);
+    return _dispatchChatCancellation(requestId);
+  }
+
+  bool _dispatchChatCancellation(String requestId) {
+    if (!_pendingChatCancellationRequests.contains(requestId)) return false;
+    final conversationId = _activeConvByRequest[requestId] ?? '';
+    final turnId = _turnByRequest[requestId] ?? '';
+    if (conversationId.isEmpty || turnId.isEmpty) {
+      return true;
+    }
+    final toolAttemptId = _toolAttemptByRequest[requestId] ?? '';
+    final target =
+        '$conversationId\u0000$requestId\u0000$turnId'
+        '\u0000$toolAttemptId';
+    if (_sentChatCancellationTargets.containsKey(requestId)) return true;
+    final sent = _send(<String, dynamic>{
+      'type': 'cancel_active_work',
+      'schema_version': 1,
+      'scope': 'chat',
+      'conversation_id': conversationId,
+      'request_id': requestId,
+      'client_request_id': requestId,
+      'turn_id': turnId,
+      if (toolAttemptId.isNotEmpty) 'tool_attempt_id': toolAttemptId,
+    });
+    if (sent) {
+      _sentChatCancellationTargets[requestId] = target;
+      _waitingTurnStatusByConv[conversationId] = 'cancellation_requested';
+    }
+    return sent;
+  }
+
+  /// Cancel one exact active Autonomous run without starting another mission.
+  bool requestAutonomousCancellation() {
+    final progress = _autonomousProgress;
+    final runId = progress?.runId ?? '';
+    if (!hasActiveAutonomousWork || runId.isEmpty || runId == 'idle') {
+      return false;
+    }
+    final taskId = progress?.taskId ?? '';
+    final operationId = progress?.operationId ?? '';
+    final toolAttemptId = progress?.toolAttemptId ?? '';
+    final target =
+        '$runId\u0000$taskId\u0000$operationId'
+        '\u0000$toolAttemptId';
+    if (_autonomousCancellationTarget == target) return true;
+    final sent = _send(<String, dynamic>{
+      'type': 'cancel_active_work',
+      'schema_version': 1,
+      'scope': 'autonomous',
+      'run_id': runId,
+      if (taskId.isNotEmpty) 'task_id': taskId,
+      if (operationId.isNotEmpty) 'operation_id': operationId,
+      if (toolAttemptId.isNotEmpty) 'tool_attempt_id': toolAttemptId,
+    });
+    if (sent) _autonomousCancellationTarget = target;
+    return sent;
   }
 
   /// Accept one already-committed attachment batch as a normal text turn.
@@ -4474,6 +4676,7 @@ class WebSocketService {
       return false;
     }
     _expectNewAutonomousRun = true;
+    _autonomousCancellationTarget = '';
     return _send({
       'type': 'autonomous_start',
       'objective': objective,
@@ -4788,6 +4991,10 @@ class WebSocketService {
     _activeConvByRequest.clear();
     _acceptedRequests.clear();
     _turnByRequest.clear();
+    _toolAttemptByRequest.clear();
+    _pendingChatCancellationRequests.clear();
+    _sentChatCancellationTargets.clear();
+    _autonomousCancellationTarget = '';
     _unboundRequestIds.clear();
     _seenCronNotifications.clear();
     _mediaByConversation.clear();
@@ -5455,6 +5662,9 @@ class WebSocketService {
     if (clientRequestId.isEmpty) return;
     _acceptedRequests.remove(clientRequestId);
     _turnByRequest.remove(clientRequestId);
+    _toolAttemptByRequest.remove(clientRequestId);
+    _pendingChatCancellationRequests.remove(clientRequestId);
+    _sentChatCancellationTargets.remove(clientRequestId);
     final conversationId = _activeConvByRequest.remove(clientRequestId);
     if (conversationId == null || conversationId.isEmpty) return;
     if (_activeRequestByConv[conversationId] == clientRequestId) {
@@ -5787,6 +5997,8 @@ class WebSocketService {
     if (st != null) st.streaming = false;
     _pendingConvs.remove(convId); // WOR-75/WOR-53/WOR-62: turn finished.
     _waitingTurnStatusByConv.remove(convId);
+    _pendingChatCancellationRequests.remove(clientRequestId);
+    _sentChatCancellationTargets.remove(clientRequestId);
     if (keepMediaPhase &&
         clientRequestId.isNotEmpty &&
         turnId.isNotEmpty &&
@@ -8057,6 +8269,14 @@ class WebSocketService {
           // never replace the terminal result.
           if (!_validAutonomousProgressFrame(json)) break;
           final canonicalProgress = AutonomousProgressMessage.fromJson(json);
+          final canonicalRunId = canonicalProgress.runId ?? '';
+          if (canonicalProgress.terminal == true ||
+              (_autonomousCancellationTarget.isNotEmpty &&
+                  !_autonomousCancellationTarget.startsWith(
+                    '$canonicalRunId\u0000',
+                  ))) {
+            _autonomousCancellationTarget = '';
+          }
           _autonomousProgress = canonicalProgress;
           final documentSnapshot = json['document_progress'];
           if (documentSnapshot is List) {
@@ -8087,6 +8307,15 @@ class WebSocketService {
           // its own [autonomousStream] (NOT the paced message queue) so it can't
           // disturb response-chunk streaming.
           final prog = AutonomousProgressMessage.fromJson(json);
+          final progressRunId = prog.runId ?? '';
+          if (prog.terminal == true ||
+              (_autonomousCancellationTarget.isNotEmpty &&
+                  progressRunId.isNotEmpty &&
+                  !_autonomousCancellationTarget.startsWith(
+                    '$progressRunId\u0000',
+                  ))) {
+            _autonomousCancellationTarget = '';
+          }
           _autonomousProgress = prog;
           debugPrint(
             '[OSIA WS] autonomous_progress: event=${prog.event} '
@@ -8146,6 +8375,8 @@ class WebSocketService {
           _handleConversationBusyFrame(json);
         case 'conversation_busy':
           _handleConversationBusyFrame(json);
+        case 'cancellation_control':
+          _handleCancellationControl(json);
         default:
           debugPrint(
             '[OSIA WS] unhandled message type="$type" keys=${json.keys.toList()}',

@@ -1023,7 +1023,7 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       ),
     );
     if (confirmed != true) return;
-    widget.wsService.sendAutonomousAbort();
+    widget.wsService.requestAutonomousCancellation();
   }
 
   // ── Build ──────────────────────────────────────────────────────────────

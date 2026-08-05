@@ -31,6 +31,8 @@ class _WaitingWebSocketService extends ws.WebSocketService {
       StreamController<ws.OsiaMessage>.broadcast(sync: true);
   final List<String> waitingCommands = <String>[];
   final List<String> normalTurns = <String>[];
+  int cancellationControls = 0;
+  bool cancellationRequested = false;
   bool waiting = true;
   bool busy = true;
   String waitingStatus = 'waiting_verification';
@@ -45,10 +47,30 @@ class _WaitingWebSocketService extends ws.WebSocketService {
   bool isConversationBusy(String id) => busy;
 
   @override
+  bool isConversationWorkActive(String id) => busy || waiting;
+
+  @override
   bool isConversationWaiting(String id) => waiting;
 
   @override
   String waitingTurnStatus(String id) => waiting ? waitingStatus : '';
+
+  @override
+  bool isConversationCancellationRequested(
+    String id, {
+    String clientRequestId = '',
+  }) => cancellationRequested;
+
+  @override
+  bool requestChatCancellation({
+    String conversationId = '',
+    String clientRequestId = '',
+  }) {
+    if (cancellationRequested || conversationId != 'conv-waiting') return false;
+    cancellationControls++;
+    cancellationRequested = true;
+    return true;
+  }
 
   @override
   bool sendWaitingTurnCommand(
@@ -73,6 +95,11 @@ class _WaitingWebSocketService extends ws.WebSocketService {
 
   void emitStatus(String status) {
     waitingStatus = status;
+    if (const <String>{'done', 'error', 'cancelled'}.contains(status)) {
+      waiting = false;
+      busy = false;
+      cancellationRequested = false;
+    }
     _messages.add(
       ws.TurnAcceptedMessage(
         clientRequestId: 'request-waiting',
@@ -218,7 +245,7 @@ void main() {
   );
 
   testWidgets(
-    'waiting composer stays available and routes French English and unrelated commands',
+    'waiting composer exposes Stop without visible command instructions',
     (tester) async {
       final storage = StorageService();
       final service = _WaitingWebSocketService();
@@ -276,46 +303,40 @@ void main() {
 
       final input = find.byType(TextField);
       expect(input, findsOneWidget);
-      expect(
-        find.text('En attente de vérification — reprends, statut ou annuler…'),
-        findsOneWidget,
-      );
+      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
       expect(find.byIcon(Icons.add_rounded), findsOneWidget);
 
-      service.emitStatus('action_starting');
-      await tester.pump();
-      expect(find.text('Démarrage de l’action…'), findsOneWidget);
-      service.emitStatus('blocked_unknown_effect');
-      await tester.pump();
       expect(
-        find.text(
-          'Résultat impossible à établir — l’action n’a pas été répétée.',
-        ),
-        findsOneWidget,
+        find.textContaining(RegExp('statut|annuler|status|cancel')),
+        findsNothing,
       );
-      service.emitStatus('waiting_verification');
-      await tester.pump();
-
-      for (final command in <String>[
-        'reprends et vérifie',
-        'resume and verify the current action',
-        'ouvre une nouvelle recette',
+      for (final status in <String>[
+        'action_starting',
+        'action_in_progress',
+        'waiting_verification',
+        'verifying',
+        'resuming',
       ]) {
-        await tester.enterText(input, command);
+        service.emitStatus(status);
         await tester.pump();
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-        await tester.pump();
+        expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
       }
 
-      expect(service.waitingCommands, <String>[
-        'reprends et vérifie',
-        'resume and verify the current action',
-        'ouvre une nouvelle recette',
-      ]);
+      await tester.enterText(input, 'brouillon conservé');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.stop_rounded));
+      await tester.pump();
+
+      expect(service.cancellationControls, 1);
+      expect(service.waitingCommands, isEmpty);
       expect(service.normalTurns, isEmpty);
-      await tester.pump(const Duration(minutes: 6));
-      expect(find.text("OSIA didn't respond."), findsNothing);
-      expect(find.text('Retry'), findsNothing);
+      expect(find.text('brouillon conservé'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+      service.emitStatus('done');
+      await tester.pump();
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      expect(find.text('brouillon conservé'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
@@ -377,7 +398,7 @@ void main() {
     expect(sent.last['waiting_turn_command'], isTrue);
   });
 
-  testWidgets('busy composer sends cancel before an attempt exists', (
+  testWidgets('busy composer sends correlated Stop before an attempt exists', (
     tester,
   ) async {
     final storage = StorageService();
@@ -433,17 +454,15 @@ void main() {
 
     final input = find.byType(TextField);
     expect(input, findsOneWidget);
-    expect(
-      find.text('OSIA is working â€” type cancel before the action startsâ€¦'),
-      findsOneWidget,
-    );
-    await tester.enterText(input, 'cancel');
+    await tester.enterText(input, 'draft remains local');
     await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.tap(find.byIcon(Icons.stop_rounded));
     await tester.pump();
 
-    expect(service.waitingCommands, <String>['cancel']);
+    expect(service.cancellationControls, 1);
+    expect(service.waitingCommands, isEmpty);
     expect(service.normalTurns, isEmpty);
+    expect(find.text('draft remains local'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
     await tester.pump();

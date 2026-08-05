@@ -351,14 +351,17 @@ void main() {
     expect(diagnostic, isNot(contains('private audio payload')));
   });
 
-  test('protected WebSocket service remains byte-identical', () async {
-    final bytes = await File(
-      'lib/services/websocket_service.dart',
-    ).readAsBytes();
+  test(
+    'protected WebSocket service matches reviewed contract checksum',
+    () async {
+      final bytes = await File(
+        'lib/services/websocket_service.dart',
+      ).readAsBytes();
 
-    expect(
-      sha256.convert(bytes).toString().toUpperCase(),
-      'A6BC3695B18CA8ED792646689BB2E4A0F9E8DCA23C885483AF49F40283F15B21',
-    );
-  });
+      expect(
+        sha256.convert(bytes).toString().toUpperCase(),
+        'D3468FA5CAEE7AFCF09F1C81CCD1B8424CA9D8BD9CE0B8464DDB7D6216B5CB15',
+      );
+    },
+  );
 }

@@ -43,6 +43,9 @@ class GlassInputBar extends StatelessWidget {
   final bool isRecording;
   final bool hasText;
   final VoidCallback onSend;
+  final bool stopMode;
+  final bool stopRequested;
+  final VoidCallback? onStop;
   final VoidCallback onMicTap;
   final VoidCallback onAttach;
   final ValueChanged<String>? onChanged;
@@ -73,6 +76,9 @@ class GlassInputBar extends StatelessWidget {
     required this.isRecording,
     required this.hasText,
     required this.onSend,
+    this.stopMode = false,
+    this.stopRequested = false,
+    this.onStop,
     required this.onMicTap,
     required this.onAttach,
     required this.modelLabel,
@@ -232,7 +238,13 @@ class GlassInputBar extends StatelessWidget {
                     onTap: onMicTap,
                   ),
                   const SizedBox(width: 6),
-                  _GlassSendButton(active: enabled && hasText, onTap: onSend),
+                  _GlassSendButton(
+                    active: enabled && hasText,
+                    onTap: onSend,
+                    stopMode: stopMode,
+                    stopRequested: stopRequested,
+                    onStop: onStop,
+                  ),
                 ],
               ),
             ],
@@ -636,7 +648,16 @@ class _GlassMicButtonState extends State<_GlassMicButton>
 class _GlassSendButton extends StatelessWidget {
   final bool active;
   final VoidCallback onTap;
-  const _GlassSendButton({required this.active, required this.onTap});
+  final bool stopMode;
+  final bool stopRequested;
+  final VoidCallback? onStop;
+  const _GlassSendButton({
+    required this.active,
+    required this.onTap,
+    required this.stopMode,
+    required this.stopRequested,
+    required this.onStop,
+  });
 
   /// Rounded-square corner radius — a soft square rather than a full circle.
   static final BorderRadius _shape = BorderRadius.circular(14);
@@ -644,16 +665,31 @@ class _GlassSendButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final stopEnabled = stopMode && !stopRequested && onStop != null;
+    final buttonEnabled = stopMode ? stopEnabled : active;
+    final buttonColor = stopMode
+        ? palette.accent
+        : active
+        ? palette.accent
+        : palette.border.withValues(alpha: 0.4);
+    final foreground = buttonEnabled || stopRequested
+        ? (palette.isDark ? palette.background : Colors.white)
+        : palette.textMuted;
+    final label = stopMode
+        ? (strings.languageCode == 'fr' ? 'Arrêter' : 'Stop')
+        : (strings.languageCode == 'fr' ? 'Envoyer' : 'Send');
     // Plain Container: the fill colour is chosen directly from `active`, so the
     // button goes accent ↔ grey instantly (no morph) when text is typed or
     // cleared / the message is sent. Rounded-square shape (radius 14) unchanged.
     final btn = Container(
+      key: ValueKey(stopMode ? 'composer-stop-button' : 'composer-send-button'),
       width: 40,
       height: 40,
       decoration: BoxDecoration(
-        color: active ? palette.accent : palette.border.withValues(alpha: 0.4),
+        color: buttonColor,
         borderRadius: _shape,
-        boxShadow: active
+        boxShadow: buttonEnabled || stopRequested
             ? [
                 BoxShadow(
                   color: palette.accent.withValues(alpha: 0.35),
@@ -665,21 +701,32 @@ class _GlassSendButton extends StatelessWidget {
       ),
       child: InkWell(
         borderRadius: _shape,
-        onTap: active ? onTap : null,
+        onTap: buttonEnabled ? (stopMode ? onStop : onTap) : null,
         child: Center(
-          child: Icon(
-            Icons.arrow_upward_rounded,
-            size: 20,
-            color: active
-                ? (palette.isDark ? palette.background : Colors.white)
-                : palette.textMuted,
-          ),
+          child: stopRequested
+              ? SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    valueColor: AlwaysStoppedAnimation<Color>(foreground),
+                  ),
+                )
+              : Icon(
+                  stopMode ? Icons.stop_rounded : Icons.arrow_upward_rounded,
+                  size: 20,
+                  color: foreground,
+                ),
         ),
       ),
     );
     // Always wrap (stable identity) but only respond to presses while active —
     // a disabled send button shouldn't squeeze, and toggling active mustn't
     // tear down the press controller mid-tap.
-    return PressableScale(enabled: active, child: btn);
+    return Semantics(
+      button: true,
+      enabled: buttonEnabled,
+      label: label,
+      child: PressableScale(enabled: buttonEnabled, child: btn),
+    );
   }
 }

@@ -163,6 +163,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _busySub;
   StreamSubscription? _attachmentProtocolSub;
   StreamSubscription? _documentProgressSub;
+  StreamSubscription? _autonomousSub;
   String? _connError;
   final List<String> _abandonedAudioRequestIds = <String>[];
   String? _currentResponseAudioRequestId;
@@ -478,6 +479,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _documentProgressSub = _wsService.documentProgressStream.listen(
       _onDocumentProgress,
     );
+    _autonomousSub = _wsService.autonomousStream.listen((_) {
+      if (mounted) setState(() {});
+    });
 
     // AI-hierarchy state arrives on its own config channel (kept off the
     // sealed-message switch). Track it so the model selector can note when
@@ -731,7 +735,13 @@ class _ChatScreenState extends State<ChatScreen> {
         :final turnId,
         :final status,
       ):
-        final terminal = status == 'done' || status == 'error';
+        final terminal = const <String>{
+          'done',
+          'error',
+          'cancelled',
+          'canceled',
+          'rejected',
+        }.contains(status);
         if (!_isFrameForCurrentTurn(
           conversationId: conversationId,
           clientRequestId: clientRequestId,
@@ -2083,50 +2093,22 @@ class _ChatScreenState extends State<ChatScreen> {
     return id != null && id.isNotEmpty && _wsService.isConversationWaiting(id);
   }
 
-  String _waitingComposerHint(OsiaStrings strings) {
-    final id = _activeConversationId ?? '';
-    final status = _wsService.waitingTurnStatus(id);
-    final phase = switch (status) {
-      'action_starting' => 'starting',
-      'verifying' => 'verifying',
-      'resuming' => 'resuming',
-      'action_running' || 'action_in_progress' => 'running',
-      'cancellation_requested' => 'cancelling',
-      'blocked_unknown_effect' => 'blocked',
-      _ => 'waiting',
-    };
-    return switch (strings.languageCode) {
-      'fr' => switch (phase) {
-        'starting' => 'Démarrage de l’action…',
-        'verifying' => 'Vérification en cours — écrivez statut ou annuler…',
-        'resuming' => 'Reprise de l’action en cours…',
-        'running' => 'Action en cours — écrivez statut ou annuler…',
-        'cancelling' => 'Annulation demandée — vérification en cours…',
-        'blocked' =>
-          'Résultat impossible à établir — l’action n’a pas été répétée.',
-        _ => 'En attente de vérification — reprends, statut ou annuler…',
-      },
-      'zh' => '正在等待验证 — 输入 resume、status 或 cancel…',
-      'ja' => '検証待ち — resume、status、cancel を入力…',
-      'de' => 'Warten auf Prüfung — resume, status oder cancel…',
-      'es' => 'Esperando verificación — resume, status o cancel…',
-      _ => switch (phase) {
-        'starting' => 'Starting the action…',
-        'verifying' => 'Verification in progress — type status or cancel…',
-        'resuming' => 'Resuming the current action…',
-        'running' => 'Action running — type status or cancel…',
-        'cancelling' => 'Cancellation requested — checking state…',
-        'blocked' =>
-          'The result could not be established — the action was not repeated.',
-        _ => 'Waiting for verification — type resume, status, or cancel…',
-      },
-    };
-  }
+  bool get _activeChatWork =>
+      _awaitingResponse ||
+      (_activeConversationId?.isNotEmpty == true &&
+          _wsService.isConversationWorkActive(_activeConversationId!));
 
-  String _busyCancellationHint(OsiaStrings strings) =>
-      strings.languageCode == 'fr'
-      ? 'OSIA travaille â€” Ã©crivez annuler avant le dÃ©marrage de lâ€™actionâ€¦'
-      : 'OSIA is working â€” type cancel before the action startsâ€¦';
+  bool get _activeWork => _activeChatWork || _wsService.hasActiveAutonomousWork;
+
+  bool get _stopRequested {
+    if (_activeChatWork) {
+      return _wsService.isConversationCancellationRequested(
+        _activeConversationId ?? '',
+        clientRequestId: _pendingTurn?.clientRequestId ?? '',
+      );
+    }
+    return _wsService.autonomousCancellationRequested;
+  }
 
   int get _pendingAttachmentBytes =>
       _pendingAttachments.fold<int>(0, (sum, file) => sum + file.byteSize);
@@ -2166,19 +2148,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool get _canSend {
     final text = _textCtrl.text.trim();
-    if (_activeConversationWaiting) {
-      return !_attachmentInteractionLocked &&
-          _pendingAttachments.isEmpty &&
-          text.isNotEmpty &&
-          text.length <= 160;
-    }
-    if (_activeConversationBusy) {
-      return !_attachmentInteractionLocked &&
-          _pendingAttachments.isEmpty &&
-          text.length <= 160 &&
-          ws.isWaitingTurnCancelCommand(text);
-    }
-    return !_activeConversationBusy &&
+    return !_activeWork &&
         !_attachmentInteractionLocked &&
         (text.isNotEmpty || _pendingAttachments.isNotEmpty);
   }
@@ -2207,59 +2177,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendText() async {
     _wsService.setClientLocale(widget.languageController.code);
+    if (_activeWork) return;
     final text = _textCtrl.text.trim();
     final attachments = List<PreparedAttachment>.of(_pendingAttachments);
     final hasFiles = attachments.isNotEmpty;
     if (text.isEmpty && !hasFiles || _attachmentInteractionLocked) return;
-    if (_activeConversationWaiting) {
-      final conversationId = _activeConversationId ?? '';
-      if (hasFiles || text.length > 160) return;
-      final sent = _wsService.sendWaitingTurnCommand(
-        text,
-        conversationId: conversationId,
-        allowPreDispatchCancel: true,
-      );
-      if (!sent) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('The waiting command was not sent.')),
-        );
-        return;
-      }
-      _textCtrl.clear();
-      _cancelFirstTokenTimer();
-      setState(() {
-        _awaitingResponse = true;
-        _thinking = true;
-        _noResponse = false;
-      });
-      return;
-    }
-    if (_activeConversationBusy) {
-      final conversationId = _activeConversationId ?? '';
-      if (!hasFiles && ws.isWaitingTurnCancelCommand(text)) {
-        final sent = _wsService.sendWaitingTurnCommand(
-          text,
-          conversationId: conversationId,
-          allowPreDispatchCancel: true,
-        );
-        if (sent) {
-          _textCtrl.clear();
-          _cancelFirstTokenTimer();
-          setState(() {
-            _awaitingResponse = true;
-            _thinking = true;
-            _noResponse = false;
-          });
-          return;
-        }
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('OSIA is still working in this conversation.'),
-        ),
-      );
-      return;
-    }
     final sendingConv = _activeConversationId;
     final strings = OsiaL10n.of(context);
     final names = attachments.map((file) => file.displayName).join(', ');
@@ -2410,6 +2332,16 @@ class _ChatScreenState extends State<ChatScreen> {
     _stopRecoveryPoll();
     _armFirstTokenTimer();
     _speakRequested = false;
+  }
+
+  void _stopActiveWork() {
+    final sent = _activeChatWork
+        ? _wsService.requestChatCancellation(
+            conversationId: _activeConversationId ?? '',
+            clientRequestId: _pendingTurn?.clientRequestId ?? '',
+          )
+        : _wsService.requestAutonomousCancellation();
+    if (sent && mounted) setState(() {});
   }
 
   /// Arm (or re-arm) the no-response watchdog. Fires [_onFirstTokenTimeout]
@@ -3271,6 +3203,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _busySub?.cancel();
     _attachmentProtocolSub?.cancel();
     _documentProgressSub?.cancel();
+    _autonomousSub?.cancel();
     widget.connectionLifecycle.detach(_wsService);
     _wsService.dispose();
     _audioService.dispose();
@@ -3445,22 +3378,20 @@ class _ChatScreenState extends State<ChatScreen> {
               textController: _textCtrl,
               focusNode: _inputFocusNode,
               enabled: !_attachmentInteractionLocked,
-              hintText: _activeConversationWaiting
-                  ? _waitingComposerHint(strings)
-                  : _activeConversationBusy
-                  ? _busyCancellationHint(strings)
-                  : null,
-              auxiliaryControlsEnabled:
-                  !_activeConversationWaiting && !_activeConversationBusy,
+              hintText: null,
+              auxiliaryControlsEnabled: !_activeWork,
               isRecording: _audioService.isRecording,
               hasText: _canSend,
               onSend: _sendText,
+              stopMode: _activeWork,
+              stopRequested: _stopRequested,
+              onStop: _stopActiveWork,
               onMicTap: _toggleRecording,
               onAttach: _onAttach,
               modelLabel: _currentModelLabel(strings),
               onModelTap: _openModelSelector,
               onChanged: (_) => setState(() {}),
-              onSubmitted: (_) => _sendText(),
+              onSubmitted: _activeWork ? null : (_) => _sendText(),
               pendingAttachments: [
                 for (final file in _pendingAttachments)
                   ComposerAttachment(
@@ -3468,9 +3399,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     byteSize: file.byteSize,
                   ),
               ],
-              onRemoveAttachment: (index) =>
-                  unawaited(_removePendingAttachment(index)),
-              onClearAttachments: () => unawaited(_clearPendingAttachments()),
+              onRemoveAttachment: _activeWork
+                  ? null
+                  : (index) => unawaited(_removePendingAttachment(index)),
+              onClearAttachments: _activeWork
+                  ? null
+                  : () => unawaited(_clearPendingAttachments()),
               attachmentStatus: _documentAttachmentStatusLabel(strings),
               attachmentProgress: _attachmentProgress?.fraction ?? 0,
               attachmentBusy: _attachmentInteractionLocked,
