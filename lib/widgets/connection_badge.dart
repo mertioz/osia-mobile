@@ -18,12 +18,12 @@ class ConnectionBadge extends StatelessWidget {
     final palette = OsiaTheme.of(context);
     final strings = OsiaL10n.of(context);
     final (Color dotColor, String label) = switch (state) {
-      ws.ConnectionState.connected =>
-        (const Color(0xFF22C55E), strings.connected),
-      ws.ConnectionState.connecting =>
-        (const Color(0xFFEAB308), strings.connectingStatus),
-      ws.ConnectionState.disconnected =>
-        (palette.error, strings.disconnected),
+      ws.ConnectionState.connected => (palette.success, strings.connected),
+      ws.ConnectionState.connecting => (
+        palette.warning,
+        strings.connectingStatus,
+      ),
+      ws.ConnectionState.disconnected => (palette.error, strings.disconnected),
     };
 
     return Tooltip(

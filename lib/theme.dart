@@ -21,6 +21,9 @@ class OsiaPalette {
   final Color assistantBubble;
   final Color thinking;
   final Color error;
+  final Color success;
+  final Color warning;
+  final Color info;
   final bool isDark;
   final Color swatch;
 
@@ -39,6 +42,9 @@ class OsiaPalette {
     required this.assistantBubble,
     required this.thinking,
     required this.error,
+    required this.success,
+    required this.warning,
+    required this.info,
     required this.isDark,
     required this.swatch,
   });
@@ -85,6 +91,9 @@ const OsiaPalette osiaPaletteViolet = OsiaPalette(
   assistantBubble: Color(0xFF181426),
   thinking: _kIndicatorViolet,
   error: Color(0xFFEF4444),
+  success: Color(0xFF22C55E),
+  warning: Color(0xFFEAB308),
+  info: Color(0xFF38BDF8),
   isDark: true,
   swatch: Color(0xFFC4B5F5),
 );
@@ -104,6 +113,9 @@ const OsiaPalette osiaPaletteRose = OsiaPalette(
   assistantBubble: Color(0xFF22161B),
   thinking: _kIndicatorViolet,
   error: Color(0xFFEF4444),
+  success: Color(0xFF22C55E),
+  warning: Color(0xFFEAB308),
+  info: Color(0xFF38BDF8),
   isDark: true,
   swatch: Color(0xFFF5B5C4),
 );
@@ -123,6 +135,9 @@ const OsiaPalette osiaPaletteNoir = OsiaPalette(
   assistantBubble: Color(0xFF101010),
   thinking: _kIndicatorViolet,
   error: Color(0xFFEF4444),
+  success: Color(0xFF22C55E),
+  warning: Color(0xFFEAB308),
+  info: Color(0xFF38BDF8),
   isDark: true,
   swatch: Color(0xFF1A1A1A),
 );
@@ -142,6 +157,9 @@ const OsiaPalette osiaPaletteBlanc = OsiaPalette(
   assistantBubble: Color(0xFFFFFFFF),
   thinking: _kIndicatorViolet,
   error: Color(0xFFD93030),
+  success: Color(0xFF168A4B),
+  warning: Color(0xFF9A6700),
+  info: Color(0xFF006E9C),
   isDark: false,
   swatch: Color(0xFFFFFFFF),
 );
@@ -161,8 +179,55 @@ const OsiaPalette osiaPaletteDore = OsiaPalette(
   assistantBubble: Color(0xFF1F1A12),
   thinking: _kIndicatorViolet,
   error: Color(0xFFEF4444),
+  success: Color(0xFF22C55E),
+  warning: Color(0xFFEAB308),
+  info: Color(0xFF38BDF8),
   isDark: true,
   swatch: Color(0xFFE6C97A),
+);
+
+const OsiaPalette osiaPaletteRed = OsiaPalette(
+  key: 'red',
+  label: 'Red',
+  background: Color(0xFF120B0C),
+  accent: Color(0xFFF29B93),
+  secondary: Color(0xFFB84F5A),
+  surface: Color(0xFF221617),
+  surfaceElevated: Color(0xFF2E1D1F),
+  border: Color(0xFF3D2729),
+  textPrimary: Color(0xFFFFF4F3),
+  textMuted: Color(0xFFA18E8D),
+  userBubble: Color(0xFF382326),
+  assistantBubble: Color(0xFF211617),
+  thinking: _kIndicatorViolet,
+  error: Color(0xFFFF5D73),
+  success: Color(0xFF3DDC84),
+  warning: Color(0xFFF4C15D),
+  info: Color(0xFF62B7F5),
+  isDark: true,
+  swatch: Color(0xFFF29B93),
+);
+
+const OsiaPalette osiaPaletteGreen = OsiaPalette(
+  key: 'green',
+  label: 'Green',
+  background: Color(0xFF0A110E),
+  accent: Color(0xFF8BD7A5),
+  secondary: Color(0xFF3A9564),
+  surface: Color(0xFF142019),
+  surfaceElevated: Color(0xFF1B2B22),
+  border: Color(0xFF263A2E),
+  textPrimary: Color(0xFFF1FBF4),
+  textMuted: Color(0xFF8FA298),
+  userBubble: Color(0xFF1F3428),
+  assistantBubble: Color(0xFF142019),
+  thinking: _kIndicatorViolet,
+  error: Color(0xFFFF667A),
+  success: Color(0xFF38C77A),
+  warning: Color(0xFFF1BC57),
+  info: Color(0xFF65B8F7),
+  isDark: true,
+  swatch: Color(0xFF8BD7A5),
 );
 
 const List<OsiaPalette> osiaPalettes = <OsiaPalette>[
@@ -171,6 +236,8 @@ const List<OsiaPalette> osiaPalettes = <OsiaPalette>[
   osiaPaletteNoir,
   osiaPaletteBlanc,
   osiaPaletteDore,
+  osiaPaletteRed,
+  osiaPaletteGreen,
 ];
 
 /// Resolve a palette by its [OsiaPalette.key]. Falls back to violet for

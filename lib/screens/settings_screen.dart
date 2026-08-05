@@ -513,7 +513,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       style: TextStyle(fontSize: 13, color: palette.textMuted),
                     ),
                     const SizedBox(height: 14),
-                    _ThemeSwatchRow(
+                    AccentThemeSelector(
                       currentKey: widget.themeController.palette.key,
                       onTap: _onPickTheme,
                       palette: palette,
@@ -745,14 +745,15 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
-// ── Theme swatches ────────────────────────────────────────────────────────
+// ── Accent theme selector ─────────────────────────────────────────────────
 
-class _ThemeSwatchRow extends StatelessWidget {
+class AccentThemeSelector extends StatelessWidget {
   final String currentKey;
   final ValueChanged<String> onTap;
   final OsiaPalette palette;
   final OsiaStrings strings;
-  const _ThemeSwatchRow({
+  const AccentThemeSelector({
+    super.key,
     required this.currentKey,
     required this.onTap,
     required this.palette,
@@ -761,89 +762,145 @@ class _ThemeSwatchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        for (final p in osiaPalettes)
-          _ThemeSwatch(
-            target: p,
-            label: strings.themeName(p.key),
-            isActive: p.key == currentKey,
-            highlight: palette.accent,
-            muted: palette.textMuted,
-            onTap: () => onTap(p.key),
-          ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = 10.0;
+        final columns = constraints.maxWidth >= 280 ? 2 : 1;
+        final optionWidth =
+            (constraints.maxWidth - spacing * (columns - 1)) / columns;
+        return Wrap(
+          key: const Key('accent-theme-selector'),
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final target in osiaPalettes)
+              SizedBox(
+                width: optionWidth,
+                child: _AccentThemeOption(
+                  target: target,
+                  label: strings.themeName(target.key),
+                  isActive: target.key == currentKey,
+                  palette: palette,
+                  onTap: () => onTap(target.key),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
 
-class _ThemeSwatch extends StatelessWidget {
+class _AccentThemeOption extends StatelessWidget {
   final OsiaPalette target;
   final String label;
   final bool isActive;
-  final Color highlight;
-  final Color muted;
+  final OsiaPalette palette;
   final VoidCallback onTap;
-  const _ThemeSwatch({
+  const _AccentThemeOption({
     required this.target,
     required this.label,
     required this.isActive,
-    required this.highlight,
-    required this.muted,
+    required this.palette,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        PressableScale(
-          child: GestureDetector(
+    final highlight = palette.accent;
+    return Semantics(
+      key: Key('theme-option-${target.key}'),
+      button: true,
+      selected: isActive,
+      label: label,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: PressableScale(
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
             onTap: onTap,
+            excludeFromSemantics: true,
+            borderRadius: BorderRadius.circular(14),
+            focusColor: highlight.withValues(alpha: 0.14),
+            hoverColor: highlight.withValues(alpha: 0.08),
             child: AnimatedContainer(
-              duration: MotionDurations.medium,
-              curve: MotionCurves.enter,
-              width: 44,
-              height: 44,
+              duration: Motion.duration(context, MotionDurations.medium),
+              curve: Motion.curve(context, MotionCurves.enter),
+              constraints: const BoxConstraints(minHeight: 64),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: target.swatch,
+                color: isActive
+                    ? highlight.withValues(alpha: 0.10)
+                    : palette.background.withValues(
+                        alpha: palette.isDark ? 0.54 : 0.32,
+                      ),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: isActive ? highlight : muted.withValues(alpha: 0.3),
-                  width: isActive ? 2.2 : 1,
+                  color: isActive ? highlight : palette.border,
+                  width: isActive ? 1.6 : 0.8,
                 ),
                 boxShadow: isActive
                     ? [
                         BoxShadow(
-                          color: highlight.withValues(alpha: 0.4),
-                          blurRadius: 10,
-                          spreadRadius: 1,
+                          color: highlight.withValues(alpha: 0.22),
+                          blurRadius: 12,
+                          spreadRadius: 0.5,
                         ),
                       ]
                     : null,
               ),
-              child: isActive
-                  ? Icon(
-                      Icons.check_rounded,
-                      size: 20,
-                      color: target.foregroundOn(target.swatch),
-                    )
-                  : null,
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: target.swatch,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: target
+                            .foregroundOn(target.swatch)
+                            .withValues(alpha: 0.28),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: isActive
+                            ? FontWeight.w600
+                            : FontWeight.w500,
+                        color: isActive ? highlight : palette.textPrimary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  AnimatedSwitcher(
+                    duration: Motion.duration(context, MotionDurations.fast),
+                    child: isActive
+                        ? Icon(
+                            Icons.check_circle_rounded,
+                            key: const ValueKey('selected'),
+                            size: 20,
+                            color: highlight,
+                          )
+                        : const SizedBox(
+                            key: ValueKey('unselected'),
+                            width: 20,
+                            height: 20,
+                          ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-        const SizedBox(height: 6),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-            color: isActive ? highlight : muted,
-          ),
-        ),
-      ],
+      ),
     );
   }
 }

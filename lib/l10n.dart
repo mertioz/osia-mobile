@@ -432,6 +432,8 @@ class OsiaStrings {
   final String themeNoir;
   final String themeBlanc;
   final String themeDore;
+  final String themeRed;
+  final String themeGreen;
 
   const OsiaStrings({
     required this.languageCode,
@@ -790,6 +792,8 @@ class OsiaStrings {
     required this.themeNoir,
     required this.themeBlanc,
     required this.themeDore,
+    required this.themeRed,
+    required this.themeGreen,
   });
 
   // ── Parameterized helpers ──
@@ -1489,6 +1493,10 @@ class OsiaStrings {
         return themeBlanc;
       case 'dore':
         return themeDore;
+      case 'red':
+        return themeRed;
+      case 'green':
+        return themeGreen;
     }
     return paletteKey;
   }
@@ -2045,6 +2053,8 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   themeNoir: 'Black',
   themeBlanc: 'White',
   themeDore: 'Gold',
+  themeRed: 'Red',
+  themeGreen: 'Green',
 );
 
 // ── French ────────────────────────────────────────────────────────────────
@@ -2446,6 +2456,8 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   themeNoir: 'Noir',
   themeBlanc: 'Blanc',
   themeDore: 'Doré',
+  themeRed: 'Rouge',
+  themeGreen: 'Vert',
 );
 
 // ── Chinese (Simplified) ──────────────────────────────────────────────────
@@ -2813,6 +2825,8 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   themeNoir: '黑色',
   themeBlanc: '白色',
   themeDore: '金色',
+  themeRed: '红色',
+  themeGreen: '绿色',
 );
 
 // ── Japanese ──────────────────────────────────────────────────────────────
@@ -3189,6 +3203,8 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   themeNoir: 'ブラック',
   themeBlanc: 'ホワイト',
   themeDore: 'ゴールド',
+  themeRed: 'レッド',
+  themeGreen: 'グリーン',
 );
 
 // ── German ────────────────────────────────────────────────────────────────
@@ -3598,6 +3614,8 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   themeNoir: 'Schwarz',
   themeBlanc: 'Weiß',
   themeDore: 'Gold',
+  themeRed: 'Rot',
+  themeGreen: 'Grün',
 );
 
 // ── Spanish ───────────────────────────────────────────────────────────────
@@ -3998,6 +4016,8 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   themeNoir: 'Negro',
   themeBlanc: 'Blanco',
   themeDore: 'Dorado',
+  themeRed: 'Rojo',
+  themeGreen: 'Verde',
 );
 
 // ── Lookup ────────────────────────────────────────────────────────────────

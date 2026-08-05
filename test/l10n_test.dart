@@ -32,7 +32,15 @@ void main() {
 
     test('theme names cover all palette keys', () {
       for (final s in osiaAllStrings) {
-        for (final key in ['violet', 'rose', 'noir', 'blanc', 'dore']) {
+        for (final key in [
+          'violet',
+          'rose',
+          'noir',
+          'blanc',
+          'dore',
+          'red',
+          'green',
+        ]) {
           expect(s.themeName(key), isNotEmpty);
           // Unknown keys fall back to the raw key rather than crashing.
           expect(s.themeName('unknown'), 'unknown');
