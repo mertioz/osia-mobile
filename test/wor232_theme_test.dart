@@ -19,6 +19,30 @@ const _existingPaletteKeys = <String>[
   'dore',
 ];
 
+const _previousRedAccent = Color(0xFFF29B93);
+
+List<Object> _paletteSnapshot(OsiaPalette palette) => <Object>[
+  palette.key,
+  palette.label,
+  palette.background,
+  palette.accent,
+  palette.secondary,
+  palette.surface,
+  palette.surfaceElevated,
+  palette.border,
+  palette.textPrimary,
+  palette.textMuted,
+  palette.userBubble,
+  palette.assistantBubble,
+  palette.thinking,
+  palette.error,
+  palette.success,
+  palette.warning,
+  palette.info,
+  palette.isDark,
+  palette.swatch,
+];
+
 double _contrastRatio(Color foreground, Color background) {
   final foregroundLuminance = foreground.computeLuminance();
   final backgroundLuminance = background.computeLuminance();
@@ -166,6 +190,188 @@ void main() {
         expect(osiaPaletteGreen.accent, isNot(osiaPaletteGreen.success));
       },
     );
+
+    test('red uses a deeper saturated ruby palette', () {
+      expect(_paletteSnapshot(osiaPaletteRed), <Object>[
+        'red',
+        'Red',
+        const Color(0xFF10090B),
+        const Color(0xFFE64256),
+        const Color(0xFFA72D3C),
+        const Color(0xFF201214),
+        const Color(0xFF2B171B),
+        const Color(0xFF482128),
+        const Color(0xFFFFF4F3),
+        const Color(0xFFA18E8D),
+        const Color(0xFF36191E),
+        const Color(0xFF201214),
+        const Color(0xFFC4B5F5),
+        const Color(0xFFFF5D73),
+        const Color(0xFF3DDC84),
+        const Color(0xFFF4C15D),
+        const Color(0xFF62B7F5),
+        true,
+        const Color(0xFFE64256),
+      ]);
+      expect(osiaPaletteRed.accent, isNot(_previousRedAccent));
+
+      final previous = HSVColor.fromColor(_previousRedAccent);
+      final ruby = HSVColor.fromColor(osiaPaletteRed.accent);
+      expect(ruby.saturation, greaterThan(previous.saturation + 0.25));
+      expect(ruby.value, lessThan(previous.value - 0.04));
+    });
+
+    test('red accent remains distinct from its brighter error token', () {
+      final ruby = HSVColor.fromColor(osiaPaletteRed.accent);
+      final error = HSVColor.fromColor(osiaPaletteRed.error);
+      final rubyHsl = HSLColor.fromColor(osiaPaletteRed.accent);
+      final errorHsl = HSLColor.fromColor(osiaPaletteRed.error);
+
+      expect(osiaPaletteRed.accent, isNot(osiaPaletteRed.error));
+      expect(error.value, greaterThanOrEqualTo(ruby.value + 0.09));
+      expect(errorHsl.saturation, greaterThan(rubyHsl.saturation));
+    });
+
+    test('all non-red palette tokens remain unchanged', () {
+      expect(
+        <List<Object>>[
+          _paletteSnapshot(osiaPaletteViolet),
+          _paletteSnapshot(osiaPaletteRose),
+          _paletteSnapshot(osiaPaletteNoir),
+          _paletteSnapshot(osiaPaletteBlanc),
+          _paletteSnapshot(osiaPaletteDore),
+          _paletteSnapshot(osiaPaletteGreen),
+        ],
+        <List<Object>>[
+          <Object>[
+            'violet',
+            'Violet',
+            const Color(0xFF0D0B12),
+            const Color(0xFFC4B5F5),
+            const Color(0xFF7C3AED),
+            const Color(0xFF1A1625),
+            const Color(0xFF221C30),
+            const Color(0xFF2A2438),
+            const Color(0xFFF5F3FF),
+            const Color(0xFF8B8A90),
+            const Color(0xFF2A2440),
+            const Color(0xFF181426),
+            const Color(0xFFC4B5F5),
+            const Color(0xFFEF4444),
+            const Color(0xFF22C55E),
+            const Color(0xFFEAB308),
+            const Color(0xFF38BDF8),
+            true,
+            const Color(0xFFC4B5F5),
+          ],
+          <Object>[
+            'rose',
+            'Rose',
+            const Color(0xFF120B0E),
+            const Color(0xFFF5B5C4),
+            const Color(0xFFED4F87),
+            const Color(0xFF22161B),
+            const Color(0xFF2E1B22),
+            const Color(0xFF3A2530),
+            const Color(0xFFFFF3F6),
+            const Color(0xFF9C8B91),
+            const Color(0xFF38222A),
+            const Color(0xFF22161B),
+            const Color(0xFFC4B5F5),
+            const Color(0xFFEF4444),
+            const Color(0xFF22C55E),
+            const Color(0xFFEAB308),
+            const Color(0xFF38BDF8),
+            true,
+            const Color(0xFFF5B5C4),
+          ],
+          <Object>[
+            'noir',
+            'Noir',
+            const Color(0xFF000000),
+            const Color(0xFFEDEDED),
+            const Color(0xFF6B6B6B),
+            const Color(0xFF101010),
+            const Color(0xFF1A1A1A),
+            const Color(0xFF262626),
+            const Color(0xFFFFFFFF),
+            const Color(0xFF8A8A8A),
+            const Color(0xFF1F1F1F),
+            const Color(0xFF101010),
+            const Color(0xFFC4B5F5),
+            const Color(0xFFEF4444),
+            const Color(0xFF22C55E),
+            const Color(0xFFEAB308),
+            const Color(0xFF38BDF8),
+            true,
+            const Color(0xFF1A1A1A),
+          ],
+          <Object>[
+            'blanc',
+            'Blanc',
+            const Color(0xFFFAF8FF),
+            const Color(0xFF7C3AED),
+            const Color(0xFF5B21B6),
+            const Color(0xFFFFFFFF),
+            const Color(0xFFF3EFFB),
+            const Color(0xFFE5DEF6),
+            const Color(0xFF14101F),
+            const Color(0xFF6E6B7A),
+            const Color(0xFFEDE5FE),
+            const Color(0xFFFFFFFF),
+            const Color(0xFFC4B5F5),
+            const Color(0xFFD93030),
+            const Color(0xFF168A4B),
+            const Color(0xFF9A6700),
+            const Color(0xFF006E9C),
+            false,
+            const Color(0xFFFFFFFF),
+          ],
+          <Object>[
+            'dore',
+            'Doré',
+            const Color(0xFF110E0A),
+            const Color(0xFFE6C97A),
+            const Color(0xFFC79D3E),
+            const Color(0xFF1F1A12),
+            const Color(0xFF2B2419),
+            const Color(0xFF3A301F),
+            const Color(0xFFFAF1DC),
+            const Color(0xFF9C8C6E),
+            const Color(0xFF2B2419),
+            const Color(0xFF1F1A12),
+            const Color(0xFFC4B5F5),
+            const Color(0xFFEF4444),
+            const Color(0xFF22C55E),
+            const Color(0xFFEAB308),
+            const Color(0xFF38BDF8),
+            true,
+            const Color(0xFFE6C97A),
+          ],
+          <Object>[
+            'green',
+            'Green',
+            const Color(0xFF0A110E),
+            const Color(0xFF8BD7A5),
+            const Color(0xFF3A9564),
+            const Color(0xFF142019),
+            const Color(0xFF1B2B22),
+            const Color(0xFF263A2E),
+            const Color(0xFFF1FBF4),
+            const Color(0xFF8FA298),
+            const Color(0xFF1F3428),
+            const Color(0xFF142019),
+            const Color(0xFFC4B5F5),
+            const Color(0xFFFF667A),
+            const Color(0xFF38C77A),
+            const Color(0xFFF1BC57),
+            const Color(0xFF65B8F7),
+            true,
+            const Color(0xFF8BD7A5),
+          ],
+        ],
+      );
+    });
   });
 
   group('accent selector', () {
