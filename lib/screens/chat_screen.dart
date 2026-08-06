@@ -2098,16 +2098,14 @@ class _ChatScreenState extends State<ChatScreen> {
       (_activeConversationId?.isNotEmpty == true &&
           _wsService.isConversationWorkActive(_activeConversationId!));
 
-  bool get _activeWork => _activeChatWork || _wsService.hasActiveAutonomousWork;
+  bool get _activeWork => _activeChatWork;
 
   bool get _stopRequested {
-    if (_activeChatWork) {
-      return _wsService.isConversationCancellationRequested(
-        _activeConversationId ?? '',
-        clientRequestId: _pendingTurn?.clientRequestId ?? '',
-      );
-    }
-    return _wsService.autonomousCancellationRequested;
+    return _activeChatWork &&
+        _wsService.isConversationCancellationRequested(
+          _activeConversationId ?? '',
+          clientRequestId: _pendingTurn?.clientRequestId ?? '',
+        );
   }
 
   int get _pendingAttachmentBytes =>
@@ -2335,12 +2333,11 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _stopActiveWork() {
-    final sent = _activeChatWork
-        ? _wsService.requestChatCancellation(
-            conversationId: _activeConversationId ?? '',
-            clientRequestId: _pendingTurn?.clientRequestId ?? '',
-          )
-        : _wsService.requestAutonomousCancellation();
+    if (!_activeChatWork) return;
+    final sent = _wsService.requestChatCancellation(
+      conversationId: _activeConversationId ?? '',
+      clientRequestId: _pendingTurn?.clientRequestId ?? '',
+    );
     if (sent && mounted) setState(() {});
   }
 

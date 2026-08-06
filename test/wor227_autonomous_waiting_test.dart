@@ -105,6 +105,18 @@ void main() {
     expect(service.autonomousProgress?.terminal, isFalse);
   });
 
+  test('terminal failure outranks its preserved unknown-effect run state', () {
+    const progress = ws.AutonomousProgressMessage(
+      event: 'failed',
+      terminal: true,
+      status: 'failed',
+      runState: 'blocked_unknown_effect',
+      durableState: '',
+    );
+
+    expect(autonomousRunLifecycleForTest(progress), 'failed');
+  });
+
   test('durable Autonomous labels are explicit in French and English', () {
     expect(
       autonomousDurableStateLabel(osiaStringsFr, 'waiting_tool'),

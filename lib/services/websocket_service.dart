@@ -1482,6 +1482,8 @@ class AutonomousProgressMessage {
   final int? policyEpoch;
   final String? runState;
   final String? durableState;
+  final String? abandonState;
+  final String? abandonEffectState;
   final String? authorizationStatus;
   final String? authorizationSource;
   final int? grantCount;
@@ -1532,6 +1534,8 @@ class AutonomousProgressMessage {
     this.policyEpoch,
     this.runState,
     this.durableState,
+    this.abandonState,
+    this.abandonEffectState,
     this.authorizationStatus,
     this.authorizationSource,
     this.grantCount,
@@ -1646,6 +1650,11 @@ class AutonomousProgressMessage {
       policyEpoch: pickInt(['policy_epoch', 'policyEpoch']),
       runState: pickStr(['run_state', 'runState']),
       durableState: pickStr(['durable_state', 'durableState']),
+      abandonState: pickStr(['abandon_state', 'abandonState']),
+      abandonEffectState: pickStr([
+        'abandon_effect_state',
+        'abandonEffectState',
+      ]),
       authorizationStatus: pickStr([
         'authorization_status',
         'authorizationStatus',
@@ -2694,6 +2703,8 @@ class WebSocketService {
   bool _awaitingAutonomousSnapshot = true;
   bool _expectNewAutonomousRun = false;
   AutonomousProgressMessage? _autonomousProgress;
+  String _autonomousAbandonState = '';
+  String _autonomousAbandonEffectState = '';
   String _browserProgressSessionId = '';
   String _browserProgressRunId = '';
   final Set<String> _retiredBrowserProgressSessions = <String>{};
@@ -3153,6 +3164,32 @@ class WebSocketService {
       _autonomousProgress?.durableState == 'cancellation_requested' ||
       _autonomousProgress?.runState == 'cancellation_requested';
 
+  String get autonomousAbandonState => _autonomousAbandonState;
+
+  String get autonomousAbandonEffectState => _autonomousAbandonEffectState;
+
+  bool get canAbandonAutonomousWork {
+    final progress = _autonomousProgress;
+    final runId = progress?.runId ?? '';
+    if (progress == null || runId.isEmpty || runId == 'idle') return false;
+    if (_autonomousAbandonState == 'abandoned_proven' ||
+        progress.abandonState == 'abandoned_proven') {
+      return false;
+    }
+    if (progress.terminal == true) {
+      return const <String>{'failed', 'plan_failed'}.contains(progress.event) ||
+          progress.status == 'failed' ||
+          progress.runState == 'failed';
+    }
+    return !const <String>{
+      'idle',
+      'busy',
+      'done',
+      'aborted',
+      'cancelled',
+    }.contains(progress.event);
+  }
+
   static String newClientRequestId() {
     final random = Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));
@@ -3549,8 +3586,39 @@ class WebSocketService {
   }
 
   void _handleCancellationControl(Map<String, dynamic> json) {
-    if (json['state'] != 'rejected') return;
     final scope = json['scope']?.toString() ?? '';
+    final state = json['state']?.toString() ?? '';
+    if (scope == 'autonomous' && state == 'accepted') {
+      final runId = json['run_id']?.toString() ?? '';
+      final currentRunId = _autonomousProgress?.runId ?? '';
+      if (runId.isEmpty || runId != currentRunId) return;
+      final abandonState = json['abandon_state']?.toString() ?? '';
+      final abandonEffectState = json['abandon_effect_state']?.toString() ?? '';
+      if (!const <String>{
+            'abandon_requested',
+            'abandoned_proven',
+          }.contains(abandonState) ||
+          !const <String>{
+            'no_current_effect',
+            'no_effect_proven',
+            'effect_confirmed',
+            'effect_possible_or_unknown',
+          }.contains(abandonEffectState)) {
+        return;
+      }
+      _autonomousAbandonState = abandonState;
+      _autonomousAbandonEffectState = abandonEffectState;
+      if (abandonState == 'abandoned_proven' &&
+          _autonomousCancellationTarget.startsWith('$runId\u0000')) {
+        _autonomousCancellationTarget = '';
+      }
+      final progress = _autonomousProgress;
+      if (progress != null && !_autonomousCtrl.isClosed) {
+        _autonomousCtrl.add(progress);
+      }
+      return;
+    }
+    if (state != 'rejected') return;
     if (scope == 'chat') {
       final requestId =
           json['request_id']?.toString() ??
@@ -4143,7 +4211,7 @@ class WebSocketService {
   bool requestAutonomousCancellation() {
     final progress = _autonomousProgress;
     final runId = progress?.runId ?? '';
-    if (!hasActiveAutonomousWork || runId.isEmpty || runId == 'idle') {
+    if (!canAbandonAutonomousWork || runId.isEmpty || runId == 'idle') {
       return false;
     }
     final taskId = progress?.taskId ?? '';
@@ -4677,6 +4745,8 @@ class WebSocketService {
     }
     _expectNewAutonomousRun = true;
     _autonomousCancellationTarget = '';
+    _autonomousAbandonState = '';
+    _autonomousAbandonEffectState = '';
     return _send({
       'type': 'autonomous_start',
       'objective': objective,
@@ -4773,7 +4843,7 @@ class WebSocketService {
 
   /// Abandon the current autonomous run entirely (not resumable).
   void sendAutonomousAbort() {
-    _send({'type': 'autonomous_abort'});
+    requestAutonomousCancellation();
   }
 
   /// Ask the PC for the current autonomous-run status, so a client that
@@ -5151,6 +5221,8 @@ class WebSocketService {
     final progress = json['safe_progress_text'] as String;
     final event = (json['event'] ?? '').toString().toLowerCase();
     final durableState = json['durable_state'];
+    final abandonState = json['abandon_state'];
+    final abandonEffectState = json['abandon_effect_state'];
     final finalAnswer = json['final_answer'];
     if (eventId.isEmpty ||
         eventId.length > 128 ||
@@ -5179,6 +5251,22 @@ class WebSocketService {
                   'blocked_unknown_effect',
                   'cancelled_proven',
                 }.contains(durableState))) ||
+        (abandonState != null &&
+            (abandonState is! String ||
+                !const <String>{
+                  '',
+                  'abandon_requested',
+                  'abandoned_proven',
+                }.contains(abandonState))) ||
+        (abandonEffectState != null &&
+            (abandonEffectState is! String ||
+                !const <String>{
+                  '',
+                  'no_current_effect',
+                  'no_effect_proven',
+                  'effect_confirmed',
+                  'effect_possible_or_unknown',
+                }.contains(abandonEffectState))) ||
         !const <String>{
           'aborted',
           'authorization_denied',
@@ -8270,6 +8358,18 @@ class WebSocketService {
           if (!_validAutonomousProgressFrame(json)) break;
           final canonicalProgress = AutonomousProgressMessage.fromJson(json);
           final canonicalRunId = canonicalProgress.runId ?? '';
+          final previousRunId = _autonomousProgress?.runId ?? '';
+          if (canonicalRunId.isNotEmpty && canonicalRunId != previousRunId) {
+            _autonomousAbandonState = '';
+            _autonomousAbandonEffectState = '';
+          }
+          if ((canonicalProgress.abandonState ?? '').isNotEmpty) {
+            _autonomousAbandonState = canonicalProgress.abandonState!;
+          }
+          if ((canonicalProgress.abandonEffectState ?? '').isNotEmpty) {
+            _autonomousAbandonEffectState =
+                canonicalProgress.abandonEffectState!;
+          }
           if (canonicalProgress.terminal == true ||
               (_autonomousCancellationTarget.isNotEmpty &&
                   !_autonomousCancellationTarget.startsWith(
@@ -8308,6 +8408,17 @@ class WebSocketService {
           // disturb response-chunk streaming.
           final prog = AutonomousProgressMessage.fromJson(json);
           final progressRunId = prog.runId ?? '';
+          final previousRunId = _autonomousProgress?.runId ?? '';
+          if (progressRunId.isNotEmpty && progressRunId != previousRunId) {
+            _autonomousAbandonState = '';
+            _autonomousAbandonEffectState = '';
+          }
+          if ((prog.abandonState ?? '').isNotEmpty) {
+            _autonomousAbandonState = prog.abandonState!;
+          }
+          if ((prog.abandonEffectState ?? '').isNotEmpty) {
+            _autonomousAbandonEffectState = prog.abandonEffectState!;
+          }
           if (prog.terminal == true ||
               (_autonomousCancellationTarget.isNotEmpty &&
                   progressRunId.isNotEmpty &&

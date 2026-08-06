@@ -32,7 +32,9 @@ class _WaitingWebSocketService extends ws.WebSocketService {
   final List<String> waitingCommands = <String>[];
   final List<String> normalTurns = <String>[];
   int cancellationControls = 0;
+  int autonomousCancellationControls = 0;
   bool cancellationRequested = false;
+  bool autonomousActive = false;
   bool waiting = true;
   bool busy = true;
   String waitingStatus = 'waiting_verification';
@@ -45,6 +47,15 @@ class _WaitingWebSocketService extends ws.WebSocketService {
 
   @override
   bool isConversationBusy(String id) => busy;
+
+  @override
+  bool get hasActiveAutonomousWork => autonomousActive;
+
+  @override
+  bool requestAutonomousCancellation() {
+    autonomousCancellationControls++;
+    return true;
+  }
 
   @override
   bool isConversationWorkActive(String id) => busy || waiting;
@@ -463,6 +474,81 @@ void main() {
     expect(service.waitingCommands, isEmpty);
     expect(service.normalTurns, isEmpty);
     expect(find.text('draft remains local'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    themeController.dispose();
+    languageController.dispose();
+  });
+
+  testWidgets('Autonomous activity leaves Chat composer in Send mode', (
+    tester,
+  ) async {
+    final storage = StorageService();
+    final service = _WaitingWebSocketService()
+      ..waiting = false
+      ..busy = false
+      ..autonomousActive = true;
+    final background = BackgroundConnectionService(
+      storage: storage,
+      platform: _NoopBackgroundPlatform(),
+    );
+    final lifecycle = ConnectionLifecycleService(
+      backgroundConnectionService: background,
+    );
+    final themeController = ThemeController();
+    final languageController = LanguageController();
+
+    await tester.pumpWidget(
+      OsiaTheme(
+        palette: osiaPaletteViolet,
+        child: OsiaL10n(
+          strings: osiaStringsEn,
+          child: MaterialApp(
+            theme: buildOsiaTheme(),
+            home: ChatScreen(
+              storage: storage,
+              themeController: themeController,
+              languageController: languageController,
+              connectionLifecycle: lifecycle,
+              backgroundConnectionService: background,
+              handoff: ChatHandoff(
+                service: service,
+                bufferedMessages: const <ws.OsiaMessage>[
+                  ws.ConversationsMessage(<ws.Conversation>[
+                    ws.Conversation(
+                      id: 'conv-waiting',
+                      title: 'Isolation test',
+                    ),
+                  ]),
+                  ws.ActiveConversationMessage(
+                    id: 'conv-waiting',
+                    title: 'Isolation test',
+                  ),
+                  ws.ConversationHistoryMessage(
+                    id: 'conv-waiting',
+                    messages: <ws.HistoryMessage>[],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await tester.enterText(find.byType(TextField), 'independent chat turn');
+    await tester.pump();
+    expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.stop_rounded), findsNothing);
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pump();
+
+    expect(service.normalTurns, <String>['independent chat turn']);
+    expect(service.autonomousCancellationControls, 0);
+    await tester.pump(const Duration(milliseconds: 100));
 
     await tester.pumpWidget(const SizedBox());
     await tester.pump();

@@ -77,6 +77,16 @@ const Set<String> _explicitDurableRunEvents = <String>{
 
 String _canonicalRunLifecycle(ws.AutonomousProgressMessage message) {
   final event = (message.event ?? '').toLowerCase();
+  if (message.terminal == true &&
+      const <String>{
+        'done',
+        'failed',
+        'plan_failed',
+        'aborted',
+        'cancelled',
+      }.contains(event)) {
+    return event;
+  }
   final durableState = (message.durableState ?? '').toLowerCase();
   if (_explicitDurableRunEvents.contains(durableState)) {
     return durableState;
@@ -87,6 +97,10 @@ String _canonicalRunLifecycle(ws.AutonomousProgressMessage message) {
   }
   return (message.runState ?? event).toLowerCase();
 }
+
+@visibleForTesting
+String autonomousRunLifecycleForTest(ws.AutonomousProgressMessage message) =>
+    _canonicalRunLifecycle(message);
 
 @visibleForTesting
 String autonomousDurableStateLabel(OsiaStrings strings, String state) {
@@ -1023,7 +1037,9 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
       ),
     );
     if (confirmed != true) return;
-    widget.wsService.requestAutonomousCancellation();
+    if (widget.wsService.requestAutonomousCancellation() && mounted) {
+      setState(() {});
+    }
   }
 
   // ── Build ──────────────────────────────────────────────────────────────
@@ -1283,7 +1299,9 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
                 _buildAuthorizationReview(palette, strings),
               ],
 
-              if (_isActive || _runPhase == _RunPhase.paused) ...[
+              if (_isActive ||
+                  _runPhase == _RunPhase.paused ||
+                  widget.wsService.canAbandonAutonomousWork) ...[
                 const SizedBox(height: 20),
                 Row(
                   children: [
