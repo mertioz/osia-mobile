@@ -4,7 +4,7 @@ import '../theme.dart';
 
 /// Choreographed "sliding puzzle" thinking indicator.
 ///
-/// A 2×2 grid holds three violet dots and one empty slot. Every cycle the
+/// A 2×2 grid holds three accent-colored dots and one empty slot. Every cycle the
 /// dot sitting clockwise-before the empty slot slides into it, so the dots
 /// appear to rotate clockwise around the square one move at a time — at
 /// rest they always form an L-shape (three corners of the square).
@@ -111,8 +111,7 @@ class _ThinkingIndicatorState extends State<ThinkingIndicator>
 
   @override
   Widget build(BuildContext context) {
-    final palette = OsiaTheme.of(context);
-    final color = palette.thinking;
+    final color = OsiaTheme.of(context).accent;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),

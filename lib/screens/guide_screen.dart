@@ -7,6 +7,7 @@ import '../guide_progress.dart';
 import '../motion.dart';
 import '../services/storage_service.dart';
 import '../theme.dart';
+import '../widgets/accent_logo.dart';
 
 const Duration guidePageTransitionDuration = MotionDurations.medium;
 const Duration guideContentTransitionDuration = MotionDurations.fast;
@@ -251,8 +252,7 @@ class _GuideScreenState extends State<GuideScreen> {
           titleSpacing: 16,
           title: Row(
             children: [
-              Image.asset(
-                'assets/osia_logo_mark.png',
+              AccentLogo(
                 width: 26,
                 height: 26,
                 semanticLabel: _isFrench ? 'Logo OSIA' : 'OSIA logo',

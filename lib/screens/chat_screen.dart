@@ -17,6 +17,7 @@ import '../services/relay_service.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
+import '../widgets/accent_logo.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/connection_badge.dart';
 import '../widgets/glass_input_bar.dart';
@@ -2155,7 +2156,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// while a streaming assistant bubble already holds some text. Mirrors the
   /// requested `_isThinking && _streamingMessage.isNotEmpty` — here the
   /// "streaming message" is the entry at [_streamingIndex]. Drives the inline
-  /// [_MiniThinkingDots]; distinct from the full pre-stream [ThinkingIndicator].
+  /// [InlineThinkingDots]; distinct from the full pre-stream [ThinkingIndicator].
   bool get _isThinkingMidStream {
     final idx = _streamingIndex;
     return _thinking &&
@@ -2167,7 +2168,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Whether the standalone pre-stream [ThinkingIndicator] occupies the
   /// trailing list slot: thinking, but not yet streaming (a mid-stream pause
-  /// is shown inline on the bubble via [_MiniThinkingDots] instead). When this
+  /// is shown inline on the bubble via [InlineThinkingDots] instead). When this
   /// is false and [_noResponse] is true, that slot holds the retry tile
   /// instead — the two are mutually exclusive (arming the error clears
   /// [_thinking]).
@@ -3314,7 +3315,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           // mutually exclusive (arming the error clears
                           // _thinking). Once a streaming bubble exists, a
                           // mid-stream pause is shown inline via
-                          // [_MiniThinkingDots] on that bubble instead, so the
+                          // [InlineThinkingDots] on that bubble instead, so the
                           // standalone indicator is skipped to avoid two.
                           if (index == _entries.length) {
                             return _showThinkingTrailer
@@ -3338,7 +3339,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             // ThinkingIndicator). Only on the streaming bubble.
                             inlineTrailing:
                                 entry.isStreaming && _isThinkingMidStream
-                                ? const _MiniThinkingDots()
+                                ? const InlineThinkingDots()
                                 : null,
                             onSpeak: isAssistant
                                 ? () => _speakMessage(entry)
@@ -3422,15 +3423,7 @@ class _ChatScreenState extends State<ChatScreen> {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // OSIA logo, shown directly — no disc, no glow. Centred square asset.
-          SizedBox(
-            width: 64,
-            height: 64,
-            child: Image.asset(
-              'assets/osia_logo_mark.png',
-              fit: BoxFit.contain,
-              filterQuality: FilterQuality.medium,
-            ),
-          ),
+          SizedBox(width: 64, height: 64, child: const AccentLogo()),
           const SizedBox(height: 16),
           Text(
             strings.sayHello,
@@ -3873,20 +3866,18 @@ class ChatHandoff {
 
 /// Tiny three-dot indicator appended inline at the end of a streaming bubble
 /// when OSIA pauses to think mid-stream (see
-/// [_ChatScreenState._isThinkingMidStream]). Each dot is a 6px violet circle
+/// [_ChatScreenState._isThinkingMidStream]). Each dot is a 6px accent circle
 /// that fades and scales on a staggered loop. Deliberately distinct from the
 /// full [ThinkingIndicator] shown before streaming begins.
-class _MiniThinkingDots extends StatefulWidget {
-  const _MiniThinkingDots();
+class InlineThinkingDots extends StatefulWidget {
+  const InlineThinkingDots({super.key});
 
   @override
-  State<_MiniThinkingDots> createState() => _MiniThinkingDotsState();
+  State<InlineThinkingDots> createState() => _InlineThinkingDotsState();
 }
 
-class _MiniThinkingDotsState extends State<_MiniThinkingDots>
+class _InlineThinkingDotsState extends State<InlineThinkingDots>
     with SingleTickerProviderStateMixin {
-  /// OSIA's voice violet — fixed, independent of the active theme.
-  static const Color _violet = Color(0xFFC4B5F5);
   static const double _dotSize = 6;
   static const double _gap = 3;
   static const int _dotCount = 3;
@@ -3921,7 +3912,7 @@ class _MiniThinkingDotsState extends State<_MiniThinkingDots>
   }
 
   /// Build the three-dot row given an easing value per dot index (0 → 1).
-  Widget _dots(double Function(int index) easedFor) {
+  Widget _dots(Color accent, double Function(int index) easedFor) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: List.generate(_dotCount, (i) {
@@ -3937,8 +3928,8 @@ class _MiniThinkingDotsState extends State<_MiniThinkingDots>
               child: Container(
                 width: _dotSize,
                 height: _dotSize,
-                decoration: const BoxDecoration(
-                  color: _violet,
+                decoration: BoxDecoration(
+                  color: accent,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -3951,15 +3942,16 @@ class _MiniThinkingDotsState extends State<_MiniThinkingDots>
 
   @override
   Widget build(BuildContext context) {
+    final accent = OsiaTheme.of(context).accent;
     return Padding(
       // Small gap so the dots don't crowd the blinking cursor / last glyph.
       padding: const EdgeInsets.only(left: 4),
       child: _reduced
           // Static, fully-shown dots — no continuous loop under reduced motion.
-          ? _dots((_) => 1.0)
+          ? _dots(accent, (_) => 1.0)
           : AnimatedBuilder(
               animation: _ctrl,
-              builder: (context, _) => _dots((i) {
+              builder: (context, _) => _dots(accent, (i) {
                 // Each dot is offset along the loop so they pulse in sequence.
                 // Dart's `%` keeps a positive result here, so the negative
                 // stagger wraps cleanly into [0, 1).

@@ -11,6 +11,7 @@ import '../services/relay_service.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
+import '../widgets/accent_logo.dart';
 import 'chat_screen.dart' show ChatHandoff;
 import 'legal_screen.dart';
 import 'pairing_scanner_screen.dart';
@@ -468,15 +469,7 @@ class _ConnectionScreenState extends State<ConnectionScreen>
       children: [
         // The logo mark, shown directly — no disc, no glow. The asset is a
         // tightly-cropped, centred square so BoxFit.contain keeps it centred.
-        SizedBox(
-          width: 104,
-          height: 104,
-          child: Image.asset(
-            'assets/osia_logo_mark.png',
-            fit: BoxFit.contain,
-            filterQuality: FilterQuality.medium,
-          ),
-        ),
+        SizedBox(width: 104, height: 104, child: const AccentLogo()),
         const SizedBox(height: 22),
         Text(
           'OSIA',

@@ -102,8 +102,7 @@ class _ChatBubbleState extends State<ChatBubble>
           child: Center(
             child: Container(
               margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 24),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
                 color: palette.surface.withValues(alpha: 0.5),
                 borderRadius: BorderRadius.circular(10),
@@ -127,8 +126,9 @@ class _ChatBubbleState extends State<ChatBubble>
       );
     }
 
-    final alignment =
-        widget.isUser ? Alignment.centerRight : Alignment.centerLeft;
+    final alignment = widget.isUser
+        ? Alignment.centerRight
+        : Alignment.centerLeft;
 
     final textStyle = TextStyle(
       fontSize: 15,
@@ -201,8 +201,7 @@ class _ChatBubbleState extends State<ChatBubble>
           width: 0.6,
         ),
       ),
-      padding:
-          const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: content,
     );
   }
@@ -237,7 +236,9 @@ class _ChatBubbleState extends State<ChatBubble>
               children: [
                 Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 2, vertical: 4),
+                    horizontal: 2,
+                    vertical: 4,
+                  ),
                   child: content,
                 ),
                 if (showSpeak) _SpeakButton(onTap: widget.onSpeak!),
@@ -251,29 +252,23 @@ class _ChatBubbleState extends State<ChatBubble>
 }
 
 /// Small speaker button under an assistant message — asks the PC to read
-/// that message aloud over TTS. Deliberately subtle: a bare violet icon,
+/// that message aloud over TTS. Deliberately subtle: a bare accent icon,
 /// no fill, no border.
 class _SpeakButton extends StatelessWidget {
   final VoidCallback onTap;
   const _SpeakButton({required this.onTap});
 
-  /// OSIA's voice violet — fixed, independent of the active theme.
-  static const Color _violet = Color(0xFFC4B5F5);
-
   @override
   Widget build(BuildContext context) {
+    final accent = OsiaTheme.of(context).accent;
     return Tooltip(
       message: OsiaL10n.of(context).readAloud,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
-        child: const Padding(
-          padding: EdgeInsets.all(6),
-          child: Icon(
-            Icons.volume_up_rounded,
-            size: 16,
-            color: _violet,
-          ),
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Icon(Icons.volume_up_rounded, size: 16, color: accent),
         ),
       ),
     );
