@@ -181,6 +181,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // Conversations
   List<ws.Conversation> _conversations = [];
+  List<ws.ConversationFolder> _conversationFolders = [];
+  int _conversationFolderSnapshotRevision = -1;
+  String? _bulkDeleteOperationId;
+  int? _bulkDeleteExpectedCount;
   String? _activeConversationId;
   String? _activeConversationTitle;
   // The conversation whose history we've asked the server for and are still
@@ -420,6 +424,13 @@ class _ChatScreenState extends State<ChatScreen> {
             _wsService.sendGetModels();
             // Pull config too, so we know whether the AI hierarchy is on.
             _wsService.sendGetConfig();
+            final pendingBulkDelete = _bulkDeleteOperationId;
+            if (pendingBulkDelete != null) {
+              _wsService.sendBulkDeleteUngroupedConversations(
+                expectedCount: _bulkDeleteExpectedCount ?? 0,
+                operationId: pendingBulkDelete,
+              );
+            }
             // Re-fetch the open conversation's messages on every (re)connect.
             // The post-auth burst only carries the conversation LIST (never a
             // conversation's messages), and the server resets its
@@ -782,7 +793,23 @@ class _ChatScreenState extends State<ChatScreen> {
           _thinking = true;
           _noResponse = false;
         });
-      case ws.ConversationsMessage(:final conversations):
+      case ws.ConversationsMessage(
+        :final conversations,
+        :final folders,
+        :final snapshotRevision,
+        :final operationId,
+      ):
+        if (snapshotRevision < _conversationFolderSnapshotRevision) break;
+        _conversationFolderSnapshotRevision = snapshotRevision;
+        final orderedFolders = List<ws.ConversationFolder>.of(folders)
+          ..sort((a, b) {
+            final order = a.order.compareTo(b.order);
+            return order != 0 ? order : a.id.compareTo(b.id);
+          });
+        if (_bulkDeleteOperationId == operationId) {
+          _bulkDeleteOperationId = null;
+          _bulkDeleteExpectedCount = null;
+        }
         final activeId = _activeConversationId;
         final active = canonicalConversationForActiveId(
           conversations,
@@ -800,6 +827,7 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         setState(() {
           _conversations = conversations;
+          _conversationFolders = orderedFolders;
           if (activeWasDeleted) {
             _entries.clear();
             _activeConversationId = null;
@@ -1921,6 +1949,17 @@ class _ChatScreenState extends State<ChatScreen> {
               onTap: () => Navigator.of(ctx).pop('rename'),
             ),
             ListTile(
+              leading: Icon(
+                Icons.drive_file_move_outline,
+                color: palette.accent,
+              ),
+              title: Text(
+                strings.moveToFolder,
+                style: TextStyle(color: palette.textPrimary),
+              ),
+              onTap: () => Navigator.of(ctx).pop('move'),
+            ),
+            ListTile(
               leading: Icon(Icons.delete_outline_rounded, color: palette.error),
               title: Text(
                 strings.delete,
@@ -1935,6 +1974,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     if (action == 'rename') {
       await _renameConversation(conv);
+    } else if (action == 'move') {
+      await _moveConversationToFolder(conv);
     } else if (action == 'delete') {
       await _deleteConversation(conv);
     }
@@ -2023,6 +2064,347 @@ class _ChatScreenState extends State<ChatScreen> {
     } finally {
       controller.dispose();
     }
+  }
+
+  Future<void> _showConversationOverflowMenu() async {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(
+                Icons.create_new_folder_outlined,
+                color: palette.accent,
+              ),
+              title: Text(
+                strings.createFolder,
+                style: TextStyle(color: palette.textPrimary),
+              ),
+              onTap: () => Navigator.of(ctx).pop('create'),
+            ),
+            ListTile(
+              enabled: _bulkDeleteOperationId == null,
+              leading: Icon(Icons.delete_sweep_outlined, color: palette.error),
+              title: Text(
+                strings.deleteAllConversations,
+                style: TextStyle(color: palette.error),
+              ),
+              onTap: _bulkDeleteOperationId == null
+                  ? () => Navigator.of(ctx).pop('delete_all')
+                  : null,
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'create') {
+      await _createConversationFolder();
+    } else if (action == 'delete_all') {
+      await _confirmBulkDeleteUngrouped();
+    }
+  }
+
+  Future<void> _createConversationFolder() async {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final controller = TextEditingController();
+    try {
+      final name = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(strings.createFolder),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 60,
+            decoration: InputDecoration(
+              hintText: strings.folderName,
+              counterText: '',
+            ),
+            style: TextStyle(color: palette.textPrimary),
+            onSubmitted: (_) {
+              final value = controller.text.trim();
+              if (value.isNotEmpty) Navigator.of(ctx).pop(value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text(strings.cancel),
+            ),
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: controller,
+              builder: (_, value, _) => TextButton(
+                onPressed: value.text.trim().isEmpty
+                    ? null
+                    : () => Navigator.of(ctx).pop(value.text.trim()),
+                child: Text(strings.createFolder),
+              ),
+            ),
+          ],
+        ),
+      );
+      if (name != null && name.trim().isNotEmpty) {
+        _wsService.sendCreateConversationFolder(name.trim());
+      }
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _confirmBulkDeleteUngrouped() async {
+    final ungrouped = _conversations
+        .where((conversation) => conversation.folderId == null)
+        .toList(growable: false);
+    final strings = OsiaL10n.of(context);
+    if (ungrouped.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(strings.noUngroupedConversations)));
+      return;
+    }
+    final required = 'DELETE ${ungrouped.length}';
+    final controller = TextEditingController();
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: Text(strings.deleteAllConversations),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(strings.bulkDeleteWarning(ungrouped.length)),
+              const SizedBox(height: 14),
+              Text(strings.typeToConfirm(required)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: InputDecoration(hintText: required),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(strings.cancel),
+            ),
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: controller,
+              builder: (_, value, _) => TextButton(
+                onPressed: value.text.trim() == required
+                    ? () => Navigator.of(ctx).pop(true)
+                    : null,
+                child: Text(strings.delete),
+              ),
+            ),
+          ],
+        ),
+      );
+      if (confirmed == true && _bulkDeleteOperationId == null) {
+        final op = _wsService.sendBulkDeleteUngroupedConversations(
+          expectedCount: ungrouped.length,
+        );
+        setState(() {
+          _bulkDeleteOperationId = op;
+          _bulkDeleteExpectedCount = ungrouped.length;
+        });
+      }
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _moveConversationToFolder(ws.Conversation conv) async {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final folderId = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.folder_off_outlined, color: palette.accent),
+              title: Text(strings.outsideFolders),
+              trailing: conv.folderId == null
+                  ? Icon(Icons.check_rounded, color: palette.accent)
+                  : null,
+              onTap: () => Navigator.of(ctx).pop('__ungrouped__'),
+            ),
+            for (final folder in _conversationFolders)
+              ListTile(
+                leading: Icon(Icons.folder_outlined, color: palette.accent),
+                title: Text(folder.name),
+                trailing: conv.folderId == folder.id
+                    ? Icon(Icons.check_rounded, color: palette.accent)
+                    : null,
+                onTap: () => Navigator.of(ctx).pop(folder.id),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (folderId == null) return;
+    final target = folderId == '__ungrouped__' ? null : folderId;
+    if (target == conv.folderId) return;
+    _wsService.sendMoveConversationToFolder(conv.id, target);
+  }
+
+  Future<void> _showConversationFolderActions(
+    ws.ConversationFolder folder,
+  ) async {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.edit_outlined, color: palette.accent),
+              title: Text(strings.renameFolder),
+              onTap: () => Navigator.of(ctx).pop('rename'),
+            ),
+            ListTile(
+              leading: Icon(Icons.settings_outlined, color: palette.accent),
+              title: Text(strings.folderSettings),
+              onTap: () => Navigator.of(ctx).pop('settings'),
+            ),
+            ListTile(
+              enabled: folder.order > 0,
+              leading: Icon(Icons.arrow_upward_rounded, color: palette.accent),
+              title: Text(strings.moveFolderUp),
+              onTap: folder.order > 0
+                  ? () => Navigator.of(ctx).pop('up')
+                  : null,
+            ),
+            ListTile(
+              enabled: folder.order + 1 < _conversationFolders.length,
+              leading: Icon(
+                Icons.arrow_downward_rounded,
+                color: palette.accent,
+              ),
+              title: Text(strings.moveFolderDown),
+              onTap: folder.order + 1 < _conversationFolders.length
+                  ? () => Navigator.of(ctx).pop('down')
+                  : null,
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'rename') {
+      await _renameConversationFolder(folder);
+    } else if (action == 'settings') {
+      await _showConversationFolderSettings(folder);
+    } else if (action == 'up') {
+      _reorderConversationFolder(folder.id, -1);
+    } else if (action == 'down') {
+      _reorderConversationFolder(folder.id, 1);
+    }
+  }
+
+  Future<void> _renameConversationFolder(ws.ConversationFolder folder) async {
+    final strings = OsiaL10n.of(context);
+    final controller = TextEditingController(text: folder.name);
+    controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: controller.text.length,
+    );
+    try {
+      final name = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(strings.renameFolder),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 60,
+            decoration: InputDecoration(
+              hintText: strings.folderName,
+              counterText: '',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text(strings.cancel),
+            ),
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: controller,
+              builder: (_, value, _) => TextButton(
+                onPressed: value.text.trim().isEmpty
+                    ? null
+                    : () => Navigator.of(ctx).pop(value.text.trim()),
+                child: Text(strings.rename),
+              ),
+            ),
+          ],
+        ),
+      );
+      if (name != null &&
+          name.trim().isNotEmpty &&
+          name.trim() != folder.name) {
+        _wsService.sendRenameConversationFolder(folder.id, name.trim());
+      }
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _showConversationFolderSettings(
+    ws.ConversationFolder folder,
+  ) async {
+    final strings = OsiaL10n.of(context);
+    var allow = folder.allowFolderContext;
+    final next = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setLocalState) => AlertDialog(
+          title: Text(strings.folderSettings),
+          content: SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            value: allow,
+            title: Text(strings.allowFolderContext),
+            subtitle: Text(strings.folderContextNextTurn),
+            onChanged: (value) => setLocalState(() => allow = value),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text(strings.cancel),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(allow),
+              child: Text(strings.save),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (next != null && next != folder.allowFolderContext) {
+      _wsService.sendConversationFolderContextPolicy(folder.id, next);
+    }
+  }
+
+  void _reorderConversationFolder(String folderId, int delta) {
+    final ids = _conversationFolders.map((folder) => folder.id).toList();
+    final index = ids.indexOf(folderId);
+    final target = index + delta;
+    if (index < 0 || target < 0 || target >= ids.length) return;
+    final value = ids.removeAt(index);
+    ids.insert(target, value);
+    _wsService.sendReorderConversationFolders(ids);
   }
 
   String _formatConversationDate(DateTime? date, OsiaStrings strings) {
@@ -3563,38 +3945,65 @@ class _ChatScreenState extends State<ChatScreen> {
                   horizontal: 14,
                   vertical: 4,
                 ),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: PressableScale(
-                    child: ElevatedButton.icon(
-                      onPressed: _newConversation,
-                      icon: const Icon(Icons.add_rounded, size: 20),
-                      label: Text(strings.newChat),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: palette.accent,
-                        foregroundColor: palette.isDark
-                            ? palette.background
-                            : Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        textStyle: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: PressableScale(
+                        child: ElevatedButton.icon(
+                          onPressed: _newConversation,
+                          icon: const Icon(Icons.add_rounded, size: 20),
+                          label: Text(strings.newChat),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: palette.accent,
+                            foregroundColor: palette.isDark
+                                ? palette.background
+                                : Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    PressableScale(
+                      child: SizedBox(
+                        width: 46,
+                        height: 46,
+                        child: OutlinedButton(
+                          onPressed: _showConversationOverflowMenu,
+                          style: OutlinedButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            foregroundColor: palette.textPrimary,
+                            side: BorderSide(
+                              color: palette.border.withValues(alpha: 0.7),
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            '⋯',
+                            style: TextStyle(fontSize: 22, height: 1),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 8),
               Divider(color: palette.border.withValues(alpha: 0.4), height: 1),
               Expanded(
-                child: _conversations.isEmpty
+                child: _conversations.isEmpty && _conversationFolders.isEmpty
                     ? Center(
                         child: Padding(
                           padding: const EdgeInsets.all(24),
@@ -3608,27 +4017,144 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                       )
-                    : ListView.builder(
+                    : ListView(
                         padding: const EdgeInsets.symmetric(
                           vertical: 8,
                           horizontal: 8,
                         ),
-                        itemCount: _conversations.length,
-                        itemBuilder: (context, index) {
-                          final conv = _conversations[index];
-                          // Subtle staggered cascade as the drawer opens. Key
-                          // by conversation id so entrance state follows the
-                          // conversation (a freshly inserted one animates;
-                          // shifted ones stay settled).
-                          return StaggeredAppear(
-                            key: ValueKey('stagger_${conv.id}'),
-                            index: index,
-                            child: _buildConversationTile(conv, palette),
-                          );
-                        },
+                        children: _buildConversationDrawerItems(palette),
                       ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildConversationDrawerItems(OsiaPalette palette) {
+    final strings = OsiaL10n.of(context);
+    final widgets = <Widget>[];
+    var staggerIndex = 0;
+    final ungrouped = _conversations
+        .where((conversation) => conversation.folderId == null)
+        .toList(growable: false);
+    if (_conversationFolders.isNotEmpty && ungrouped.isNotEmpty) {
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+          child: Text(
+            strings.outsideFolders,
+            style: TextStyle(
+              color: palette.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      );
+    }
+    for (final conversation in ungrouped) {
+      widgets.add(
+        StaggeredAppear(
+          key: ValueKey('stagger_${conversation.id}'),
+          index: staggerIndex++,
+          child: _buildConversationTile(conversation, palette),
+        ),
+      );
+    }
+    for (final folder in _conversationFolders) {
+      final members = _conversations
+          .where((conversation) => conversation.folderId == folder.id)
+          .toList(growable: false);
+      widgets.add(
+        StaggeredAppear(
+          key: ValueKey('folder_${folder.id}'),
+          index: staggerIndex++,
+          child: _buildConversationFolderTile(folder, members.length, palette),
+        ),
+      );
+      if (!folder.collapsed) {
+        for (final conversation in members) {
+          widgets.add(
+            Padding(
+              padding: const EdgeInsets.only(left: 14),
+              child: StaggeredAppear(
+                key: ValueKey('stagger_${conversation.id}'),
+                index: staggerIndex++,
+                child: _buildConversationTile(conversation, palette),
+              ),
+            ),
+          );
+        }
+      }
+    }
+    return widgets;
+  }
+
+  Widget _buildConversationFolderTile(
+    ws.ConversationFolder folder,
+    int count,
+    OsiaPalette palette,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+      child: Material(
+        color: palette.accent.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _wsService.sendConversationFolderCollapsed(
+            folder.id,
+            !folder.collapsed,
+          ),
+          onLongPress: () => _showConversationFolderActions(folder),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: palette.accent.withValues(alpha: 0.25)),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  folder.collapsed
+                      ? Icons.chevron_right_rounded
+                      : Icons.expand_more_rounded,
+                  color: palette.accent,
+                  size: 20,
+                ),
+                const SizedBox(width: 5),
+                Icon(Icons.folder_rounded, color: palette.accent, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    folder.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Text(
+                  '$count',
+                  style: TextStyle(color: palette.textMuted, fontSize: 11),
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: OsiaL10n.of(context).folderSettings,
+                  icon: Icon(
+                    Icons.more_horiz_rounded,
+                    color: palette.textMuted,
+                    size: 19,
+                  ),
+                  onPressed: () => _showConversationFolderActions(folder),
+                ),
+              ],
+            ),
           ),
         ),
       ),

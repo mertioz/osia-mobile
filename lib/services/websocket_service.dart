@@ -304,8 +304,14 @@ class Conversation {
   final String id;
   final String title;
   final DateTime? date;
+  final String? folderId;
 
-  const Conversation({required this.id, required this.title, this.date});
+  const Conversation({
+    required this.id,
+    required this.title,
+    this.date,
+    this.folderId,
+  });
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
     final rawDate = json['date'] ?? json['updated_at'] ?? json['created_at'];
@@ -324,6 +330,41 @@ class Conversation {
       // localized "Untitled" label instead.
       title: (json['title'] ?? '').toString(),
       date: parsed,
+      folderId:
+          (json['folder_id'] == null || json['folder_id'].toString().isEmpty)
+          ? null
+          : json['folder_id'].toString(),
+    );
+  }
+}
+
+/// Stable canonical conversation folder owned by the PC store.
+class ConversationFolder {
+  final String id;
+  final String name;
+  final int order;
+  final bool collapsed;
+  final bool allowFolderContext;
+
+  const ConversationFolder({
+    required this.id,
+    required this.name,
+    required this.order,
+    required this.collapsed,
+    required this.allowFolderContext,
+  });
+
+  factory ConversationFolder.fromJson(Map<String, dynamic> json) {
+    return ConversationFolder(
+      id: (json['id'] ?? '').toString(),
+      name: (json['name'] ?? '').toString(),
+      order: switch (json['order']) {
+        final int value => value,
+        final num value => value.toInt(),
+        _ => int.tryParse((json['order'] ?? '').toString()) ?? 0,
+      },
+      collapsed: json['collapsed'] == true,
+      allowFolderContext: json['allow_folder_context'] == true,
     );
   }
 }
@@ -331,7 +372,18 @@ class Conversation {
 /// Full list of conversations sent by the server (typically after auth).
 class ConversationsMessage extends OsiaMessage {
   final List<Conversation> conversations;
-  const ConversationsMessage(this.conversations);
+  final List<ConversationFolder> folders;
+  final int version;
+  final int snapshotRevision;
+  final String operationId;
+
+  const ConversationsMessage(
+    this.conversations, {
+    this.folders = const <ConversationFolder>[],
+    this.version = 1,
+    this.snapshotRevision = 0,
+    this.operationId = '',
+  });
 }
 
 /// The currently active conversation on the server.
@@ -4399,6 +4451,107 @@ class WebSocketService {
     _send({'type': 'rename_conversation', 'id': id, 'title': title});
   }
 
+  String _conversationFolderOperationId(String? supplied) {
+    final value = supplied?.trim() ?? '';
+    return value.isNotEmpty ? value : 'folder_${newClientRequestId()}';
+  }
+
+  String sendCreateConversationFolder(String name, {String? operationId}) {
+    final op = _conversationFolderOperationId(operationId);
+    _send({
+      'type': 'create_conversation_folder',
+      'name': name,
+      'operation_id': op,
+    });
+    return op;
+  }
+
+  String sendRenameConversationFolder(
+    String folderId,
+    String name, {
+    String? operationId,
+  }) {
+    final op = _conversationFolderOperationId(operationId);
+    _send({
+      'type': 'rename_conversation_folder',
+      'folder_id': folderId,
+      'name': name,
+      'operation_id': op,
+    });
+    return op;
+  }
+
+  String sendConversationFolderCollapsed(
+    String folderId,
+    bool collapsed, {
+    String? operationId,
+  }) {
+    final op = _conversationFolderOperationId(operationId);
+    _send({
+      'type': 'set_conversation_folder_state',
+      'folder_id': folderId,
+      'collapsed': collapsed,
+      'operation_id': op,
+    });
+    return op;
+  }
+
+  String sendConversationFolderContextPolicy(
+    String folderId,
+    bool allow, {
+    String? operationId,
+  }) {
+    final op = _conversationFolderOperationId(operationId);
+    _send({
+      'type': 'set_conversation_folder_context',
+      'folder_id': folderId,
+      'allow_folder_context': allow,
+      'operation_id': op,
+    });
+    return op;
+  }
+
+  String sendReorderConversationFolders(
+    List<String> folderIds, {
+    String? operationId,
+  }) {
+    final op = _conversationFolderOperationId(operationId);
+    _send({
+      'type': 'reorder_conversation_folders',
+      'folder_ids': List<String>.of(folderIds),
+      'operation_id': op,
+    });
+    return op;
+  }
+
+  String sendMoveConversationToFolder(
+    String conversationId,
+    String? folderId, {
+    String? operationId,
+  }) {
+    final op = _conversationFolderOperationId(operationId);
+    _send({
+      'type': 'move_conversation_to_folder',
+      'conversation_id': conversationId,
+      'folder_id': folderId,
+      'operation_id': op,
+    });
+    return op;
+  }
+
+  String sendBulkDeleteUngroupedConversations({
+    required int expectedCount,
+    String? operationId,
+  }) {
+    final op = _conversationFolderOperationId(operationId);
+    _send({
+      'type': 'bulk_delete_ungrouped_conversations',
+      'expected_count': expectedCount,
+      'operation_id': op,
+    });
+    return op;
+  }
+
   /// Ask the server for the list of available models.
   void sendGetModels() {
     _send({'type': 'get_models'});
@@ -8138,13 +8291,45 @@ class WebSocketService {
                 .whereType<Map>()
                 .map((e) => Conversation.fromJson(e.cast<String, dynamic>()))
                 .toList();
+            final rawFolders = json['folders'];
+            final folders = rawFolders is List
+                ? rawFolders
+                      .whereType<Map>()
+                      .map(
+                        (e) => ConversationFolder.fromJson(
+                          e.cast<String, dynamic>(),
+                        ),
+                      )
+                      .where((folder) => folder.id.isNotEmpty)
+                      .toList()
+                : const <ConversationFolder>[];
+            final version = switch (json['version']) {
+              final int value => value,
+              final num value => value.toInt(),
+              _ => int.tryParse((json['version'] ?? '').toString()) ?? 1,
+            };
+            final snapshotRevision = switch (json['snapshot_revision']) {
+              final int value => value,
+              final num value => value.toInt(),
+              _ =>
+                int.tryParse((json['snapshot_revision'] ?? '').toString()) ?? 0,
+            };
             debugPrint(
-              '[OSIA WS] conversations received: ${list.length} item(s)',
+              '[OSIA WS] conversations received: ${list.length} item(s), '
+              '${folders.length} folder(s)',
             );
             if (list.isNotEmpty) {
               debugPrint('[OSIA WS]   first conversation metadata received');
             }
-            _emit(ConversationsMessage(list));
+            _emit(
+              ConversationsMessage(
+                list,
+                folders: folders,
+                version: version,
+                snapshotRevision: snapshotRevision,
+                operationId: (json['operation_id'] ?? '').toString(),
+              ),
+            );
           } else {
             debugPrint(
               '[OSIA WS] conversations message had no list payload: keys=${json.keys.toList()}',

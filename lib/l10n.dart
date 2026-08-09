@@ -798,6 +798,139 @@ class OsiaStrings {
 
   // ── Parameterized helpers ──
 
+  String get createFolder => switch (languageCode) {
+    'fr' => 'Créer un dossier',
+    'zh' => '创建文件夹',
+    'ja' => 'フォルダーを作成',
+    'de' => 'Ordner erstellen',
+    'es' => 'Crear carpeta',
+    _ => 'Create folder',
+  };
+
+  String get folderName => switch (languageCode) {
+    'fr' => 'Nom du dossier',
+    'zh' => '文件夹名称',
+    'ja' => 'フォルダー名',
+    'de' => 'Ordnername',
+    'es' => 'Nombre de la carpeta',
+    _ => 'Folder name',
+  };
+
+  String get renameFolder => switch (languageCode) {
+    'fr' => 'Renommer le dossier',
+    'zh' => '重命名文件夹',
+    'ja' => 'フォルダー名を変更',
+    'de' => 'Ordner umbenennen',
+    'es' => 'Renombrar carpeta',
+    _ => 'Rename folder',
+  };
+
+  String get folderSettings => switch (languageCode) {
+    'fr' => 'Paramètres du dossier',
+    'zh' => '文件夹设置',
+    'ja' => 'フォルダー設定',
+    'de' => 'Ordnereinstellungen',
+    'es' => 'Ajustes de carpeta',
+    _ => 'Folder settings',
+  };
+
+  String get allowFolderContext => switch (languageCode) {
+    'fr' =>
+      'Autoriser OSIA à utiliser les autres conversations de ce dossier comme contexte',
+    'zh' => '允许 OSIA 使用此文件夹中的其他对话作为上下文',
+    'ja' => 'OSIA がこのフォルダー内の他の会話をコンテキストとして使用することを許可',
+    'de' =>
+      'OSIA erlauben, andere Unterhaltungen in diesem Ordner als Kontext zu verwenden',
+    'es' =>
+      'Permitir que OSIA use otras conversaciones de esta carpeta como contexto',
+    _ => 'Allow OSIA to use other conversations in this folder as context',
+  };
+
+  String get folderContextNextTurn => switch (languageCode) {
+    'fr' => 'Ce réglage s’applique dès le prochain tour.',
+    'zh' => '此设置将在下一轮对话生效。',
+    'ja' => 'この設定は次のターンから適用されます。',
+    'de' => 'Diese Einstellung gilt ab der nächsten Anfrage.',
+    'es' => 'Este ajuste se aplica desde el siguiente turno.',
+    _ => 'This setting takes effect on the next turn.',
+  };
+
+  String get moveToFolder => switch (languageCode) {
+    'fr' => 'Déplacer vers un dossier',
+    'zh' => '移动到文件夹',
+    'ja' => 'フォルダーへ移動',
+    'de' => 'In Ordner verschieben',
+    'es' => 'Mover a carpeta',
+    _ => 'Move to folder',
+  };
+
+  String get outsideFolders => switch (languageCode) {
+    'fr' => 'Hors dossiers',
+    'zh' => '文件夹外',
+    'ja' => 'フォルダー外',
+    'de' => 'Außerhalb von Ordnern',
+    'es' => 'Fuera de carpetas',
+    _ => 'Outside folders',
+  };
+
+  String get moveFolderUp => switch (languageCode) {
+    'fr' => 'Monter le dossier',
+    'zh' => '上移文件夹',
+    'ja' => 'フォルダーを上へ',
+    'de' => 'Ordner nach oben',
+    'es' => 'Subir carpeta',
+    _ => 'Move folder up',
+  };
+
+  String get moveFolderDown => switch (languageCode) {
+    'fr' => 'Descendre le dossier',
+    'zh' => '下移文件夹',
+    'ja' => 'フォルダーを下へ',
+    'de' => 'Ordner nach unten',
+    'es' => 'Bajar carpeta',
+    _ => 'Move folder down',
+  };
+
+  String get deleteAllConversations => switch (languageCode) {
+    'fr' => 'Supprimer toutes les conversations',
+    'zh' => '删除所有对话',
+    'ja' => 'すべての会話を削除',
+    'de' => 'Alle Unterhaltungen löschen',
+    'es' => 'Eliminar todas las conversaciones',
+    _ => 'Delete all conversations',
+  };
+
+  String get noUngroupedConversations => switch (languageCode) {
+    'fr' => 'Aucune conversation hors dossiers à supprimer.',
+    'zh' => '没有可删除的文件夹外对话。',
+    'ja' => '削除できるフォルダー外の会話はありません。',
+    'de' => 'Es gibt keine Unterhaltungen außerhalb von Ordnern zu löschen.',
+    'es' => 'No hay conversaciones fuera de carpetas para eliminar.',
+    _ => 'There are no conversations outside folders to delete.',
+  };
+
+  String bulkDeleteWarning(int count) => switch (languageCode) {
+    'fr' =>
+      '$count conversations hors dossiers seront supprimées définitivement. Les conversations dans les dossiers et tous les dossiers seront conservés.',
+    'zh' => '将永久删除文件夹外的 $count 个对话。文件夹内的对话和所有文件夹都会保留。',
+    'ja' => 'フォルダー外の会話 $count 件を完全に削除します。フォルダー内の会話とすべてのフォルダーは保持されます。',
+    'de' =>
+      '$count Unterhaltungen außerhalb von Ordnern werden dauerhaft gelöscht. Unterhaltungen in Ordnern und alle Ordner bleiben erhalten.',
+    'es' =>
+      'Se eliminarán permanentemente $count conversaciones fuera de carpetas. Se conservarán las conversaciones dentro de carpetas y todas las carpetas.',
+    _ =>
+      '$count conversations outside folders will be permanently deleted. Conversations inside folders and all folders are preserved.',
+  };
+
+  String typeToConfirm(String phrase) => switch (languageCode) {
+    'fr' => 'Saisissez $phrase pour confirmer :',
+    'zh' => '输入 $phrase 以确认：',
+    'ja' => '確認するには $phrase と入力してください：',
+    'de' => 'Geben Sie zur Bestätigung $phrase ein:',
+    'es' => 'Escribe $phrase para confirmar:',
+    _ => 'Type $phrase to confirm:',
+  };
+
   String deleteConversationBody(String title) =>
       deleteConversationBodyTemplate.replaceAll('{title}', title);
 
