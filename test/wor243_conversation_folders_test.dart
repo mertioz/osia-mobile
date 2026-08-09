@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:osia_mobile/l10n.dart';
 import 'package:osia_mobile/services/websocket_service.dart';
 
 void main() {
@@ -80,6 +83,7 @@ void main() {
     addTearDown(service.dispose);
 
     service.sendCreateConversationFolder('Alpha', operationId: 'op-create');
+    service.sendCreateConversationFolder('Alpha', operationId: 'op-create');
     service.sendRenameConversationFolder(
       'folder-alpha',
       'Renamed',
@@ -120,6 +124,7 @@ void main() {
 
     expect(frames.map((frame) => frame['type']), <String>[
       'create_conversation_folder',
+      'create_conversation_folder',
       'rename_conversation_folder',
       'set_conversation_folder_state',
       'set_conversation_folder_context',
@@ -130,15 +135,79 @@ void main() {
       'bulk_delete_ungrouped_conversations',
     ]);
     expect(frames[0], containsPair('name', 'Alpha'));
-    expect(frames[1], containsPair('folder_id', 'folder-alpha'));
-    expect(frames[2], containsPair('collapsed', true));
-    expect(frames[3], containsPair('allow_folder_context', true));
-    expect(frames[4]['folder_ids'], <String>['folder-empty', 'folder-alpha']);
-    expect(frames[5], containsPair('conversation_id', 'conv-one'));
-    expect(frames[5], containsPair('folder_id', 'folder-alpha'));
-    expect(frames[6]['folder_id'], isNull);
-    expect(frames[7], frames[8]);
-    expect(frames[7], containsPair('expected_count', 3));
-    expect(frames[7], containsPair('operation_id', 'op-delete'));
+    expect(frames[0], frames[1]);
+    expect(frames[2], containsPair('folder_id', 'folder-alpha'));
+    expect(frames[3], containsPair('collapsed', true));
+    expect(frames[4], containsPair('allow_folder_context', true));
+    expect(frames[5]['folder_ids'], <String>['folder-empty', 'folder-alpha']);
+    expect(frames[6], containsPair('conversation_id', 'conv-one'));
+    expect(frames[6], containsPair('folder_id', 'folder-alpha'));
+    expect(frames[7]['folder_id'], isNull);
+    expect(frames[8], frames[9]);
+    expect(frames[8], containsPair('expected_count', 3));
+    expect(frames[8], containsPair('operation_id', 'op-delete'));
+  });
+
+  test('projects render before ungrouped conversations', () {
+    final source = File('lib/screens/chat_screen.dart').readAsStringSync();
+    final method = source.indexOf(
+      'List<Widget> _buildConversationDrawerItems(OsiaPalette palette)',
+    );
+    final projectRows = source.indexOf(
+      'for (final folder in _conversationFolders) {',
+      method,
+    );
+    final ungroupedRows = source.indexOf(
+      'for (final conversation in ungrouped) {',
+      method,
+    );
+
+    expect(method, greaterThanOrEqualTo(0));
+    expect(projectRows, greaterThan(method));
+    expect(ungroupedRows, greaterThan(projectRows));
+  });
+
+  test('project UI copy has no folder terminology', () {
+    const languages = <OsiaStrings>[
+      osiaStringsEn,
+      osiaStringsFr,
+      osiaStringsZh,
+      osiaStringsJa,
+      osiaStringsDe,
+      osiaStringsEs,
+    ];
+    final visibleCopy = languages
+        .expand(
+          (strings) => <String>[
+            strings.createFolder,
+            strings.folderName,
+            strings.renameFolder,
+            strings.folderSettings,
+            strings.allowFolderContext,
+            strings.moveToFolder,
+            strings.removeFromProject,
+            strings.projectsSection,
+            strings.outsideFolders,
+            strings.moveFolderUp,
+            strings.moveFolderDown,
+            strings.noUngroupedConversations,
+            strings.bulkDeleteWarning(3),
+          ],
+        )
+        .join('\n')
+        .toLowerCase();
+
+    for (final forbidden in <String>[
+      'folder',
+      'dossier',
+      'ordner',
+      'carpeta',
+      '文件夹',
+      'フォルダー',
+    ]) {
+      expect(visibleCopy, isNot(contains(forbidden)));
+    }
+    expect(osiaStringsEn.createFolder, 'Create project');
+    expect(osiaStringsFr.createFolder, 'Créer un projet');
   });
 }

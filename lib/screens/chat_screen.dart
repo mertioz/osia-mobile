@@ -183,6 +183,8 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ws.Conversation> _conversations = [];
   List<ws.ConversationFolder> _conversationFolders = [];
   int _conversationFolderSnapshotRevision = -1;
+  String? _projectCreateOperationId;
+  String? _projectCreateName;
   String? _bulkDeleteOperationId;
   int? _bulkDeleteExpectedCount;
   String? _activeConversationId;
@@ -424,6 +426,14 @@ class _ChatScreenState extends State<ChatScreen> {
             _wsService.sendGetModels();
             // Pull config too, so we know whether the AI hierarchy is on.
             _wsService.sendGetConfig();
+            final pendingProjectCreate = _projectCreateOperationId;
+            final pendingProjectName = _projectCreateName;
+            if (pendingProjectCreate != null && pendingProjectName != null) {
+              _wsService.sendCreateConversationFolder(
+                pendingProjectName,
+                operationId: pendingProjectCreate,
+              );
+            }
             final pendingBulkDelete = _bulkDeleteOperationId;
             if (pendingBulkDelete != null) {
               _wsService.sendBulkDeleteUngroupedConversations(
@@ -806,6 +816,10 @@ class _ChatScreenState extends State<ChatScreen> {
             final order = a.order.compareTo(b.order);
             return order != 0 ? order : a.id.compareTo(b.id);
           });
+        if (_projectCreateOperationId == operationId) {
+          _projectCreateOperationId = null;
+          _projectCreateName = null;
+        }
         if (_bulkDeleteOperationId == operationId) {
           _bulkDeleteOperationId = null;
           _bulkDeleteExpectedCount = null;
@@ -2076,6 +2090,7 @@ class _ChatScreenState extends State<ChatScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
+              enabled: _projectCreateOperationId == null,
               leading: Icon(
                 Icons.create_new_folder_outlined,
                 color: palette.accent,
@@ -2084,7 +2099,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 strings.createFolder,
                 style: TextStyle(color: palette.textPrimary),
               ),
-              onTap: () => Navigator.of(ctx).pop('create'),
+              onTap: _projectCreateOperationId == null
+                  ? () => Navigator.of(ctx).pop('create')
+                  : null,
             ),
             ListTile(
               enabled: _bulkDeleteOperationId == null,
@@ -2110,6 +2127,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _createConversationFolder() async {
+    if (_projectCreateOperationId != null) return;
     final palette = OsiaTheme.of(context);
     final strings = OsiaL10n.of(context);
     final controller = TextEditingController();
@@ -2149,8 +2167,19 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
       );
-      if (name != null && name.trim().isNotEmpty) {
-        _wsService.sendCreateConversationFolder(name.trim());
+      if (name != null &&
+          name.trim().isNotEmpty &&
+          _projectCreateOperationId == null) {
+        final projectName = name.trim();
+        final operationId = _wsService.sendCreateConversationFolder(
+          projectName,
+        );
+        if (mounted) {
+          setState(() {
+            _projectCreateOperationId = operationId;
+            _projectCreateName = projectName;
+          });
+        }
       }
     } finally {
       controller.dispose();
@@ -2233,7 +2262,7 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             ListTile(
               leading: Icon(Icons.folder_off_outlined, color: palette.accent),
-              title: Text(strings.outsideFolders),
+              title: Text(strings.removeFromProject),
               trailing: conv.folderId == null
                   ? Icon(Icons.check_rounded, color: palette.accent)
                   : null,
@@ -4039,27 +4068,18 @@ class _ChatScreenState extends State<ChatScreen> {
     final ungrouped = _conversations
         .where((conversation) => conversation.folderId == null)
         .toList(growable: false);
-    if (_conversationFolders.isNotEmpty && ungrouped.isNotEmpty) {
+    if (_conversationFolders.isNotEmpty) {
       widgets.add(
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
           child: Text(
-            strings.outsideFolders,
+            strings.projectsSection,
             style: TextStyle(
               color: palette.textMuted,
               fontSize: 11,
               fontWeight: FontWeight.w600,
             ),
           ),
-        ),
-      );
-    }
-    for (final conversation in ungrouped) {
-      widgets.add(
-        StaggeredAppear(
-          key: ValueKey('stagger_${conversation.id}'),
-          index: staggerIndex++,
-          child: _buildConversationTile(conversation, palette),
         ),
       );
     }
@@ -4088,6 +4108,30 @@ class _ChatScreenState extends State<ChatScreen> {
           );
         }
       }
+    }
+    if (_conversationFolders.isNotEmpty && ungrouped.isNotEmpty) {
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: Text(
+            strings.outsideFolders,
+            style: TextStyle(
+              color: palette.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      );
+    }
+    for (final conversation in ungrouped) {
+      widgets.add(
+        StaggeredAppear(
+          key: ValueKey('stagger_${conversation.id}'),
+          index: staggerIndex++,
+          child: _buildConversationTile(conversation, palette),
+        ),
+      );
     }
     return widgets;
   }
