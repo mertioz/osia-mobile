@@ -1,8 +1,60 @@
 import 'package:flutter/material.dart';
 
 import '../l10n.dart';
+import '../motion.dart';
 import '../services/execution_trace.dart';
 import '../theme.dart';
+
+const int executionTraceSummaryMaxClauses = 12;
+
+/// Converts only the validated public execution ledger into bounded prose.
+///
+/// The formatter is deliberately local and deterministic: it keeps event
+/// order, keeps only the latest revision of an event, removes equivalent
+/// semantic duplicates, and never consumes free-form event data.
+String formatExecutionTraceSummary(
+  OsiaStrings strings,
+  ExecutionTraceSnapshot snapshot,
+) {
+  if (!snapshot.key.valid) return '';
+
+  final latestByEventId = <String, ExecutionTraceEvent>{};
+  for (final event in snapshot.events) {
+    if (event.traceKey != snapshot.key ||
+        event.sequence < 1 ||
+        event.revision < 1 ||
+        event.display.args.isNotEmpty ||
+        executionTraceDisplayKeys[event.display.key] != event.kind ||
+        event.terminal != (event.kind == ExecutionTraceKind.terminal)) {
+      continue;
+    }
+    final previous = latestByEventId[event.eventId];
+    if (previous == null || event.revision > previous.revision) {
+      latestByEventId[event.eventId] = event;
+    }
+  }
+
+  final ordered = latestByEventId.values.toList()
+    ..sort((a, b) {
+      final sequenceOrder = a.sequence.compareTo(b.sequence);
+      return sequenceOrder != 0
+          ? sequenceOrder
+          : a.eventId.compareTo(b.eventId);
+    });
+  final displayKeys = <String>[];
+  final seenDisplayKeys = <String>{};
+  for (final event in ordered) {
+    if (seenDisplayKeys.add(event.display.key) &&
+        strings.executionTraceSummaryClause(event.display.key) != null) {
+      displayKeys.add(event.display.key);
+    }
+    if (displayKeys.length == executionTraceSummaryMaxClauses ||
+        event.terminal) {
+      break;
+    }
+  }
+  return strings.executionTraceSummary(displayKeys);
+}
 
 class ExecutionTraceBlock extends StatefulWidget {
   const ExecutionTraceBlock({
@@ -35,118 +87,74 @@ class _ExecutionTraceBlockState extends State<ExecutionTraceBlock> {
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
     final strings = OsiaL10n.of(context);
-    final events = widget.snapshot.events;
-    final summary = events.isEmpty
-        ? strings.thinkingLabel
-        : strings.executionTraceText(events.last.display.key);
+    final summary = formatExecutionTraceSummary(strings, widget.snapshot);
+    final duration = Motion.duration(context, MotionDurations.medium);
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: palette.surface.withValues(alpha: 0.82),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: palette.border),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            InkWell(
-              borderRadius: BorderRadius.circular(16),
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Semantics(
+            button: true,
+            expanded: _expanded,
+            excludeSemantics: true,
+            label: strings.executionTraceTitle,
+            child: InkWell(
+              key: const ValueKey('execution_trace_toggle'),
               onTap: () => setState(() => _expanded = !_expanded),
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 11,
-                ),
+                padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      widget.snapshot.terminal
-                          ? Icons.check_circle_outline_rounded
-                          : Icons.auto_awesome_rounded,
-                      color: widget.snapshot.terminal
-                          ? palette.success
-                          : palette.accent,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            strings.executionTraceTitle,
-                            style: TextStyle(
-                              color: palette.textPrimary,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            summary,
-                            maxLines: _expanded ? 2 : 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: palette.textMuted,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
+                    Text(
+                      strings.executionTraceTitle,
+                      style: TextStyle(
+                        color: palette.textMuted,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
-                    Icon(
-                      _expanded
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
-                      color: palette.textMuted,
+                    const SizedBox(width: 2),
+                    AnimatedSwitcher(
+                      duration: duration,
+                      switchInCurve: MotionCurves.enter,
+                      switchOutCurve: MotionCurves.exit,
+                      child: Icon(
+                        _expanded
+                            ? Icons.expand_more_rounded
+                            : Icons.chevron_right_rounded,
+                        key: ValueKey(_expanded),
+                        color: palette.textMuted,
+                        size: 17,
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
-            if (_expanded)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    for (final event in events)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 7),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: 6,
-                              height: 6,
-                              margin: const EdgeInsets.only(top: 5),
-                              decoration: BoxDecoration(
-                                color: event.terminal
-                                    ? palette.success
-                                    : palette.accent,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 9),
-                            Expanded(
-                              child: Text(
-                                strings.executionTraceText(event.display.key),
-                                style: TextStyle(
-                                  color: palette.textPrimary,
-                                  fontSize: 12.5,
-                                  height: 1.25,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+          ),
+          AnimatedSize(
+            duration: duration,
+            curve: Motion.curve(context, MotionCurves.enter),
+            alignment: Alignment.topLeft,
+            child: _expanded && summary.isNotEmpty
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 2, bottom: 4),
+                    child: Text(
+                      summary,
+                      key: const ValueKey('execution_trace_summary'),
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 13,
+                        height: 1.38,
                       ),
-                  ],
-                ),
-              ),
-          ],
-        ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
       ),
     );
   }

@@ -9,13 +9,24 @@ import 'package:osia_mobile/widgets/connection_badge.dart';
 import 'package:osia_mobile/widgets/execution_trace_block.dart';
 import 'package:osia_mobile/widgets/transport_status_sheet.dart';
 
-Widget host(Widget child, {OsiaStrings strings = osiaStringsEn}) => OsiaTheme(
+Widget host(
+  Widget child, {
+  OsiaStrings strings = osiaStringsEn,
+  double textScale = 1,
+  bool disableAnimations = false,
+}) => OsiaTheme(
   palette: osiaPaletteViolet,
   child: OsiaL10n(
     strings: strings,
     child: MaterialApp(
       theme: buildOsiaTheme(),
-      home: Scaffold(body: Center(child: child)),
+      home: MediaQuery(
+        data: MediaQueryData(
+          textScaler: TextScaler.linear(textScale),
+          disableAnimations: disableAnimations,
+        ),
+        child: Scaffold(body: Center(child: child)),
+      ),
     ),
   ),
 );
@@ -34,6 +45,7 @@ Map<String, dynamic> traceEvent({
   required int sequence,
   required String kind,
   required String displayKey,
+  int revision = 1,
   bool terminal = false,
 }) => <String, dynamic>{
   'schema_version': executionTraceSchemaVersion,
@@ -42,7 +54,7 @@ Map<String, dynamic> traceEvent({
   'request_id': 'request-254',
   'turn_id': 'turn-254',
   'sequence': sequence,
-  'revision': 1,
+  'revision': revision,
   'kind': kind,
   'display': <String, Object?>{'key': displayKey, 'args': <String, Object?>{}},
   'timestamp': '2026-08-10T10:00:00Z',
@@ -59,6 +71,18 @@ ExecutionTraceSnapshot snapshot(List<Map<String, dynamic>> events) =>
       'redaction_class': executionTraceRedactionClass,
       'events': events,
     })!;
+
+ExecutionTraceSnapshot uncheckedSnapshot(List<Map<String, dynamic>> events) =>
+    ExecutionTraceSnapshot(
+      key: const ExecutionTraceKey(
+        conversationId: 'conv-254',
+        requestId: 'request-254',
+        turnId: 'turn-254',
+      ),
+      events: events
+          .map((event) => ExecutionTraceEvent.parse(event)!)
+          .toList(growable: false),
+    );
 
 void main() {
   testWidgets('green health dot opens a live committed-route sheet', (
@@ -119,7 +143,7 @@ void main() {
     );
   });
 
-  testWidgets('terminal trace is one collapsed row and expands locally', (
+  testWidgets('completed trace is only a subtle collapsed metadata row', (
     tester,
   ) async {
     final goal = traceEvent(
@@ -146,38 +170,353 @@ void main() {
 
     expect(find.byType(ExecutionTraceBlock), findsOneWidget);
     expect(find.text(osiaStringsEn.executionTraceTitle), findsOneWidget);
+    expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.expand_more_rounded), findsNothing);
+    expect(find.byKey(const ValueKey('execution_trace_summary')), findsNothing);
+    expect(find.byIcon(Icons.check_circle_outline_rounded), findsNothing);
+    expect(find.byIcon(Icons.auto_awesome_rounded), findsNothing);
     expect(
-      find.text(
-        osiaStringsEn.executionTraceText('execution.goal.complete_task'),
+      find.text(osiaStringsEn.executionTraceText('execution.terminal.success')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(ExecutionTraceBlock),
+        matching: find.byType(DecoratedBox),
       ),
       findsNothing,
     );
-    await tester.tap(find.text(osiaStringsEn.executionTraceTitle));
-    await tester.pump();
     expect(
-      find.text(
-        osiaStringsEn.executionTraceText('execution.goal.complete_task'),
+      find.descendant(
+        of: find.byType(ExecutionTraceBlock),
+        matching: find.byType(Card),
       ),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.byIcon(Icons.volume_up_rounded), findsNothing);
   });
 
-  testWidgets('live trace starts expanded', (tester) async {
+  testWidgets(
+    'tap expands to prose, changes chevron, and second tap collapses',
+    (tester) async {
+      final trace = snapshot(<Map<String, dynamic>>[
+        traceEvent(
+          id: 'trace-goal',
+          sequence: 1,
+          kind: 'goal',
+          displayKey: 'execution.goal.answer',
+        ),
+        traceEvent(
+          id: 'trace-browser',
+          sequence: 2,
+          kind: 'action',
+          displayKey: 'execution.action.browser',
+        ),
+        traceEvent(
+          id: 'trace-result',
+          sequence: 3,
+          kind: 'result',
+          displayKey: 'execution.result.completed',
+        ),
+        traceEvent(
+          id: 'trace-continuation',
+          sequence: 4,
+          kind: 'continuation',
+          displayKey: 'execution.continuation.new_strategy',
+        ),
+        traceEvent(
+          id: 'trace-verify',
+          sequence: 5,
+          kind: 'reconciliation',
+          displayKey: 'execution.reconciliation.verifying',
+        ),
+        traceEvent(
+          id: 'trace-terminal',
+          sequence: 6,
+          kind: 'terminal',
+          displayKey: 'execution.terminal.success',
+          terminal: true,
+        ),
+      ]);
+      final prose = formatExecutionTraceSummary(osiaStringsEn, trace);
+
+      await tester.pumpWidget(
+        host(ExecutionTraceBlock(snapshot: trace, collapsed: true)),
+      );
+      await tester.tap(find.byKey(const ValueKey('execution_trace_toggle')));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
+      expect(find.byIcon(Icons.expand_more_rounded), findsOneWidget);
+      expect(find.text(prose), findsOneWidget);
+      expect(prose, isNot(contains('\n')));
+      expect(prose, isNot(contains('•')));
+      expect(find.byType(ListView), findsNothing);
+      expect(find.byType(ListTile), findsNothing);
+      for (final event in trace.events) {
+        expect(
+          find.text(osiaStringsEn.executionTraceText(event.display.key)),
+          findsNothing,
+        );
+      }
+
+      await tester.tap(find.byKey(const ValueKey('execution_trace_toggle')));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('execution_trace_summary')),
+        findsNothing,
+      );
+      expect(find.byIcon(Icons.volume_up_rounded), findsNothing);
+    },
+  );
+
+  test('formatter preserves order, latest revisions, and semantic dedup', () {
+    final trace = uncheckedSnapshot(<Map<String, dynamic>>[
+      traceEvent(
+        id: 'trace-result',
+        sequence: 3,
+        kind: 'result',
+        displayKey: 'execution.result.completed',
+      ),
+      traceEvent(
+        id: 'trace-goal',
+        sequence: 1,
+        revision: 1,
+        kind: 'goal',
+        displayKey: 'execution.goal.answer',
+      ),
+      traceEvent(
+        id: 'trace-browser-a',
+        sequence: 2,
+        kind: 'action',
+        displayKey: 'execution.action.browser',
+      ),
+      traceEvent(
+        id: 'trace-browser-b',
+        sequence: 4,
+        kind: 'action',
+        displayKey: 'execution.action.browser',
+      ),
+      traceEvent(
+        id: 'trace-goal',
+        sequence: 1,
+        revision: 2,
+        kind: 'goal',
+        displayKey: 'execution.goal.complete_task',
+      ),
+    ]);
+    final expected = osiaStringsEn.executionTraceSummary(const <String>[
+      'execution.goal.complete_task',
+      'execution.action.browser',
+      'execution.result.completed',
+    ]);
+
+    expect(formatExecutionTraceSummary(osiaStringsEn, trace), expected);
+    expect(formatExecutionTraceSummary(osiaStringsEn, trace), expected);
+  });
+
+  test('formatter skips unsafe, non-public, and cross-turn events', () {
+    const key = ExecutionTraceKey(
+      conversationId: 'conv-254',
+      requestId: 'request-254',
+      turnId: 'turn-254',
+    );
+    final safe = ExecutionTraceEvent.parse(
+      traceEvent(
+        id: 'trace-safe',
+        sequence: 2,
+        kind: 'action',
+        displayKey: 'execution.action.browser',
+      ),
+    )!;
+    final unsafe = ExecutionTraceEvent(
+      eventId: 'trace-unsafe',
+      traceKey: key,
+      sequence: 1,
+      revision: 1,
+      kind: ExecutionTraceKind.action,
+      display: const ExecutionTraceDisplay(
+        'execution.action.browser',
+        <String, Object?>{'command': 'secret --token=value'},
+      ),
+      timestamp: DateTime.utc(2026, 8, 10),
+      terminal: false,
+    );
+    final unknown = ExecutionTraceEvent(
+      eventId: 'trace-private',
+      traceKey: key,
+      sequence: 3,
+      revision: 1,
+      kind: ExecutionTraceKind.action,
+      display: const ExecutionTraceDisplay('provider.private_reasoning'),
+      timestamp: DateTime.utc(2026, 8, 10),
+      terminal: false,
+    );
+    final stale = ExecutionTraceEvent(
+      eventId: 'trace-stale',
+      traceKey: const ExecutionTraceKey(
+        conversationId: 'conv-254',
+        requestId: 'request-stale',
+        turnId: 'turn-stale',
+      ),
+      sequence: 4,
+      revision: 1,
+      kind: ExecutionTraceKind.action,
+      display: const ExecutionTraceDisplay('execution.action.shell'),
+      timestamp: DateTime.utc(2026, 8, 10),
+      terminal: false,
+    );
+    final trace = ExecutionTraceSnapshot(
+      key: key,
+      events: <ExecutionTraceEvent>[unsafe, safe, unknown, stale],
+    );
+    final prose = formatExecutionTraceSummary(osiaStringsEn, trace);
+
+    expect(
+      prose,
+      osiaStringsEn.executionTraceSummary(const ['execution.action.browser']),
+    );
+    expect(prose, isNot(contains('secret')));
+    expect(prose, isNot(contains('provider')));
+  });
+
+  test('persisted events reconstruct exactly the same prose', () {
+    final original = snapshot(<Map<String, dynamic>>[
+      traceEvent(
+        id: 'trace-goal',
+        sequence: 1,
+        kind: 'goal',
+        displayKey: 'execution.goal.answer',
+      ),
+      traceEvent(
+        id: 'trace-shell',
+        sequence: 2,
+        kind: 'action',
+        displayKey: 'execution.action.shell',
+      ),
+      traceEvent(
+        id: 'trace-terminal',
+        sequence: 3,
+        kind: 'terminal',
+        displayKey: 'execution.terminal.success',
+        terminal: true,
+      ),
+    ]);
+    final restored = ExecutionTraceSnapshot.parseHistory(original.toJson())!;
+
+    expect(
+      formatExecutionTraceSummary(osiaStringsFr, restored),
+      formatExecutionTraceSummary(osiaStringsFr, original),
+    );
+  });
+
+  testWidgets('live expanded prose updates without becoming event rows', (
+    tester,
+  ) async {
     final action = traceEvent(
       id: 'trace-action',
       sequence: 1,
       kind: 'action',
       displayKey: 'execution.action.browser',
     );
+    final initial = snapshot(<Map<String, dynamic>>[action]);
+    await tester.pumpWidget(host(ExecutionTraceBlock(snapshot: initial)));
+    final initialProse = formatExecutionTraceSummary(osiaStringsEn, initial);
+    expect(find.text(initialProse), findsOneWidget);
+
+    final updated = snapshot(<Map<String, dynamic>>[
+      action,
+      traceEvent(
+        id: 'trace-result',
+        sequence: 2,
+        kind: 'result',
+        displayKey: 'execution.result.completed',
+      ),
+    ]);
+    await tester.pumpWidget(host(ExecutionTraceBlock(snapshot: updated)));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(formatExecutionTraceSummary(osiaStringsEn, updated)),
+      findsOneWidget,
+    );
+    expect(find.text(initialProse), findsNothing);
+    expect(find.byType(ListTile), findsNothing);
+  });
+
+  testWidgets('large text scaling wraps without clipping or speak controls', (
+    tester,
+  ) async {
+    final trace = snapshot(<Map<String, dynamic>>[
+      traceEvent(
+        id: 'trace-goal',
+        sequence: 1,
+        kind: 'goal',
+        displayKey: 'execution.goal.complete_task',
+      ),
+      traceEvent(
+        id: 'trace-connector',
+        sequence: 2,
+        kind: 'action',
+        displayKey: 'execution.action.connector',
+      ),
+      traceEvent(
+        id: 'trace-attention',
+        sequence: 3,
+        kind: 'result',
+        displayKey: 'execution.result.needs_attention',
+      ),
+    ]);
     await tester.pumpWidget(
       host(
-        ExecutionTraceBlock(snapshot: snapshot(<Map<String, dynamic>>[action])),
+        ExecutionTraceBlock(snapshot: trace),
+        textScale: 3,
+        disableAnimations: true,
       ),
     );
+
+    expect(tester.takeException(), isNull);
+    final summary = tester.widget<Text>(
+      find.byKey(const ValueKey('execution_trace_summary')),
+    );
+    expect(summary.maxLines, isNull);
+    expect(summary.overflow, isNull);
+    expect(find.byIcon(Icons.volume_up_rounded), findsNothing);
+    expect(find.byTooltip('Speak'), findsNothing);
+  });
+
+  testWidgets('French and English render localized prose', (tester) async {
+    final trace = snapshot(<Map<String, dynamic>>[
+      traceEvent(
+        id: 'trace-goal',
+        sequence: 1,
+        kind: 'goal',
+        displayKey: 'execution.goal.answer',
+      ),
+      traceEvent(
+        id: 'trace-result',
+        sequence: 2,
+        kind: 'result',
+        displayKey: 'execution.result.completed',
+      ),
+    ]);
+    await tester.pumpWidget(host(ExecutionTraceBlock(snapshot: trace)));
+    expect(find.text(osiaStringsEn.executionTraceTitle), findsOneWidget);
     expect(
-      find.text(osiaStringsEn.executionTraceText('execution.action.browser')),
-      findsNWidgets(2),
+      find.text(formatExecutionTraceSummary(osiaStringsEn, trace)),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(
+      host(ExecutionTraceBlock(snapshot: trace), strings: osiaStringsFr),
+    );
+    expect(find.text('Réflexion'), findsOneWidget);
+    expect(
+      formatExecutionTraceSummary(osiaStringsFr, trace),
+      'J’ai compris la demande, puis j’ai terminé l’étape.',
+    );
+    expect(
+      find.text(formatExecutionTraceSummary(osiaStringsFr, trace)),
+      findsOneWidget,
     );
   });
 
@@ -192,6 +531,7 @@ void main() {
       for (final key in executionTraceDisplayKeys.keys) {
         expect(strings.executionTraceText(key), isNotEmpty);
         expect(strings.executionTraceText(key), isNot(key));
+        expect(strings.executionTraceSummaryClause(key), isNotEmpty);
       }
     }
   });

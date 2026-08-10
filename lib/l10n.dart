@@ -1677,6 +1677,38 @@ class OsiaStrings {
 
   String executionTraceText(String displayKey) => _wor254(displayKey);
 
+  String? executionTraceSummaryClause(String displayKey) {
+    final key = 'summary.$displayKey';
+    return _wor254Messages[languageCode]?[key] ?? _wor254Messages['en']?[key];
+  }
+
+  String executionTraceSummary(Iterable<String> displayKeys) {
+    final clauses = displayKeys
+        .map(executionTraceSummaryClause)
+        .whereType<String>()
+        .where((clause) => clause.isNotEmpty)
+        .toList(growable: false);
+    if (clauses.isEmpty) return '';
+    final ending = _wor254('summary.ending');
+    if (clauses.length == 1) return '${clauses.single}$ending';
+    final localizedClauses = <String>[
+      clauses.first,
+      ...clauses.skip(1).map(_executionTraceContinuationClause),
+    ];
+    final leading = localizedClauses
+        .take(localizedClauses.length - 1)
+        .join(_wor254('summary.separator'));
+    return '$leading${_wor254('summary.last_separator')}'
+        '${localizedClauses.last}$ending';
+  }
+
+  String _executionTraceContinuationClause(String clause) {
+    if (clause.isEmpty || (languageCode != 'fr' && languageCode != 'es')) {
+      return clause;
+    }
+    return '${clause[0].toLowerCase()}${clause.substring(1)}';
+  }
+
   /// Localized display name for a theme palette key.
   String themeName(String paletteKey) {
     switch (paletteKey) {
@@ -1729,6 +1761,32 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'execution.terminal.blocked': 'Stopped: action required',
     'execution.terminal.cancelled': 'Cancelled',
     'execution.terminal.safety_block': 'Stopped for safety',
+    'summary.separator': ', ',
+    'summary.last_separator': ', then ',
+    'summary.ending': '.',
+    'summary.execution.goal.answer': 'I understood the request',
+    'summary.execution.goal.complete_task': 'I prepared the task',
+    'summary.execution.action.preparing': 'I prepared the next step',
+    'summary.execution.action.browser': 'I worked in the browser',
+    'summary.execution.action.document': 'I worked with a document',
+    'summary.execution.action.filesystem': 'I worked with files',
+    'summary.execution.action.shell': 'I ran a local operation',
+    'summary.execution.action.connector': 'I contacted a connected service',
+    'summary.execution.action.memory': 'I checked the saved context',
+    'summary.execution.action.scheduled_task': 'I worked with a scheduled task',
+    'summary.execution.action.capability': 'I used an OSIA capability',
+    'summary.execution.permission.waiting': 'I waited for your approval',
+    'summary.execution.result.completed': 'I completed the step',
+    'summary.execution.result.needs_attention':
+        'I identified a step that needed attention',
+    'summary.execution.result.cancelled': 'I noted that the step was cancelled',
+    'summary.execution.continuation.new_strategy': 'I tried a new approach',
+    'summary.execution.reconciliation.verifying': 'I verified the result',
+    'summary.execution.terminal.success': 'I confirmed completion',
+    'summary.execution.terminal.blocked':
+        'I stopped because an action was required',
+    'summary.execution.terminal.cancelled': 'I confirmed the cancellation',
+    'summary.execution.terminal.safety_block': 'I stopped for safety',
   },
   'fr': {
     'transport.title': 'Transport actif',
@@ -1759,6 +1817,36 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'execution.terminal.blocked': 'Arrêté : action requise',
     'execution.terminal.cancelled': 'Annulé',
     'execution.terminal.safety_block': 'Arrêté par sécurité',
+    'summary.separator': ', ',
+    'summary.last_separator': ', puis ',
+    'summary.ending': '.',
+    'summary.execution.goal.answer': 'J’ai compris la demande',
+    'summary.execution.goal.complete_task': 'J’ai préparé la tâche',
+    'summary.execution.action.preparing': 'J’ai préparé l’étape suivante',
+    'summary.execution.action.browser': 'J’ai utilisé le navigateur',
+    'summary.execution.action.document': 'J’ai traité un document',
+    'summary.execution.action.filesystem': 'J’ai traité des fichiers',
+    'summary.execution.action.shell': 'J’ai exécuté une opération locale',
+    'summary.execution.action.connector': 'J’ai contacté un service connecté',
+    'summary.execution.action.memory': 'J’ai consulté le contexte enregistré',
+    'summary.execution.action.scheduled_task':
+        'J’ai traité une tâche planifiée',
+    'summary.execution.action.capability': 'J’ai utilisé une capacité OSIA',
+    'summary.execution.permission.waiting': 'J’ai attendu votre autorisation',
+    'summary.execution.result.completed': 'J’ai terminé l’étape',
+    'summary.execution.result.needs_attention':
+        'J’ai relevé qu’une étape demandait votre attention',
+    'summary.execution.result.cancelled':
+        'J’ai constaté l’annulation de l’étape',
+    'summary.execution.continuation.new_strategy':
+        'J’ai essayé une nouvelle approche',
+    'summary.execution.reconciliation.verifying': 'J’ai vérifié le résultat',
+    'summary.execution.terminal.success': 'J’ai confirmé l’exécution',
+    'summary.execution.terminal.blocked':
+        'J’ai arrêté l’exécution car une action était requise',
+    'summary.execution.terminal.cancelled': 'J’ai confirmé l’annulation',
+    'summary.execution.terminal.safety_block':
+        'J’ai arrêté l’exécution par sécurité',
   },
   'zh': {
     'transport.title': '当前传输方式',
@@ -1789,6 +1877,30 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'execution.terminal.blocked': '已停止：需要操作',
     'execution.terminal.cancelled': '已取消',
     'execution.terminal.safety_block': '出于安全原因已停止',
+    'summary.separator': '，',
+    'summary.last_separator': '，随后',
+    'summary.ending': '。',
+    'summary.execution.goal.answer': '我理解了请求',
+    'summary.execution.goal.complete_task': '我为完成任务做好了准备',
+    'summary.execution.action.preparing': '我准备了下一步',
+    'summary.execution.action.browser': '我在浏览器中进行了操作',
+    'summary.execution.action.document': '我处理了一个文档',
+    'summary.execution.action.filesystem': '我处理了文件',
+    'summary.execution.action.shell': '我运行了本地操作',
+    'summary.execution.action.connector': '我联系了已连接的服务',
+    'summary.execution.action.memory': '我查看了已保存的上下文',
+    'summary.execution.action.scheduled_task': '我处理了计划任务',
+    'summary.execution.action.capability': '我使用了 OSIA 功能',
+    'summary.execution.permission.waiting': '我等待了你的批准',
+    'summary.execution.result.completed': '我完成了该步骤',
+    'summary.execution.result.needs_attention': '我确认有一个步骤需要处理',
+    'summary.execution.result.cancelled': '我确认该步骤已取消',
+    'summary.execution.continuation.new_strategy': '我尝试了另一种方法',
+    'summary.execution.reconciliation.verifying': '我验证了结果',
+    'summary.execution.terminal.success': '我确认执行完成',
+    'summary.execution.terminal.blocked': '我因需要进一步操作而停止了执行',
+    'summary.execution.terminal.cancelled': '我确认执行已取消',
+    'summary.execution.terminal.safety_block': '我出于安全原因停止了执行',
   },
   'ja': {
     'transport.title': '使用中の通信経路',
@@ -1819,6 +1931,30 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'execution.terminal.blocked': '停止：操作が必要です',
     'execution.terminal.cancelled': 'キャンセルしました',
     'execution.terminal.safety_block': '安全のため停止しました',
+    'summary.separator': '、',
+    'summary.last_separator': '、その後',
+    'summary.ending': '。',
+    'summary.execution.goal.answer': '依頼を確認しました',
+    'summary.execution.goal.complete_task': 'タスク完了の準備をしました',
+    'summary.execution.action.preparing': '次の手順を準備しました',
+    'summary.execution.action.browser': 'ブラウザーで作業しました',
+    'summary.execution.action.document': '文書を処理しました',
+    'summary.execution.action.filesystem': 'ファイルを処理しました',
+    'summary.execution.action.shell': 'ローカル操作を実行しました',
+    'summary.execution.action.connector': '接続サービスに連絡しました',
+    'summary.execution.action.memory': '保存済みの情報を確認しました',
+    'summary.execution.action.scheduled_task': '予定タスクを処理しました',
+    'summary.execution.action.capability': 'OSIA 機能を使用しました',
+    'summary.execution.permission.waiting': '承認を待ちました',
+    'summary.execution.result.completed': '手順を完了しました',
+    'summary.execution.result.needs_attention': '確認が必要な手順を特定しました',
+    'summary.execution.result.cancelled': '手順のキャンセルを確認しました',
+    'summary.execution.continuation.new_strategy': '別の方法を試しました',
+    'summary.execution.reconciliation.verifying': '結果を確認しました',
+    'summary.execution.terminal.success': '実行の完了を確認しました',
+    'summary.execution.terminal.blocked': '操作が必要なため実行を停止しました',
+    'summary.execution.terminal.cancelled': 'キャンセルを確認しました',
+    'summary.execution.terminal.safety_block': '安全のため実行を停止しました',
   },
   'de': {
     'transport.title': 'Aktiver Transport',
@@ -1849,6 +1985,44 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'execution.terminal.blocked': 'Angehalten: Aktion erforderlich',
     'execution.terminal.cancelled': 'Abgebrochen',
     'execution.terminal.safety_block': 'Aus Sicherheitsgründen angehalten',
+    'summary.separator': '; ',
+    'summary.last_separator': '; anschließend ',
+    'summary.ending': '.',
+    'summary.execution.goal.answer': 'Ich habe die Anfrage verstanden',
+    'summary.execution.goal.complete_task': 'Ich habe die Aufgabe vorbereitet',
+    'summary.execution.action.preparing':
+        'Ich habe den nächsten Schritt vorbereitet',
+    'summary.execution.action.browser': 'Ich habe im Browser gearbeitet',
+    'summary.execution.action.document':
+        'Ich habe mit einem Dokument gearbeitet',
+    'summary.execution.action.filesystem': 'Ich habe Dateien bearbeitet',
+    'summary.execution.action.shell':
+        'Ich habe einen lokalen Vorgang ausgeführt',
+    'summary.execution.action.connector':
+        'Ich habe einen verbundenen Dienst kontaktiert',
+    'summary.execution.action.memory':
+        'Ich habe den gespeicherten Kontext geprüft',
+    'summary.execution.action.scheduled_task':
+        'Ich habe eine geplante Aufgabe bearbeitet',
+    'summary.execution.action.capability':
+        'Ich habe eine OSIA-Funktion verwendet',
+    'summary.execution.permission.waiting':
+        'Ich habe auf deine Freigabe gewartet',
+    'summary.execution.result.completed': 'Ich habe den Schritt abgeschlossen',
+    'summary.execution.result.needs_attention':
+        'Ich habe einen Schritt erkannt, der Aufmerksamkeit erfordert',
+    'summary.execution.result.cancelled':
+        'Ich habe den Abbruch des Schritts festgestellt',
+    'summary.execution.continuation.new_strategy':
+        'Ich habe eine neue Methode versucht',
+    'summary.execution.reconciliation.verifying':
+        'Ich habe das Ergebnis geprüft',
+    'summary.execution.terminal.success': 'Ich habe den Abschluss bestätigt',
+    'summary.execution.terminal.blocked':
+        'Ich habe angehalten, weil eine Aktion erforderlich war',
+    'summary.execution.terminal.cancelled': 'Ich habe den Abbruch bestätigt',
+    'summary.execution.terminal.safety_block':
+        'Ich habe aus Sicherheitsgründen angehalten',
   },
   'es': {
     'transport.title': 'Transporte activo',
@@ -1879,6 +2053,33 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'execution.terminal.blocked': 'Detenido: acción necesaria',
     'execution.terminal.cancelled': 'Cancelado',
     'execution.terminal.safety_block': 'Detenido por seguridad',
+    'summary.separator': ', ',
+    'summary.last_separator': ', después ',
+    'summary.ending': '.',
+    'summary.execution.goal.answer': 'Entendí la solicitud',
+    'summary.execution.goal.complete_task': 'Preparé la tarea',
+    'summary.execution.action.preparing': 'Preparé el siguiente paso',
+    'summary.execution.action.browser': 'Trabajé en el navegador',
+    'summary.execution.action.document': 'Procesé un documento',
+    'summary.execution.action.filesystem': 'Trabajé con archivos',
+    'summary.execution.action.shell': 'Ejecuté una operación local',
+    'summary.execution.action.connector': 'Contacté un servicio conectado',
+    'summary.execution.action.memory': 'Consulté el contexto guardado',
+    'summary.execution.action.scheduled_task': 'Procesé una tarea programada',
+    'summary.execution.action.capability': 'Usé una función de OSIA',
+    'summary.execution.permission.waiting': 'Esperé tu aprobación',
+    'summary.execution.result.completed': 'Completé el paso',
+    'summary.execution.result.needs_attention':
+        'Identifiqué un paso que necesita atención',
+    'summary.execution.result.cancelled': 'Confirmé que el paso se canceló',
+    'summary.execution.continuation.new_strategy': 'Probé un enfoque diferente',
+    'summary.execution.reconciliation.verifying': 'Verifiqué el resultado',
+    'summary.execution.terminal.success': 'Confirmé la ejecución',
+    'summary.execution.terminal.blocked':
+        'Detuve la ejecución porque hacía falta una acción',
+    'summary.execution.terminal.cancelled': 'Confirmé la cancelación',
+    'summary.execution.terminal.safety_block':
+        'Detuve la ejecución por seguridad',
   },
 };
 
