@@ -3,8 +3,9 @@ import 'dart:ui' show SemanticsAction;
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:osia_mobile/guide_content.dart';
+import 'package:osia_mobile/guide/guide_catalog.dart';
 import 'package:osia_mobile/guide_progress.dart';
+import 'package:osia_mobile/l10n.dart';
 import 'package:osia_mobile/motion.dart';
 import 'package:osia_mobile/screens/guide_screen.dart';
 import 'package:osia_mobile/services/storage_service.dart';
@@ -28,22 +29,25 @@ void main() {
     await tester.pumpWidget(
       OsiaTheme(
         palette: osiaPaletteViolet,
-        child: MaterialApp(
-          theme: buildOsiaTheme(),
-          builder: reducedMotion
-              ? (context, child) => MediaQuery(
-                  data: MediaQuery.of(
-                    context,
-                  ).copyWith(disableAnimations: true),
-                  child: child!,
-                )
-              : null,
-          home: GuideScreen(
-            storage: storage,
-            languageCode: languageCode,
-            automatic: automatic,
-            initialProgress: progress,
-            onAutomaticClosed: onAutomaticClosed,
+        child: OsiaL10n(
+          strings: languageCode == 'fr' ? osiaStringsFr : osiaStringsEn,
+          child: MaterialApp(
+            theme: buildOsiaTheme(),
+            builder: reducedMotion
+                ? (context, child) => MediaQuery(
+                    data: MediaQuery.of(
+                      context,
+                    ).copyWith(disableAnimations: true),
+                    child: child!,
+                  )
+                : null,
+            home: GuideScreen(
+              storage: storage,
+              languageCode: languageCode,
+              automatic: automatic,
+              initialProgress: progress,
+              onAutomaticClosed: onAutomaticClosed,
+            ),
           ),
         ),
       ),
@@ -65,8 +69,8 @@ void main() {
 
     expect(find.byKey(const Key('guide-screen')), findsOneWidget);
     expect(find.byKey(const Key('guide-page-view')), findsOneWidget);
-    expect(find.text('Slide 1 of 9'), findsOneWidget);
-    expect(find.text('OSIA, from your phone'), findsOneWidget);
+    expect(find.text('Slide 1 of 17'), findsOneWidget);
+    expect(find.text('OSIA works from your PC'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('guide-close')));
     await tester.pumpAndSettle();
@@ -89,16 +93,16 @@ void main() {
 
     await tester.drag(pages, const Offset(-600, 0));
     await tester.pumpAndSettle();
-    expect(find.text('Slide 2 of 9'), findsOneWidget);
+    expect(find.text('Slide 2 of 17'), findsOneWidget);
     var saved = GuideProgress.tryDecode(await storage.getGuideState())!;
-    expect(saved.currentLessonId, 'essential.before-pairing');
-    expect(saved.essentialCompleted, contains('essential.what-is-mobile'));
+    expect(saved.currentLessonId, 'essential.requirements');
+    expect(saved.essentialCompleted, contains('essential.osia-role'));
 
     await tester.drag(pages, const Offset(600, 0));
     await tester.pumpAndSettle();
-    expect(find.text('Slide 1 of 9'), findsOneWidget);
+    expect(find.text('Slide 1 of 17'), findsOneWidget);
     saved = GuideProgress.tryDecode(await storage.getGuideState())!;
-    expect(saved.currentLessonId, 'essential.what-is-mobile');
+    expect(saved.currentLessonId, 'essential.osia-role');
   });
 
   testWidgets('visible previous and next controls are absent', (tester) async {
@@ -141,21 +145,21 @@ void main() {
       isFalse,
     );
     tester.semantics.increase(
-      find.semantics.byLabel(RegExp(r'^Slide 1 of 9:')),
+      find.semantics.byLabel(RegExp(r'^Slide 1 of 17:')),
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(find.text('Slide 2 of 9'), findsOneWidget);
+    expect(find.text('Slide 2 of 17'), findsOneWidget);
     node = tester.getSemantics(find.byKey(const Key('guide-slide-semantics')));
     expect(node.getSemanticsData().hasAction(SemanticsAction.decrease), isTrue);
     tester.semantics.decrease(
-      find.semantics.byLabel(RegExp(r'^Slide 2 of 9:')),
+      find.semantics.byLabel(RegExp(r'^Slide 2 of 17:')),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Slide 1 of 9'), findsOneWidget);
+    expect(find.text('Slide 1 of 17'), findsOneWidget);
     final saved = GuideProgress.tryDecode(await storage.getGuideState())!;
-    expect(saved.currentLessonId, 'essential.what-is-mobile');
-    expect(saved.essentialCompleted, <String>{'essential.what-is-mobile'});
+    expect(saved.currentLessonId, 'essential.osia-role');
+    expect(saved.essentialCompleted, <String>{'essential.osia-role'});
     semanticsHandle.dispose();
   });
 
@@ -178,7 +182,7 @@ void main() {
     final pageView = tester.widget<PageView>(pageViewFinder);
     final settledIndex = pageView.controller!.page!.round();
     expect(settledIndex, inInclusiveRange(1, 2));
-    expect(find.text('Slide ${settledIndex + 1} of 9'), findsOneWidget);
+    expect(find.text('Slide ${settledIndex + 1} of 17'), findsOneWidget);
     final saved = GuideProgress.tryDecode(await storage.getGuideState())!;
     expect(
       saved.currentLessonId,
@@ -202,7 +206,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.byKey(const Key('guide-toc-essential.what-is-mobile')),
+      find.byKey(const Key('guide-toc-essential.osia-role')),
       findsNothing,
     );
 
@@ -210,17 +214,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('guide-table-of-contents')), findsOneWidget);
     expect(
-      find.byKey(const Key('guide-toc-essential.what-is-mobile')),
+      find.byKey(const Key('guide-toc-essential.osia-role')),
       findsOneWidget,
     );
 
     await tester.tap(find.byKey(const Key('guide-category-master-osia')));
     await tester.pumpAndSettle();
     expect(
-      find.byKey(const Key('guide-toc-advanced.provider-api-hierarchy')),
+      find.byKey(const Key('guide-toc-mastery.provider-routes')),
       findsOneWidget,
     );
-    expect(find.textContaining('20 slides'), findsWidgets);
+    expect(find.textContaining('46 slides'), findsWidgets);
   });
 
   testWidgets(
@@ -240,8 +244,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('guide-resume')));
       await tester.pumpAndSettle();
-      expect(find.text('Slide 5 of 20'), findsOneWidget);
-      expect(find.text('Models and AI hierarchy'), findsOneWidget);
+      expect(find.text('Slide 8 of 46'), findsOneWidget);
+      expect(find.text('Manual model selection'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('guide-close')));
       await tester.pumpAndSettle();
@@ -346,9 +350,7 @@ void main() {
     expect(
       tester
           .widget<TweenAnimationBuilder<double>>(
-            find.byKey(
-              const Key('guide-slide-motion-essential.what-is-mobile'),
-            ),
+            find.byKey(const Key('guide-slide-motion-essential.osia-role')),
           )
           .duration,
       guideContentTransitionDuration,
@@ -372,9 +374,7 @@ void main() {
     expect(
       tester
           .widget<TweenAnimationBuilder<double>>(
-            find.byKey(
-              const Key('guide-slide-motion-essential.what-is-mobile'),
-            ),
+            find.byKey(const Key('guide-slide-motion-essential.osia-role')),
           )
           .duration,
       Duration.zero,
@@ -384,7 +384,7 @@ void main() {
       const Offset(-600, 0),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Slide 2 of 9'), findsOneWidget);
+    expect(find.text('Slide 2 of 17'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -500,7 +500,7 @@ void main() {
       tester.view.resetDevicePixelRatio();
     });
     final progress = GuideProgress.freshPresentation().copyWith(
-      currentLessonId: 'essential.pair-token',
+      currentLessonId: 'essential.pairing-token',
     );
     await pumpGuide(
       tester,

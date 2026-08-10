@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:osia_mobile/guide_content.dart';
+import 'package:osia_mobile/guide/guide_catalog.dart' as v4;
 import 'package:osia_mobile/guide_progress.dart';
 import 'package:osia_mobile/services/storage_service.dart';
 
@@ -17,7 +18,7 @@ void main() {
     expect(first.showAutomatically, isTrue);
     expect(first.progress.automaticPresentationHandled, isTrue);
     expect(first.progress.outcome, 'presenting');
-    expect(first.progress.currentLessonId, 'essential.what-is-mobile');
+    expect(first.progress.currentLessonId, 'essential.osia-role');
 
     final second = await service.prepareLaunch();
     expect(second.showAutomatically, isFalse);
@@ -81,8 +82,8 @@ void main() {
       progress = await service.selectLesson(progress, advanced.id);
 
       final restored = await GuideProgressService(storage).load();
-      expect(restored.essentialCompleted, contains(essential.id));
-      expect(restored.masteryCompleted, contains(mastery.id));
+      expect(restored.essentialCompleted, contains('essential.first-request'));
+      expect(restored.masteryCompleted, contains('mastery.manual-model'));
       expect(restored.advancedCompleted, contains(advanced.id));
       expect(restored.currentLessonId, advanced.id);
       expect(restored.automaticPresentationHandled, isTrue);
@@ -111,11 +112,19 @@ void main() {
       'outcome': 'completed',
     });
     final progress = GuideProgress.tryDecode(raw)!;
-    expect(progress.contentSchemaVersion, guideContentSchemaVersion);
+    expect(progress.contentVersion, v4.guideCatalog.contentVersion);
     expect(progress.essentialCompleted, <String>{'essential.voice'});
-    expect(progress.masteryCompleted, <String>{'advanced.ai-model-hierarchy'});
+    expect(
+      progress.masteryCompleted,
+      containsAll(<String>{
+        'mastery.manual-model',
+        'mastery.task-routing',
+        'mastery.model-fallback',
+        'mastery.vision-local',
+      }),
+    );
     expect(progress.advancedCompleted, isEmpty);
-    expect(progress.currentLessonId, isNull);
+    expect(progress.currentLessonId, 'essential.osia-role');
   });
 
   test('schema-one progress expands split slides without resetting state', () {
@@ -139,22 +148,24 @@ void main() {
     });
 
     final progress = GuideProgress.tryDecode(raw)!;
-    expect(progress.contentSchemaVersion, guideContentSchemaVersion);
-    expect(progress.currentLessonId, 'essential.notifications-background');
+    expect(progress.contentVersion, v4.guideCatalog.contentVersion);
+    expect(progress.currentLessonId, 'essential.reconnect');
     expect(
       progress.essentialCompleted,
-      containsAll(<String>{
-        'essential.pair-token',
-        'essential.enter-token',
-        'essential.notifications-background',
-      }),
+      containsAll(<String>{'essential.pairing-token', 'essential.reconnect'}),
     );
     expect(
       progress.masteryCompleted,
       containsAll(<String>{
-        'advanced.pc-mobile-connection',
-        'advanced.voice-tts-stt',
-        'mastery.troubleshooting',
+        'mastery.mobile-pairing',
+        'mastery.mobile-transport',
+        'mastery.single-transport',
+        'mastery.mobile-offline',
+        'mastery.voice-tts',
+        'mastery.voice-stt',
+        'mastery.voice-recovery',
+        'mastery.voice-privacy',
+        'mastery.diagnostic-layers',
       }),
     );
     expect(progress.advancedCompleted, isEmpty);
@@ -178,12 +189,18 @@ void main() {
 
     final progress = GuideProgress.tryDecode(raw)!;
     expect(progress.essentialCompleted, contains('essential.ready'));
-    expect(progress.masteryCompleted, <String>{
-      'advanced.ai-model-hierarchy',
-      'mastery.notifications-background',
-    });
+    expect(
+      progress.masteryCompleted,
+      containsAll(<String>{
+        'mastery.manual-model',
+        'mastery.task-routing',
+        'mastery.model-fallback',
+        'mastery.vision-local',
+        'mastery.notifications',
+      }),
+    );
     expect(progress.advancedCompleted, isEmpty);
-    expect(progress.currentLessonId, 'advanced.ai-model-hierarchy');
+    expect(progress.currentLessonId, 'mastery.manual-model');
     expect(progress.finished, isTrue);
     expect(progress.automaticPresentationHandled, isTrue);
   });
@@ -201,7 +218,7 @@ void main() {
       );
       await storage.clearCredentials();
       final restored = await service.load();
-      expect(restored.currentLessonId, 'mastery.notifications-background');
+      expect(restored.currentLessonId, 'mastery.notifications');
       expect(await storage.getToken(), isNull);
     },
   );

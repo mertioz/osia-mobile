@@ -796,6 +796,54 @@ class OsiaStrings {
     required this.themeGreen,
   });
 
+  // ── Guide shell (EN/FR canonical, English fallback elsewhere) ──
+  String get guideTitle =>
+      languageCode == 'fr' ? 'Guide OSIA Mobile' : 'OSIA Mobile guide';
+  String get guideClose =>
+      languageCode == 'fr' ? 'Fermer le guide' : 'Close guide';
+  String get guideChooseJourney => languageCode == 'fr'
+      ? 'Choisissez votre parcours'
+      : 'Choose your journey';
+  String get guideHomeIntro => languageCode == 'fr'
+      ? 'Commencez simplement ou approfondissez un sujet à votre rythme.'
+      : 'Start simply or explore one subject in depth at your own pace.';
+  String get guideContents =>
+      languageCode == 'fr' ? 'Table des matières' : 'Table of contents';
+  String get guideHome =>
+      languageCode == 'fr' ? 'Accueil du guide' : 'Guide home';
+  String get guideSwipeHint => languageCode == 'fr'
+      ? 'Faites glisser horizontalement pour continuer.'
+      : 'Swipe horizontally to continue.';
+  String get guideResume => languageCode == 'fr' ? 'Reprendre' : 'Resume';
+  String get guideViewJourney =>
+      languageCode == 'fr' ? 'Voir le parcours' : 'View journey';
+  String get guideSlides =>
+      languageCode == 'fr' ? 'Écrans du guide' : 'Guide slides';
+  String get guideCategories =>
+      languageCode == 'fr' ? 'Catégories du guide' : 'Guide categories';
+
+  String guideSlideProgress(int current, int total) => languageCode == 'fr'
+      ? 'Écran $current sur $total'
+      : 'Slide $current of $total';
+
+  String guideProgressLabel(int current, int total) => languageCode == 'fr'
+      ? 'Progression : écran $current sur $total'
+      : 'Progress: slide $current of $total';
+
+  String guideSlideAnnouncement(int current, int total, String title) =>
+      languageCode == 'fr'
+      ? 'Écran $current sur $total : $title'
+      : 'Slide $current of $total: $title';
+
+  String guideCompletedProgress(int completed, int total) =>
+      languageCode == 'fr'
+      ? '$completed sur $total écrans terminés'
+      : '$completed of $total slides completed';
+
+  String guideCompactProgress(int completed, int total) => languageCode == 'fr'
+      ? '$completed / $total écrans'
+      : '$completed / $total slides';
+
   // ── Parameterized helpers ──
 
   String get createFolder => switch (languageCode) {

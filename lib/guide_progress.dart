@@ -1,20 +1,17 @@
 import 'dart:convert';
 
-import 'guide_content.dart';
+import 'guide/guide_catalog.dart';
 import 'services/storage_service.dart';
 
-const int guideStateSchemaVersion = 1;
-
-String _identity(String value) => value;
+const int guideStateSchemaVersion = 2;
 
 class GuideProgress {
   const GuideProgress({
     required this.schemaVersion,
-    required this.contentSchemaVersion,
-    required this.essentialCompleted,
-    required this.masteryCompleted,
-    required this.advancedCompleted,
-    required this.currentLessonId,
+    required this.contentVersion,
+    required this.lastTrackId,
+    required this.lastSlideByTrack,
+    required this.visitedByTrack,
     required this.finished,
     required this.skipped,
     required this.automaticPresentationHandled,
@@ -22,23 +19,38 @@ class GuideProgress {
   });
 
   final int schemaVersion;
-  final int contentSchemaVersion;
-  final Set<String> essentialCompleted;
-  final Set<String> masteryCompleted;
-  final Set<String> advancedCompleted;
-  final String? currentLessonId;
+  final int contentVersion;
+  final String lastTrackId;
+  final Map<String, String> lastSlideByTrack;
+  final Map<String, Set<String>> visitedByTrack;
   final bool finished;
   final bool skipped;
   final bool automaticPresentationHandled;
   final String outcome;
 
+  int get contentSchemaVersion => guideContentSchemaVersion;
+  String? get currentLessonId => lastSlideByTrack[lastTrackId];
+  Set<String> get essentialCompleted =>
+      visitedByTrack[guideEssentialCategoryId] ?? const <String>{};
+  Set<String> get masteryCompleted =>
+      visitedByTrack[guideMasteryCategoryId] ?? const <String>{};
+  Set<String> get advancedCompleted =>
+      visitedByTrack[guideAdvancedCategoryId] ?? const <String>{};
+
   factory GuideProgress.freshPresentation() => GuideProgress(
     schemaVersion: guideStateSchemaVersion,
-    contentSchemaVersion: guideContentSchemaVersion,
-    essentialCompleted: const <String>{},
-    masteryCompleted: const <String>{},
-    advancedCompleted: const <String>{},
-    currentLessonId: guideLessonsForCategory(guideEssentialCategoryId).first.id,
+    contentVersion: guideCatalog.contentVersion,
+    lastTrackId: guideEssentialCategoryId,
+    lastSlideByTrack: <String, String>{
+      guideEssentialCategoryId: guideLessonsForCategory(
+        guideEssentialCategoryId,
+      ).first.id,
+    },
+    visitedByTrack: const <String, Set<String>>{
+      guideEssentialCategoryId: <String>{},
+      guideMasteryCategoryId: <String>{},
+      guideAdvancedCategoryId: <String>{},
+    },
     finished: false,
     skipped: false,
     automaticPresentationHandled: true,
@@ -47,11 +59,14 @@ class GuideProgress {
 
   factory GuideProgress.migrated() => const GuideProgress(
     schemaVersion: guideStateSchemaVersion,
-    contentSchemaVersion: guideContentSchemaVersion,
-    essentialCompleted: <String>{},
-    masteryCompleted: <String>{},
-    advancedCompleted: <String>{},
-    currentLessonId: null,
+    contentVersion: 4,
+    lastTrackId: guideEssentialCategoryId,
+    lastSlideByTrack: <String, String>{},
+    visitedByTrack: <String, Set<String>>{
+      guideEssentialCategoryId: <String>{},
+      guideMasteryCategoryId: <String>{},
+      guideAdvancedCategoryId: <String>{},
+    },
     finished: false,
     skipped: false,
     automaticPresentationHandled: true,
@@ -59,6 +74,9 @@ class GuideProgress {
   );
 
   GuideProgress copyWith({
+    String? lastTrackId,
+    Map<String, String>? lastSlideByTrack,
+    Map<String, Set<String>>? visitedByTrack,
     Set<String>? essentialCompleted,
     Set<String>? masteryCompleted,
     Set<String>? advancedCompleted,
@@ -68,25 +86,64 @@ class GuideProgress {
     bool? skipped,
     bool? automaticPresentationHandled,
     String? outcome,
-  }) => GuideProgress(
-    schemaVersion: guideStateSchemaVersion,
-    contentSchemaVersion: guideContentSchemaVersion,
-    essentialCompleted: essentialCompleted ?? this.essentialCompleted,
-    masteryCompleted: masteryCompleted ?? this.masteryCompleted,
-    advancedCompleted: advancedCompleted ?? this.advancedCompleted,
-    currentLessonId: clearCurrentLesson
-        ? null
-        : (currentLessonId ?? this.currentLessonId),
-    finished: finished ?? this.finished,
-    skipped: skipped ?? this.skipped,
-    automaticPresentationHandled:
-        automaticPresentationHandled ?? this.automaticPresentationHandled,
-    outcome: outcome ?? this.outcome,
-  );
+  }) {
+    final nextVisited = <String, Set<String>>{
+      for (final entry in (visitedByTrack ?? this.visitedByTrack).entries)
+        entry.key: Set<String>.from(entry.value),
+    };
+    if (essentialCompleted != null) {
+      nextVisited[guideEssentialCategoryId] = Set<String>.from(
+        essentialCompleted,
+      );
+    }
+    if (masteryCompleted != null) {
+      nextVisited[guideMasteryCategoryId] = Set<String>.from(masteryCompleted);
+    }
+    if (advancedCompleted != null) {
+      nextVisited[guideAdvancedCategoryId] = Set<String>.from(
+        advancedCompleted,
+      );
+    }
+    final nextLast = Map<String, String>.from(
+      lastSlideByTrack ?? this.lastSlideByTrack,
+    );
+    var nextTrack = lastTrackId ?? this.lastTrackId;
+    if (clearCurrentLesson) {
+      nextLast.remove(nextTrack);
+    } else if (currentLessonId != null) {
+      final slide = guideLessonById(_resolveLegacyCurrent(currentLessonId));
+      if (slide != null) {
+        nextTrack = slide.trackId;
+        nextLast[slide.trackId] = slide.id;
+      }
+    }
+    return GuideProgress(
+      schemaVersion: guideStateSchemaVersion,
+      contentVersion: guideCatalog.contentVersion,
+      lastTrackId: nextTrack,
+      lastSlideByTrack: nextLast,
+      visitedByTrack: nextVisited,
+      finished: finished ?? this.finished,
+      skipped: skipped ?? this.skipped,
+      automaticPresentationHandled:
+          automaticPresentationHandled ?? this.automaticPresentationHandled,
+      outcome: outcome ?? this.outcome,
+    );
+  }
 
   Map<String, Object?> toJson() => <String, Object?>{
     'schemaVersion': schemaVersion,
-    'contentSchemaVersion': contentSchemaVersion,
+    'contentVersion': contentVersion,
+    'lastTrackId': lastTrackId,
+    'lastSlideByTrack': <String, String>{
+      for (final entry in lastSlideByTrack.entries) entry.key: entry.value,
+    },
+    'visitedByTrack': <String, List<String>>{
+      for (final entry in visitedByTrack.entries)
+        entry.key: entry.value.toList()..sort(),
+    },
+    // Compatibility mirrors for the pre-v4 state readers.
+    'contentSchemaVersion': guideContentSchemaVersion,
     'essentialCompleted': essentialCompleted.toList()..sort(),
     'masteryCompleted': masteryCompleted.toList()..sort(),
     'advancedCompleted': advancedCompleted.toList()..sort(),
@@ -97,93 +154,127 @@ class GuideProgress {
     'outcome': outcome,
   };
 
+  static const _trackIds = <String>{
+    guideEssentialCategoryId,
+    guideMasteryCategoryId,
+    guideAdvancedCategoryId,
+  };
+
+  static String _legacyMobileId(String id) => switch (id) {
+    'essential.what-is-mobile' => 'essential.osia-role',
+    'essential.before-pairing' => 'essential.requirements',
+    'essential.pair-token' => 'essential.pairing-token',
+    'essential.enter-token' => 'essential.pairing-connect',
+    'essential.mobile-pages' => 'essential.mobile-navigation',
+    'essential.first-message' => 'essential.first-request',
+    'essential.voice' => 'essential.voice',
+    'essential.notifications-background' ||
+    'essential.reconnection' => 'essential.reconnect',
+    'advanced.pairing-trust' ||
+    'advanced.connection-hierarchy' ||
+    'advanced.lan' ||
+    'advanced.webrtc' ||
+    'advanced.relay-reconnect' ||
+    'advanced.security-privacy' => 'advanced.pc-mobile-connection',
+    'advanced.android-background' ||
+    'advanced.ios-background' ||
+    'advanced.notifications' => 'mastery.notifications-background',
+    'advanced.tts' => 'advanced.voice-tts-stt',
+    'advanced.conversations-sync' => 'mastery.conversations-turns',
+    'advanced.models' => 'advanced.ai-model-hierarchy',
+    'advanced.troubleshooting' ||
+    'advanced.troubleshooting-media' => 'mastery.troubleshooting',
+    _ => id,
+  };
+
+  static Set<String> _migrateIds(Object? raw, String trackId) {
+    if (raw is! List) return <String>{};
+    final allowed = guideLessonsForCategory(
+      trackId,
+    ).map((slide) => slide.id).toSet();
+    final result = <String>{};
+    for (final value in raw.whereType<String>()) {
+      final legacy = _legacyMobileId(value);
+      final children = guideLegacyChildren(legacy);
+      if (children.isNotEmpty) {
+        result.addAll(children.where(allowed.contains));
+      }
+    }
+    return result;
+  }
+
+  static String? _resolveLegacyCurrent(String? value, {String? trackId}) {
+    if (value == null || value.isEmpty) return null;
+    return resolveGuideSlideId(_legacyMobileId(value), trackId: trackId);
+  }
+
   static GuideProgress? tryDecode(String? raw) {
     if (raw == null || raw.trim().isEmpty) return null;
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is! Map<String, dynamic> ||
-          decoded['schemaVersion'] != guideStateSchemaVersion) {
-        return null;
+      if (decoded is! Map<String, dynamic>) return null;
+      final schema = decoded['schemaVersion'];
+      if (schema != 1 && schema != guideStateSchemaVersion) return null;
+
+      final visited = <String, Set<String>>{};
+      final rawVisited = decoded['visitedByTrack'];
+      if (rawVisited is Map<String, dynamic>) {
+        for (final trackId in _trackIds) {
+          visited[trackId] = _migrateIds(rawVisited[trackId], trackId);
+        }
+      } else {
+        visited[guideEssentialCategoryId] = _migrateIds(
+          decoded['essentialCompleted'],
+          guideEssentialCategoryId,
+        );
+        final storedContentSchema = decoded['contentSchemaVersion'];
+        final legacyContent =
+            storedContentSchema is! int || storedContentSchema < 3;
+        visited[guideMasteryCategoryId] = _migrateIds(
+          legacyContent
+              ? decoded['advancedCompleted']
+              : decoded['masteryCompleted'],
+          guideMasteryCategoryId,
+        );
+        visited[guideAdvancedCategoryId] = legacyContent
+            ? <String>{}
+            : _migrateIds(
+                decoded['advancedCompleted'],
+                guideAdvancedCategoryId,
+              );
       }
-      final essentialIds = guideLessonsForCategory(
-        guideEssentialCategoryId,
-      ).map((lesson) => lesson.id).toSet();
-      final masteryIds = guideLessonsForCategory(
-        guideMasteryCategoryId,
-      ).map((lesson) => lesson.id).toSet();
-      final advancedIds = guideLessonsForCategory(
-        guideAdvancedCategoryId,
-      ).map((lesson) => lesson.id).toSet();
-
-      String migrateEssentialId(String id) => switch (id) {
-        'essential.reconnection' => 'essential.notifications-background',
-        _ => id,
-      };
-
-      String migrateLegacyMasteryId(String id) => switch (id) {
-        'advanced.pairing-trust' ||
-        'advanced.connection-hierarchy' ||
-        'advanced.lan' ||
-        'advanced.webrtc' ||
-        'advanced.relay-reconnect' ||
-        'advanced.security-privacy' => 'advanced.pc-mobile-connection',
-        'advanced.android-background' ||
-        'advanced.ios-background' ||
-        'advanced.notifications' => 'mastery.notifications-background',
-        'advanced.voice-tts-stt' || 'advanced.tts' => 'advanced.voice-tts-stt',
-        'advanced.conversations-sync' => 'mastery.conversations-turns',
-        'advanced.models' => 'advanced.ai-model-hierarchy',
-        'advanced.troubleshooting' ||
-        'advanced.troubleshooting-media' => 'mastery.troubleshooting',
-        _ => id,
-      };
-
-      Set<String> completed(
-        Object? value,
-        Set<String> allowed, {
-        String Function(String) migrate = _identity,
-      }) {
-        if (value is! List) return <String>{};
-        return value
-            .whereType<String>()
-            .map(migrate)
-            .where(allowed.contains)
-            .toSet();
+      for (final trackId in _trackIds) {
+        visited.putIfAbsent(trackId, () => <String>{});
       }
 
-      final essentialCompleted = completed(
-        decoded['essentialCompleted'],
-        essentialIds,
-        migrate: migrateEssentialId,
-      );
-      final storedContentSchema = decoded['contentSchemaVersion'];
-      final legacyContent =
-          storedContentSchema is! int || storedContentSchema < 3;
-      final masteryCompleted = legacyContent
-          ? completed(
-              decoded['advancedCompleted'],
-              masteryIds,
-              migrate: migrateLegacyMasteryId,
-            )
-          : completed(decoded['masteryCompleted'], masteryIds);
-      final advancedCompleted = legacyContent
-          ? <String>{}
-          : completed(decoded['advancedCompleted'], advancedIds);
-      if (storedContentSchema is! int || storedContentSchema < 2) {
-        if (essentialCompleted.contains('essential.pair-token')) {
-          essentialCompleted.add('essential.enter-token');
+      final lastByTrack = <String, String>{};
+      final rawLast = decoded['lastSlideByTrack'];
+      if (rawLast is Map<String, dynamic>) {
+        for (final trackId in _trackIds) {
+          final value = rawLast[trackId];
+          final resolved = value is String
+              ? _resolveLegacyCurrent(value, trackId: trackId)
+              : null;
+          final slide = guideLessonById(resolved);
+          if (slide?.trackId == trackId) lastByTrack[trackId] = slide!.id;
         }
       }
-
       final rawCurrent = decoded['currentLesson'];
-      final migratedCurrent = rawCurrent is String
-          ? (legacyContent
-                ? migrateLegacyMasteryId(migrateEssentialId(rawCurrent))
-                : migrateEssentialId(rawCurrent))
+      final current = rawCurrent is String
+          ? _resolveLegacyCurrent(rawCurrent)
           : null;
-      final current = guideLessonById(migratedCurrent) != null
-          ? migratedCurrent
-          : null;
+      final currentSlide = guideLessonById(current);
+      if (currentSlide != null) {
+        lastByTrack.putIfAbsent(currentSlide.trackId, () => currentSlide.id);
+      }
+      var lastTrack = decoded['lastTrackId'];
+      if (lastTrack is! String || !_trackIds.contains(lastTrack)) {
+        lastTrack = currentSlide?.trackId ?? guideEssentialCategoryId;
+      }
+      if (!lastByTrack.containsKey(lastTrack)) {
+        lastByTrack[lastTrack] = guideLessonsForCategory(lastTrack).first.id;
+      }
+
       const allowedOutcomes = <String>{
         'presenting',
         'completed',
@@ -198,18 +289,17 @@ class GuideProgress {
           : 'migrated';
       return GuideProgress(
         schemaVersion: guideStateSchemaVersion,
-        contentSchemaVersion: guideContentSchemaVersion,
-        essentialCompleted: essentialCompleted,
-        masteryCompleted: masteryCompleted,
-        advancedCompleted: advancedCompleted,
-        currentLessonId: current,
+        contentVersion: guideCatalog.contentVersion,
+        lastTrackId: lastTrack,
+        lastSlideByTrack: lastByTrack,
+        visitedByTrack: visited,
         finished: decoded['finished'] == true,
         skipped: decoded['skipped'] == true,
         automaticPresentationHandled:
             decoded['automaticPresentationHandled'] == true,
         outcome: outcome,
       );
-    } on FormatException {
+    } catch (_) {
       return null;
     }
   }
@@ -267,31 +357,41 @@ class GuideProgressService {
     GuideProgress progress,
     String lessonId,
   ) async {
-    if (guideLessonById(lessonId) == null) return progress;
-    final next = progress.copyWith(currentLessonId: lessonId);
+    final resolved = resolveGuideSlideId(lessonId);
+    final slide = guideLessonById(resolved);
+    if (slide == null) return progress;
+    final next = progress.copyWith(
+      lastTrackId: slide.trackId,
+      lastSlideByTrack: <String, String>{
+        ...progress.lastSlideByTrack,
+        slide.trackId: slide.id,
+      },
+    );
     await save(next);
     return next;
   }
 
   Future<GuideProgress> completeLesson(
     GuideProgress progress,
-    GuideLesson lesson,
+    Object lesson,
   ) async {
-    final essential = Set<String>.from(progress.essentialCompleted);
-    final mastery = Set<String>.from(progress.masteryCompleted);
-    final advanced = Set<String>.from(progress.advancedCompleted);
-    if (lesson.categoryId == guideEssentialCategoryId) {
-      essential.add(lesson.id);
-    } else if (lesson.categoryId == guideMasteryCategoryId) {
-      mastery.add(lesson.id);
-    } else {
-      advanced.add(lesson.id);
-    }
-    final next = progress.copyWith(
-      essentialCompleted: essential,
-      masteryCompleted: mastery,
-      advancedCompleted: advanced,
+    final dynamic legacyCompatible = lesson;
+    final String lessonId = legacyCompatible.id as String;
+    final String trackId = legacyCompatible.categoryId as String;
+    final resolved = resolveGuideSlideId(lessonId, trackId: trackId);
+    final slide = guideLessonById(resolved);
+    if (slide == null) return progress;
+    final visited = <String, Set<String>>{
+      for (final entry in progress.visitedByTrack.entries)
+        entry.key: Set<String>.from(entry.value),
+    };
+    final children = guideLegacyChildren(
+      GuideProgress._legacyMobileId(lessonId),
     );
+    visited
+        .putIfAbsent(slide.trackId, () => <String>{})
+        .addAll(children.isEmpty ? <String>{slide.id} : children);
+    final next = progress.copyWith(visitedByTrack: visited);
     await save(next);
     return next;
   }
@@ -307,11 +407,15 @@ class GuideProgressService {
   }
 
   Future<GuideProgress> markFinished(GuideProgress progress) async {
-    final essentialIds = guideLessonsForCategory(
+    final visited = <String, Set<String>>{
+      for (final entry in progress.visitedByTrack.entries)
+        entry.key: Set<String>.from(entry.value),
+    };
+    visited[guideEssentialCategoryId] = guideLessonsForCategory(
       guideEssentialCategoryId,
     ).map((lesson) => lesson.id).toSet();
     final next = progress.copyWith(
-      essentialCompleted: essentialIds,
+      visitedByTrack: visited,
       finished: true,
       outcome: 'completed',
       automaticPresentationHandled: true,

@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../guide_content.dart';
+import '../guide/guide_catalog.dart';
+import '../guide/guide_visuals.dart';
 import '../guide_progress.dart';
+import '../l10n.dart';
 import '../motion.dart';
 import '../services/storage_service.dart';
 import '../theme.dart';
@@ -87,7 +89,7 @@ class _GuideScreenState extends State<GuideScreen> {
       _selectedCategoryId =
           initial?.categoryId ??
           savedLesson?.categoryId ??
-          guideEssentialCategoryId;
+          progress.lastTrackId;
     });
   }
 
@@ -230,6 +232,7 @@ class _GuideScreenState extends State<GuideScreen> {
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
     final progress = _progress;
     final reduceMotion = _reducedMotion(context);
     return PopScope(
@@ -260,7 +263,7 @@ class _GuideScreenState extends State<GuideScreen> {
               const SizedBox(width: 9),
               Expanded(
                 child: Text(
-                  _isFrench ? 'Guide OSIA Mobile' : 'OSIA Mobile guide',
+                  strings.guideTitle,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: palette.textPrimary,
@@ -274,7 +277,7 @@ class _GuideScreenState extends State<GuideScreen> {
           actions: [
             IconButton(
               key: const Key('guide-close'),
-              tooltip: _isFrench ? 'Fermer le guide' : 'Close guide',
+              tooltip: strings.guideClose,
               onPressed: _closing ? null : _close,
               icon: const Icon(Icons.close_rounded),
             ),
@@ -317,6 +320,7 @@ class _GuideScreenState extends State<GuideScreen> {
   }
 
   Widget _buildGuideHome(OsiaPalette palette, GuideProgress progress) {
+    final strings = OsiaL10n.of(context);
     return ListView(
       key: const Key('guide-home'),
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 28),
@@ -328,9 +332,7 @@ class _GuideScreenState extends State<GuideScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  _isFrench
-                      ? 'Choisissez votre parcours'
-                      : 'Choose your journey',
+                  strings.guideChooseJourney,
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 27,
@@ -340,9 +342,7 @@ class _GuideScreenState extends State<GuideScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  _isFrench
-                      ? 'Commencez simplement ou approfondissez un sujet à votre rythme.'
-                      : 'Start simply or explore one subject in depth at your own pace.',
+                  strings.guideHomeIntro,
                   style: TextStyle(
                     color: palette.textMuted,
                     fontSize: 14.5,
@@ -360,9 +360,9 @@ class _GuideScreenState extends State<GuideScreen> {
                     total: guideLessonsForCategory(
                       guideCategories[i].id,
                     ).length,
-                    resumable:
-                        guideLessonById(progress.currentLessonId)?.categoryId ==
-                        guideCategories[i].id,
+                    resumable: progress.lastSlideByTrack.containsKey(
+                      guideCategories[i].id,
+                    ),
                     onTap: () => _openCategory(guideCategories[i].id),
                   ),
                   if (i != guideCategories.length - 1)
@@ -377,11 +377,14 @@ class _GuideScreenState extends State<GuideScreen> {
   }
 
   Widget _buildTableOfContents(OsiaPalette palette, GuideProgress progress) {
+    final strings = OsiaL10n.of(context);
     final category = guideCategories.firstWhere(
       (item) => item.id == _selectedCategoryId,
     );
     final lessons = guideLessonsForCategory(_selectedCategoryId);
-    final saved = guideLessonById(progress.currentLessonId);
+    final saved = guideLessonById(
+      progress.lastSlideByTrack[_selectedCategoryId],
+    );
     return ListView(
       key: const Key('guide-table-of-contents'),
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
@@ -396,7 +399,7 @@ class _GuideScreenState extends State<GuideScreen> {
                   children: [
                     IconButton(
                       key: const Key('guide-home-back'),
-                      tooltip: _isFrench ? 'Accueil du guide' : 'Guide home',
+                      tooltip: strings.guideHome,
                       onPressed: _openHome,
                       icon: const Icon(Icons.arrow_back_rounded),
                     ),
@@ -427,7 +430,6 @@ class _GuideScreenState extends State<GuideScreen> {
                 _StaticProgress(
                   completed: _completedCount(progress, category.id),
                   total: lessons.length,
-                  languageCode: widget.languageCode,
                   palette: palette,
                 ),
                 if (saved?.categoryId == category.id) ...[
@@ -436,12 +438,12 @@ class _GuideScreenState extends State<GuideScreen> {
                     key: const Key('guide-resume'),
                     onPressed: () => _openLesson(saved!),
                     icon: const Icon(Icons.play_arrow_rounded),
-                    label: Text(_isFrench ? 'Reprendre' : 'Resume'),
+                    label: Text(strings.guideResume),
                   ),
                 ],
                 const SizedBox(height: 18),
                 Text(
-                  _isFrench ? 'Écrans du guide' : 'Guide slides',
+                  strings.guideSlides,
                   style: TextStyle(
                     color: palette.textPrimary,
                     fontSize: 15,
@@ -466,9 +468,10 @@ class _GuideScreenState extends State<GuideScreen> {
   }
 
   Widget _buildCategorySelector(OsiaPalette palette) {
+    final strings = OsiaL10n.of(context);
     return Semantics(
       container: true,
-      label: _isFrench ? 'Catégories du guide' : 'Guide categories',
+      label: strings.guideCategories,
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
@@ -504,6 +507,7 @@ class _GuideScreenState extends State<GuideScreen> {
     GuideProgress progress,
     bool reduceMotion,
   ) {
+    final strings = OsiaL10n.of(context);
     final lessons = guideLessonsForCategory(_selectedCategoryId);
     final category = guideCategories.firstWhere(
       (item) => item.id == _selectedCategoryId,
@@ -531,9 +535,10 @@ class _GuideScreenState extends State<GuideScreen> {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      _isFrench
-                          ? 'Écran ${_pageIndex + 1} sur ${lessons.length}'
-                          : 'Slide ${_pageIndex + 1} of ${lessons.length}',
+                      strings.guideSlideProgress(
+                        _pageIndex + 1,
+                        lessons.length,
+                      ),
                       style: TextStyle(color: palette.textMuted, fontSize: 12),
                     ),
                   ],
@@ -541,7 +546,7 @@ class _GuideScreenState extends State<GuideScreen> {
               ),
               IconButton(
                 key: const Key('guide-toc'),
-                tooltip: _isFrench ? 'Table des matières' : 'Table of contents',
+                tooltip: strings.guideContents,
                 onPressed: _openContents,
                 icon: const Icon(Icons.grid_view_rounded),
               ),
@@ -551,9 +556,7 @@ class _GuideScreenState extends State<GuideScreen> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Semantics(
-            label: _isFrench
-                ? 'Progression : écran ${_pageIndex + 1} sur ${lessons.length}'
-                : 'Progress: slide ${_pageIndex + 1} of ${lessons.length}',
+            label: strings.guideProgressLabel(_pageIndex + 1, lessons.length),
             value: '${(((_pageIndex + 1) / lessons.length) * 100).round()}%',
             child: TweenAnimationBuilder<double>(
               key: const Key('guide-slide-progress'),
@@ -577,9 +580,7 @@ class _GuideScreenState extends State<GuideScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 7),
             child: Text(
-              _isFrench
-                  ? 'Faites glisser horizontalement pour continuer.'
-                  : 'Swipe horizontally to continue.',
+              strings.guideSwipeHint,
               key: const Key('guide-swipe-hint'),
               textAlign: TextAlign.center,
               style: TextStyle(color: palette.textMuted, fontSize: 11.5),
@@ -590,9 +591,11 @@ class _GuideScreenState extends State<GuideScreen> {
             key: const Key('guide-slide-semantics'),
             container: true,
             liveRegion: true,
-            label: _isFrench
-                ? 'Écran ${_pageIndex + 1} sur ${lessons.length} : ${_text(lessons[_pageIndex].title)}'
-                : 'Slide ${_pageIndex + 1} of ${lessons.length}: ${_text(lessons[_pageIndex].title)}',
+            label: strings.guideSlideAnnouncement(
+              _pageIndex + 1,
+              lessons.length,
+              _text(lessons[_pageIndex].title),
+            ),
             onIncrease: _pageIndex < lessons.length - 1
                 ? () => unawaited(_next())
                 : null,
@@ -651,17 +654,14 @@ class _CategoryCard extends StatelessWidget {
   final bool resumable;
   final VoidCallback onTap;
 
-  bool get _isFrench => languageCode == 'fr';
-
   @override
   Widget build(BuildContext context) {
     final advanced = category.id == guideAdvancedCategoryId;
+    final strings = OsiaL10n.of(context);
     return Semantics(
       button: true,
       label: category.title.resolve(languageCode),
-      value: _isFrench
-          ? '$completed sur $total écrans terminés'
-          : '$completed of $total slides completed',
+      value: strings.guideCompletedProgress(completed, total),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -743,9 +743,7 @@ class _CategoryCard extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      _isFrench
-                          ? '$completed / $total écrans'
-                          : '$completed / $total slides',
+                      strings.guideCompactProgress(completed, total),
                       style: TextStyle(
                         color: palette.textMuted,
                         fontSize: 12,
@@ -755,8 +753,8 @@ class _CategoryCard extends StatelessWidget {
                     const Spacer(),
                     Text(
                       resumable
-                          ? (_isFrench ? 'Reprendre' : 'Resume')
-                          : (_isFrench ? 'Voir le parcours' : 'View journey'),
+                          ? strings.guideResume
+                          : strings.guideViewJourney,
                       style: TextStyle(
                         color: palette.accent,
                         fontSize: 12,
@@ -778,21 +776,18 @@ class _StaticProgress extends StatelessWidget {
   const _StaticProgress({
     required this.completed,
     required this.total,
-    required this.languageCode,
     required this.palette,
   });
 
   final int completed;
   final int total;
-  final String languageCode;
   final OsiaPalette palette;
 
   @override
   Widget build(BuildContext context) {
+    final strings = OsiaL10n.of(context);
     return Semantics(
-      label: languageCode == 'fr'
-          ? 'Progression : $completed sur $total'
-          : 'Progress: $completed of $total',
+      label: strings.guideProgressLabel(completed, total),
       value: '${total == 0 ? 0 : ((completed / total) * 100).round()}%',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -806,9 +801,7 @@ class _StaticProgress extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            languageCode == 'fr'
-                ? '$completed sur $total écrans terminés'
-                : '$completed of $total slides completed',
+            strings.guideCompletedProgress(completed, total),
             style: TextStyle(color: palette.textMuted, fontSize: 12),
           ),
         ],
@@ -917,6 +910,17 @@ class _GuideSlide extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Catalog v4 always supplies a visual key. The former renderer remains a
+    // compatibility fallback until the legacy content files are retired.
+    if (lesson.visual.key.isNotEmpty) {
+      return GuideResponsiveSlide(
+        key: Key('guide-catalog-slide-${lesson.id}'),
+        slide: lesson,
+        languageCode: languageCode,
+        palette: palette,
+        reduceMotion: reduceMotion,
+      );
+    }
     final size = MediaQuery.sizeOf(context);
     final textScale = MediaQuery.textScalerOf(context).scale(1);
     final compactViewport = size.width > size.height;
