@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../slash_commands.dart';
 import 'lan_direct_transport.dart';
 import 'lan_discovery_service.dart';
 import 'execution_trace.dart';
@@ -957,6 +958,10 @@ class ConfigData {
   /// Per-provider/per-model reasoning controls mirrored from the PC.
   final OsiaReasoningConfig reasoning;
 
+  /// Safe availability overlay for typed slash commands. It contains only
+  /// display state and stable connector identities, never secrets or endpoints.
+  final Map<String, dynamic> slashCommands;
+
   /// Raw mirror of the PC's `settings.json` values, for pre-filling toggles
   /// that have no dedicated typed field above (e.g. `time_format`,
   /// `heartbeat_enabled`, `heartbeat_interval_seconds`). The server may nest
@@ -974,6 +979,7 @@ class ConfigData {
     required this.skills,
     this.gmailRest,
     this.reasoning = const OsiaReasoningConfig(),
+    this.slashCommands = const {},
     required this.settings,
   });
 
@@ -1022,6 +1028,7 @@ class ConfigData {
       reasoning: OsiaReasoningConfig.fromJson(
         config['reasoning'] ?? settings['reasoning'],
       ),
+      slashCommands: parseSlashAvailabilityOverlay(config['slash_commands']),
       settings: settings,
     );
   }
@@ -4217,9 +4224,13 @@ class WebSocketService {
     String? conversationId,
     String? clientRequestId,
     bool ttsEnabled = true,
+    Map<String, dynamic>? turnDirectives,
   }) {
     final id = conversationId ?? '';
     final requestId = clientRequestId ?? newClientRequestId();
+    final immutableDirectives = turnDirectives == null
+        ? null
+        : freezeSlashDirectiveMap(turnDirectives);
     if (id.isNotEmpty &&
         isConversationBusy(id) &&
         _activeRequestByConv[id] != requestId) {
@@ -4233,6 +4244,7 @@ class WebSocketService {
       'request_id': requestId,
       'client_request_id': requestId,
       'tts_enabled': ttsEnabled,
+      'turn_directives': ?immutableDirectives,
       if (_clientLocale.isNotEmpty) 'locale': _clientLocale,
     });
     if (sent) {
@@ -4372,8 +4384,12 @@ class WebSocketService {
     required String clientRequestId,
     bool ttsEnabled = true,
     String? expectedTransportSession,
+    Map<String, dynamic>? turnDirectives,
   }) {
     if (attachmentBatchId.isEmpty || clientRequestId.isEmpty) return false;
+    final immutableDirectives = turnDirectives == null
+        ? null
+        : freezeSlashDirectiveMap(turnDirectives);
     if (expectedTransportSession != null &&
         attachmentTransportSession != expectedTransportSession) {
       return false;
@@ -4392,6 +4408,7 @@ class WebSocketService {
       'client_request_id': clientRequestId,
       'attachment_batch_id': attachmentBatchId,
       'tts_enabled': ttsEnabled,
+      'turn_directives': ?immutableDirectives,
       if (_clientLocale.isNotEmpty) 'locale': _clientLocale,
     });
     if (sent) {

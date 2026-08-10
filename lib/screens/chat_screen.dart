@@ -3,10 +3,12 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import '../l10n.dart';
 import '../motion.dart';
 import '../nav.dart';
+import '../slash_commands.dart';
 import '../services/audio_service.dart';
 import '../services/attachment_service.dart';
 import '../services/background_connection_service.dart';
@@ -25,6 +27,7 @@ import '../widgets/execution_trace_block.dart';
 import '../widgets/glass_input_bar.dart';
 import '../widgets/mcp_confirm_dialog.dart';
 import '../widgets/model_selector_sheet.dart';
+import '../widgets/slash_command_palette.dart';
 import '../widgets/thinking_indicator.dart';
 import '../widgets/transport_status_sheet.dart';
 import 'autonomous_screen.dart';
@@ -138,6 +141,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // State
   final TextEditingController _textCtrl = TextEditingController();
+  final SlashCommandPaletteController _slashPaletteController =
+      SlashCommandPaletteController();
+  bool _slashPaletteOpen = false;
+  SlashCommandCatalog? _slashCatalog;
+  SlashTurnDirectivesV1 _slashDirectives = const SlashTurnDirectivesV1();
+  Map<String, dynamic> _slashAvailability = const {};
   // WOR-78 Fix A (refined): focus handle for the input bar's text field, owned
   // here so the keyboard is CONDITIONAL on where the user lands — focus it on a
   // brand-new empty chat (keyboard opens to type the first message), unfocus it
@@ -341,9 +350,11 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _slashPaletteController.addListener(_onSlashPaletteChanged);
     _notificationService = OsiaNotificationService(storage: widget.storage);
     _pendingHandoff = widget.handoff;
     _initConnection();
+    unawaited(_loadSlashCatalog());
     // WOR-78 Fix A (refined): launch-leak guard. On first mount a soft keyboard
     // can ride in from the previous screen (e.g. the connection token field)
     // across the route swap, and at launch we resume the last (existing)
@@ -356,6 +367,23 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) FocusManager.instance.primaryFocus?.unfocus();
     });
+  }
+
+  Future<void> _loadSlashCatalog() async {
+    try {
+      final catalog = await SlashCommandCatalog.load();
+      if (!mounted) return;
+      setState(() => _slashCatalog = catalog);
+      _updateSlashPalette();
+    } catch (error) {
+      debugPrint('[OSIA Slash] catalog unavailable: $error');
+    }
+  }
+
+  void _onSlashPaletteChanged() {
+    final open = _slashPaletteController.isOpen;
+    if (!mounted || open == _slashPaletteOpen) return;
+    setState(() => _slashPaletteOpen = open);
   }
 
   Future<void> _initConnection() async {
@@ -524,8 +552,10 @@ class _ChatScreenState extends State<ChatScreen> {
           _aiHierarchyEnabled = cfg.aiHierarchyEnabled;
           _reasoning = cfg.reasoning;
           _reasoningConfigLoaded = true;
+          _slashAvailability = cfg.slashCommands;
         });
         _pushModelSelectorReasoning(cfg.reasoning);
+        _updateSlashPalette();
       }
     });
 
@@ -1252,6 +1282,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } else {
       _cancelFirstTokenTimer();
     }
+    if (event.busy) _slashPaletteController.close();
     setState(() {
       if (rejected && _entries.isNotEmpty && _entries.last.isUser) {
         _entries.removeLast();
@@ -1698,6 +1729,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // leaving — drop them so a late timeout can't fire on the new chat.
     _cancelFirstTokenTimer();
     _pendingTurn = null;
+    _clearSlashDraft();
     // Feature 2: a fresh view — stop any reveal aimed at the old streaming slot.
     _stopTypewriter();
     // Feature 1: a no-id optimistic stash belongs to a brand-new conversation
@@ -1849,6 +1881,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _stopRecoveryPoll();
     _stopTypewriter(); // Feature 2: no stale reveal into the cleared view.
     _pendingTurn = null;
+    _clearSlashDraft();
     // WOR-53: drop the buffer of the conversation we're leaving so the buffer
     // map can't grow unbounded (the new conversation starts fresh; other
     // conversations' background streams are untouched).
@@ -1901,6 +1934,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _projectNewChatOperationId = _wsService.sendNewConversationInProject(
       folder.id,
     );
+    _clearSlashDraft();
     Navigator.of(context).maybePop();
   }
 
@@ -1922,6 +1956,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _stopRecoveryPoll();
     _stopTypewriter(); // Feature 2: no stale reveal into the cleared view.
     _pendingTurn = null;
+    _clearSlashDraft();
     // WOR-53: drop the buffer of the conversation we're leaving so the buffer
     // map can't grow unbounded (same hygiene as [_newConversation]).
     final leaving = _activeConversationId;
@@ -2733,13 +2768,650 @@ class _ChatScreenState extends State<ChatScreen> {
   /// [_thinking]).
   bool get _showThinkingTrailer => _thinking && !_isThinkingMidStream;
 
+  String get _slashLocale => widget.languageController.code;
+
+  List<SlashConnectorChoice> get _slashConnectorChoices {
+    final raw = _slashAvailability['connectors'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((item) {
+          final value = item.cast<String, dynamic>();
+          return SlashConnectorChoice(
+            connectorId: (value['connector_id'] ?? '').toString(),
+            alias: (value['alias'] ?? '').toString(),
+            displayName: (value['display_name'] ?? '').toString(),
+            family: (value['family'] ?? '').toString(),
+            state: _connState == ws.ConnectionState.connected
+                ? (value['state'] ?? 'disconnected').toString()
+                : 'offline',
+            usable:
+                _connState == ws.ConnectionState.connected &&
+                value['usable'] == true,
+          );
+        })
+        .where(
+          (item) =>
+              item.connectorId.isNotEmpty &&
+              slashAliasPattern.hasMatch(item.alias),
+        )
+        .toList(growable: false);
+  }
+
+  List<SlashModelChoice> get _slashModelChoices {
+    if (_connState != ws.ConnectionState.connected) return const [];
+    final needsImage = _pendingAttachments.any(
+      (attachment) => attachment.detectedCategory == 'image',
+    );
+    return _models
+        .where(
+          (model) =>
+              model.selectable &&
+              (model.provider ?? '').isNotEmpty &&
+              (!needsImage || model.inputModalities.contains('image')),
+        )
+        .map(
+          (model) => SlashModelChoice(
+            providerId: model.provider!,
+            modelId: model.id,
+            displayName: model.label,
+            reasoningOptions: model.reasoningOptions
+                .map((option) => option.id)
+                .where(slashReasoningLevels.contains)
+                .toList(growable: false),
+            acceptsImages: model.inputModalities.contains('image'),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  List<SlashConversationChoice> get _slashConversationChoices {
+    final folders = {
+      for (final folder in _conversationFolders) folder.id: folder.name,
+    };
+    final choices = <SlashConversationChoice>[];
+    for (final conversation in _conversations) {
+      if (conversation.id.isEmpty || conversation.id == _activeConversationId) {
+        continue;
+      }
+      final title = conversation.title;
+      final project = folders[conversation.folderId] ?? '';
+      choices.add(
+        SlashConversationChoice(
+          conversationId: conversation.id,
+          displayTitle: title.length <= slashMaxTitleChars
+              ? title
+              : title.substring(0, slashMaxTitleChars),
+          displayProject: project.length <= slashMaxProjectChars
+              ? project
+              : project.substring(0, slashMaxProjectChars),
+        ),
+      );
+    }
+    return choices;
+  }
+
+  void _updateSlashPalette() {
+    final catalog = _slashCatalog;
+    final query = slashPaletteQuery(_textCtrl.text);
+    if (catalog == null || query == null || _activeWork) {
+      _slashPaletteController.close();
+      return;
+    }
+    final results = buildSlashPaletteResults(
+      catalog: catalog,
+      locale: _slashLocale,
+      filter: query,
+      currentWebAvailable:
+          _connState == ws.ConnectionState.connected &&
+          _slashAvailability['current_web_available'] == true,
+      activeProviderId:
+          _slashDirectives.modelOverride?.providerId ?? _selectedProvider ?? '',
+      activeModelId:
+          _slashDirectives.modelOverride?.modelId ?? _selectedModel ?? '',
+      connectors: _slashConnectorChoices,
+      models: _slashModelChoices,
+      conversations: _slashConversationChoices,
+    );
+    _slashPaletteController.show(results, _onSlashSelection);
+  }
+
+  void _onComposerChanged(String _) {
+    setState(() {});
+    _updateSlashPalette();
+  }
+
+  KeyEventResult _onSlashKey(FocusNode _, KeyEvent event) {
+    if (!_slashPaletteController.isOpen || event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      _slashPaletteController.move(1);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      _slashPaletteController.move(-1);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      _slashPaletteController.close();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.tab) {
+      _slashPaletteController.activate();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  void _submitComposer() {
+    if (_slashPaletteController.isOpen) {
+      _slashPaletteController.activate();
+      return;
+    }
+    unawaited(_sendText());
+  }
+
+  void _onSlashSelection(SlashPaletteSelection selection) {
+    if (!selection.enabled || _activeWork) return;
+    if (selection.type == SlashPaletteSelectionType.connector) {
+      final connector = selection.value as SlashConnectorChoice;
+      _applySlashDirectives(
+        _slashDirectives.copyWith(
+          connectorHints: [SlashConnectorHint(connector.connectorId)],
+        ),
+        selection.alias,
+      );
+      return;
+    }
+    if (selection.type == SlashPaletteSelectionType.model) {
+      if (selection.id == 'model.auto') {
+        _applySlashDirectives(
+          _slashDirectives.copyWith(clearModelOverride: true),
+          'model',
+        );
+        return;
+      }
+      final model = selection.value as SlashModelChoice;
+      _applySlashDirectives(
+        _slashDirectives.copyWith(
+          modelOverride: SlashModelOverride(
+            providerId: model.providerId,
+            modelId: model.modelId,
+          ),
+        ),
+        'model',
+      );
+      return;
+    }
+    if (selection.type == SlashPaletteSelectionType.reasoning) {
+      _applySlashDirectives(
+        _slashDirectives.copyWith(reasoningOverride: selection.value as String),
+        'reasoning',
+      );
+      return;
+    }
+    if (selection.type == SlashPaletteSelectionType.conversation) {
+      final conversation = selection.value as SlashConversationChoice;
+      _applySlashDirectives(
+        _slashDirectives.copyWith(
+          conversationRefs: [
+            SlashConversationRef(
+              conversationId: conversation.conversationId,
+              displayTitle: conversation.displayTitle,
+              displayProject: conversation.displayProject,
+            ),
+          ],
+        ),
+        'conversation',
+      );
+      return;
+    }
+
+    switch (selection.handlerContract) {
+      case 'set_current_web_requirement_v1':
+        _applySlashDirectives(
+          _slashDirectives.copyWith(
+            capabilityRequirements: const SlashCapabilityRequirements(
+              currentWeb: true,
+            ),
+          ),
+          selection.alias,
+        );
+      case 'select_exact_model_v1':
+        _showSlashModels();
+      case 'select_reasoning_level_v1':
+        _showSlashReasoning();
+      case 'select_conversation_reference_v1':
+        _showSlashConversations();
+      case 'show_safe_tools_v1':
+      case 'show_safe_status_v1':
+      case 'show_available_help_v1':
+        final remaining = consumeSlashPalettePrefix(_textCtrl.text);
+        if (!_slashDirectives.isEmpty || remaining.trim().isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _slashLocale.startsWith('fr')
+                    ? 'Les commandes d’information doivent être utilisées seules.'
+                    : 'Informational commands must be used alone.',
+              ),
+            ),
+          );
+          _slashPaletteController.close();
+          return;
+        }
+        _textCtrl.text = remaining;
+        _slashPaletteController.close();
+        unawaited(_showSlashInformation(selection.id));
+    }
+  }
+
+  void _showSlashModels() {
+    final rows = <SlashPaletteSelection>[
+      SlashPaletteSelection(
+        type: SlashPaletteSelectionType.model,
+        id: 'model.auto',
+        title: _slashLocale.startsWith('fr') ? 'Automatique' : 'Automatic',
+      ),
+      ..._slashModelChoices
+          .take(slashMaxResultsPerCategory - 1)
+          .map(
+            (model) => SlashPaletteSelection(
+              type: SlashPaletteSelectionType.model,
+              id: '${model.providerId}:${model.modelId}',
+              title: model.displayName,
+              description: model.providerId,
+              value: model,
+            ),
+          ),
+    ];
+    _slashPaletteController.show(rows, _onSlashSelection);
+  }
+
+  void _showSlashConversations() {
+    final rows = _slashConversationChoices
+        .take(slashMaxResultsPerCategory)
+        .map(
+          (conversation) => SlashPaletteSelection(
+            type: SlashPaletteSelectionType.conversation,
+            id: conversation.conversationId,
+            title: conversation.displayTitle.isEmpty
+                ? (_slashLocale.startsWith('fr') ? 'Sans titre' : 'Untitled')
+                : conversation.displayTitle,
+            description: conversation.displayProject,
+            value: conversation,
+          ),
+        )
+        .toList(growable: false);
+    _slashPaletteController.show(rows, _onSlashSelection);
+  }
+
+  void _showSlashReasoning() {
+    final model = _slashDirectives.modelOverride;
+    final selectedProvider = model?.providerId ?? _selectedProvider ?? '';
+    final selectedModel = model?.modelId ?? _selectedModel ?? '';
+    final choice = _slashModelChoices.cast<SlashModelChoice?>().firstWhere(
+      (item) =>
+          item?.providerId == selectedProvider &&
+          item?.modelId == selectedModel,
+      orElse: () => null,
+    );
+    final supported = choice?.reasoningOptions ?? const <String>[];
+    if (choice == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _slashLocale.startsWith('fr')
+                ? 'Ce modèle ne publie aucun niveau de raisonnement.'
+                : 'This model publishes no reasoning levels.',
+          ),
+        ),
+      );
+      _slashPaletteController.close();
+      return;
+    }
+    final rows = const ['auto', 'off', 'low', 'medium', 'high']
+        .where((level) => level == 'auto' || supported.contains(level))
+        .map(
+          (level) => SlashPaletteSelection(
+            type: SlashPaletteSelectionType.reasoning,
+            id: 'reasoning.$level',
+            title: level,
+            value: level,
+          ),
+        )
+        .toList(growable: false);
+    _slashPaletteController.show(rows, _onSlashSelection);
+  }
+
+  void _applySlashDirectives(SlashTurnDirectivesV1 directives, String alias) {
+    try {
+      directives.validateBounds();
+      setState(() {
+        _slashDirectives = directives;
+        _textCtrl.text = consumeSlashPalettePrefix(_textCtrl.text);
+        _textCtrl.selection = TextSelection.collapsed(
+          offset: _textCtrl.text.length,
+        );
+      });
+      _slashPaletteController.close();
+      _inputFocusNode.requestFocus();
+    } on SlashDirectiveException catch (error) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message(_slashLocale))));
+    }
+  }
+
+  List<ComposerDirective> get _composerDirectiveChips {
+    final rows = <ComposerDirective>[];
+    if (_slashDirectives.connectorHints.isNotEmpty) {
+      final id = _slashDirectives.connectorHints.first.connectorId;
+      rows.add(
+        ComposerDirective(
+          id: 'connector',
+          label: id == 'gmail-rest' ? '/gmail' : '/$id',
+        ),
+      );
+    }
+    if (_slashDirectives.capabilityRequirements.currentWeb) {
+      rows.add(const ComposerDirective(id: 'web', label: '/web'));
+    }
+    if (_slashDirectives.conversationRefs.isNotEmpty) {
+      final ref = _slashDirectives.conversationRefs.first;
+      rows.add(
+        ComposerDirective(
+          id: 'conversation',
+          label: ref.displayTitle.isEmpty ? '/conversation' : ref.displayTitle,
+        ),
+      );
+    }
+    final model = _slashDirectives.modelOverride;
+    if (model != null) {
+      rows.add(ComposerDirective(id: 'model', label: model.modelId));
+    }
+    final reasoning = _slashDirectives.reasoningOverride;
+    if (reasoning != null) {
+      rows.add(ComposerDirective(id: 'reasoning', label: reasoning));
+    }
+    return rows;
+  }
+
+  void _removeSlashDirective(String id) {
+    setState(() {
+      _slashDirectives = switch (id) {
+        'connector' => _slashDirectives.copyWith(connectorHints: const []),
+        'web' => _slashDirectives.copyWith(
+          capabilityRequirements: const SlashCapabilityRequirements(),
+        ),
+        'conversation' => _slashDirectives.copyWith(conversationRefs: const []),
+        'model' => _slashDirectives.copyWith(clearModelOverride: true),
+        'reasoning' => _slashDirectives.copyWith(clearReasoningOverride: true),
+        _ => _slashDirectives,
+      };
+    });
+  }
+
+  void _clearSlashDraft() {
+    _slashPaletteController.close();
+    _slashDirectives = const SlashTurnDirectivesV1();
+  }
+
+  ws.OsiaModel? get _slashCurrentModel {
+    for (final model in _models) {
+      if (model.id == _selectedModel && model.provider == _selectedProvider) {
+        return model;
+      }
+    }
+    return null;
+  }
+
+  String get _currentSlashReasoning {
+    final model = _slashCurrentModel;
+    if (model != null && model.reasoningOptions.isNotEmpty) {
+      return model.selectedReasoning;
+    }
+    final provider = (_selectedProvider ?? '').trim().toLowerCase();
+    final modelId = (_selectedModel ?? '').trim();
+    final key = provider == 'chatgpt_account' ? '$provider:$modelId' : modelId;
+    return _reasoning.models[key] ??
+        _reasoning.providers[provider] ??
+        _reasoning.defaultLevel;
+  }
+
+  String _slashProviderLabel(bool localeFr) {
+    if (_connState != ws.ConnectionState.connected) {
+      return localeFr ? 'Fournisseur indisponible' : 'Unavailable provider';
+    }
+    return const <String, String>{
+          'chatgpt_account': 'ChatGPT Account',
+          'openai': 'OpenAI',
+          'anthropic': 'Anthropic',
+          'google': 'Google',
+          'groq': 'Groq',
+          'deepseek': 'DeepSeek',
+          'mistral': 'Mistral',
+          'ollama': 'Ollama',
+          'local': 'Local',
+        }[_selectedProvider] ??
+        (localeFr ? 'Fournisseur indisponible' : 'Unavailable provider');
+  }
+
+  String _slashTransportLabel(bool localeFr) {
+    if (_connState != ws.ConnectionState.connected) {
+      return localeFr ? 'hors ligne' : 'offline';
+    }
+    return switch (_wsService.committedTransportState) {
+      ws.CommittedTransportState.lanDirect => 'LAN direct',
+      ws.CommittedTransportState.webRtcP2p => 'WebRTC/P2P',
+      ws.CommittedTransportState.relayOsia => 'Relay OSIA',
+      ws.CommittedTransportState.switching =>
+        localeFr ? 'bascule' : 'switching',
+    };
+  }
+
+  String _slashFamilyLabel(Object? value, bool localeFr) {
+    return switch (value?.toString()) {
+      'web_search' => localeFr ? 'Recherche web' : 'Web search',
+      'local_commands' => localeFr ? 'Commandes locales' : 'Local commands',
+      'local_files' => localeFr ? 'Fichiers locaux' : 'Local files',
+      'connected_connectors' =>
+        localeFr ? 'Connecteurs connectés' : 'Connected connectors',
+      'read_only_information' =>
+        localeFr ? 'Informations en lecture seule' : 'Read-only information',
+      'governed_actions' =>
+        localeFr ? 'Actions contrôlées' : 'Governed actions',
+      _ => localeFr ? 'Capacité' : 'Capability',
+    };
+  }
+
+  Future<void> _showSlashInformation(String commandId) async {
+    final localeFr = _slashLocale.startsWith('fr');
+    final allConnectors = _slashConnectorChoices;
+    final connectors = allConnectors.take(8).toList();
+    final lines = <String>[];
+    var title = localeFr ? 'Aide' : 'Help';
+    if (commandId == 'help.info') {
+      final catalog = _slashCatalog;
+      if (catalog != null) {
+        final entries = buildSlashPaletteResults(
+          catalog: catalog,
+          locale: _slashLocale,
+          currentWebAvailable:
+              _connState == ws.ConnectionState.connected &&
+              _slashAvailability['current_web_available'] == true,
+          activeProviderId:
+              _slashDirectives.modelOverride?.providerId ??
+              _selectedProvider ??
+              '',
+          activeModelId:
+              _slashDirectives.modelOverride?.modelId ?? _selectedModel ?? '',
+          connectors: _slashConnectorChoices,
+          models: _slashModelChoices,
+          conversations: _slashConversationChoices,
+        );
+        lines.addAll(
+          entries
+              .where(
+                (entry) =>
+                    entry.enabled &&
+                    entry.type != SlashPaletteSelectionType.conversation,
+              )
+              .map((entry) {
+                final hint = entry.argumentHint.isEmpty
+                    ? ''
+                    : ' <${entry.argumentHint}>';
+                return '/${entry.alias}$hint — ${entry.description}';
+              }),
+        );
+      }
+    } else if (commandId == 'tools.info') {
+      title = localeFr ? 'Outils' : 'Tools';
+      final rawFamilies = _slashAvailability['capability_families'];
+      if (rawFamilies is List) {
+        lines.addAll(
+          rawFamilies
+              .take(24)
+              .map((value) => _slashFamilyLabel(value, localeFr)),
+        );
+      }
+      lines.addAll(
+        allConnectors
+            .where((item) => item.usable)
+            .take(8)
+            .map((item) => item.displayName),
+      );
+    } else {
+      title = localeFr ? 'État' : 'Status';
+      final currentModel = _connState == ws.ConnectionState.connected
+          ? _slashCurrentModel
+          : null;
+      final families = _slashAvailability['capability_families'];
+      final permissionSnapshot = _wsService.permissionsLive
+          ? _wsService.permissionSnapshot
+          : null;
+      lines.add('Surface: Mobile');
+      lines.add(
+        '${localeFr ? 'Routage' : 'Routing'}: '
+        '${_aiHierarchyEnabled ? (localeFr ? 'automatique' : 'automatic') : 'exact'}',
+      );
+      lines.add(
+        '${localeFr ? 'Fournisseur' : 'Provider'}: '
+        '${_slashProviderLabel(localeFr)}',
+      );
+      lines.add(
+        '${localeFr ? 'Modèle' : 'Model'}: '
+        '${currentModel?.label ?? (localeFr ? 'Sélection indisponible' : 'Unavailable selection')}',
+      );
+      lines.add(
+        '${localeFr ? 'Raisonnement' : 'Reasoning'}: '
+        '${currentModel == null ? (localeFr ? 'indisponible' : 'unavailable') : _currentSlashReasoning}',
+      );
+      lines.add(
+        '${localeFr ? 'Autorisation' : 'Permission'}: '
+        '${permissionSnapshot == null ? (localeFr ? 'indisponible' : 'unavailable') : (permissionSnapshot.fullAccessActive ? 'Full' : 'Standard')}',
+      );
+      lines.add(
+        '${localeFr ? 'Fournisseur prêt' : 'Provider ready'}: '
+        '${currentModel?.selectable == true ? (localeFr ? 'oui' : 'yes') : (localeFr ? 'non' : 'no')}',
+      );
+      lines.add(
+        '${localeFr ? 'Connecteurs' : 'Connectors'}: ${connectors.length}',
+      );
+      lines.add(
+        '${localeFr ? 'Familles de capacités' : 'Capability families'}: '
+        '${_connState == ws.ConnectionState.connected && families is List ? families.length : 0}',
+      );
+      for (final connector in connectors) {
+        final state = localeFr
+            ? switch (connector.state) {
+                'connected' => 'connecté',
+                'disconnected' => 'déconnecté',
+                'failed' => 'échec',
+                'authorization_required' => 'autorisation requise',
+                'configuration_missing' => 'configuration manquante',
+                'offline' => 'hors ligne',
+                _ => 'indisponible',
+              }
+            : connector.state;
+        final family = localeFr
+            ? switch (connector.family) {
+                'Mail' => 'Courrier',
+                'Connector' => 'Connecteur',
+                _ => 'Capacité',
+              }
+            : connector.family;
+        lines.add('${connector.displayName} · $state · $family');
+      }
+      lines.add('Transport: ${_slashTransportLabel(localeFr)}');
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 420),
+          child: SingleChildScrollView(child: Text(lines.join('\n'))),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(localeFr ? 'Fermer' : 'Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _sendText() async {
     _wsService.setClientLocale(widget.languageController.code);
     if (_activeWork) return;
-    final text = _textCtrl.text.trim();
+    final text = slashEscapedLiteralText(_textCtrl.text).trim();
     final attachments = List<PreparedAttachment>.of(_pendingAttachments);
     final hasFiles = attachments.isNotEmpty;
     if (text.isEmpty && !hasFiles || _attachmentInteractionLocked) return;
+    Map<String, dynamic>? turnDirectives;
+    if (!_slashDirectives.isEmpty) {
+      try {
+        _slashDirectives.validateForSend(body: text, hasAttachment: hasFiles);
+        turnDirectives = Map.unmodifiable(_slashDirectives.toJson());
+      } on SlashDirectiveException catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message(_slashLocale))));
+        return;
+      }
+    }
+    final exactModel = _slashDirectives.modelOverride;
+    final hasImage = attachments.any(
+      (attachment) => attachment.detectedCategory == 'image',
+    );
+    if (exactModel != null && hasImage) {
+      final compatible = _models.any(
+        (model) =>
+            model.selectable &&
+            model.provider == exactModel.providerId &&
+            model.id == exactModel.modelId &&
+            model.inputModalities.contains('image'),
+      );
+      if (!compatible) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _slashLocale.startsWith('fr')
+                  ? 'Le modèle exact sélectionné ne peut pas accepter cette image.'
+                  : 'The selected exact model cannot accept this image.',
+            ),
+          ),
+        );
+        return;
+      }
+    }
     final sendingConv = _activeConversationId;
     final strings = OsiaL10n.of(context);
     final names = attachments.map((file) => file.displayName).join(', ');
@@ -2795,6 +3467,7 @@ class _ChatScreenState extends State<ChatScreen> {
           clientRequestId: requestId,
           ttsEnabled: _autoTts,
           expectedTransportSession: result.transportSession,
+          turnDirectives: turnDirectives,
         );
         if (!sent) {
           _submittedAttachmentRequestId = null;
@@ -2838,6 +3511,7 @@ class _ChatScreenState extends State<ChatScreen> {
         conversationId: sendingConv,
         clientRequestId: requestId,
         ttsEnabled: _autoTts,
+        turnDirectives: turnDirectives,
       );
     }
 
@@ -2878,8 +3552,10 @@ class _ChatScreenState extends State<ChatScreen> {
       originalDraft: text,
       attachmentBatchId: batchId,
       clientRequestId: requestId,
+      turnDirectives: turnDirectives,
     );
     _textCtrl.clear();
+    _clearSlashDraft();
     setState(() {
       _attachmentCancellation = null;
       _chatDocumentProgress = null;
@@ -3295,12 +3971,14 @@ class _ChatScreenState extends State<ChatScreen> {
             conversationId: retryConv ?? '',
             clientRequestId: turn.clientRequestId,
             ttsEnabled: _autoTts,
+            turnDirectives: turn.turnDirectives,
           )
         : _wsService.sendText(
             turn.prompt,
             conversationId: retryConv,
             clientRequestId: turn.clientRequestId,
             ttsEnabled: _autoTts,
+            turnDirectives: turn.turnDirectives,
           );
     if (!sent) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3825,6 +4503,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _recoveryPoll?.cancel();
     _typewriterTimer?.cancel(); // Feature 2: no leaked reveal timer.
     _modelSelectorNotifier?.dispose();
+    _slashPaletteController.removeListener(_onSlashPaletteChanged);
+    _slashPaletteController.dispose();
     _msgSub?.cancel();
     _convStreamSub?.cancel();
     _connSub?.cancel();
@@ -3924,6 +4604,15 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Stack(
         children: [
+          PopScope<Object?>(
+            canPop: !_slashPaletteOpen,
+            onPopInvokedWithResult: (didPop, _) {
+              if (!didPop && _slashPaletteOpen) {
+                _slashPaletteController.close();
+              }
+            },
+            child: const SizedBox.shrink(),
+          ),
           Column(
             children: [
               Expanded(
@@ -4042,6 +4731,18 @@ class _ChatScreenState extends State<ChatScreen> {
           Positioned(
             left: 12,
             right: 12,
+            bottom:
+                MediaQuery.of(context).padding.bottom + 18 + _inputBarHeight,
+            child: TextFieldTapRegion(
+              child: SlashCommandPalette(
+                controller: _slashPaletteController,
+                locale: _slashLocale,
+              ),
+            ),
+          ),
+          Positioned(
+            left: 12,
+            right: 12,
             bottom: MediaQuery.of(context).padding.bottom + 10,
             child: GlassInputBar(
               key: _inputBarKey,
@@ -4052,7 +4753,7 @@ class _ChatScreenState extends State<ChatScreen> {
               auxiliaryControlsEnabled: !_activeWork,
               isRecording: _audioService.isRecording,
               hasText: _canSend,
-              onSend: _sendText,
+              onSend: _submitComposer,
               stopMode: _activeWork,
               stopRequested: _stopRequested,
               onStop: _stopActiveWork,
@@ -4060,8 +4761,12 @@ class _ChatScreenState extends State<ChatScreen> {
               onAttach: _onAttach,
               modelLabel: _currentModelLabel(strings),
               onModelTap: _openModelSelector,
-              onChanged: (_) => setState(() {}),
-              onSubmitted: _activeWork ? null : (_) => _sendText(),
+              onChanged: _onComposerChanged,
+              onSubmitted: _activeWork ? null : (_) => _submitComposer(),
+              onKeyEvent: _onSlashKey,
+              onTapOutside: (_) => _slashPaletteController.close(),
+              directives: _composerDirectiveChips,
+              onRemoveDirective: _activeWork ? null : _removeSlashDirective,
               pendingAttachments: [
                 for (final file in _pendingAttachments)
                   ComposerAttachment(
@@ -4676,13 +5381,17 @@ class _PendingTurn {
   final String originalDraft;
   final String attachmentBatchId;
   final String clientRequestId;
+  final Map<String, dynamic>? turnDirectives;
 
-  const _PendingTurn({
+  _PendingTurn({
     required this.prompt,
     this.originalDraft = '',
     this.attachmentBatchId = '',
     required this.clientRequestId,
-  });
+    Map<String, dynamic>? turnDirectives,
+  }) : turnDirectives = turnDirectives == null
+           ? null
+           : freezeSlashDirectiveMap(turnDirectives);
 }
 
 /// Carries a live, already-authenticated [ws.WebSocketService] from the

@@ -18,6 +18,13 @@ class ComposerAttachment {
   const ComposerAttachment({required this.displayName, required this.byteSize});
 }
 
+class ComposerDirective {
+  final String id;
+  final String label;
+
+  const ComposerDirective({required this.id, required this.label});
+}
+
 /// Floating glassmorphism input bar pinned to the bottom of the chat.
 ///
 /// Two-row layout, like a modern AI chat app:
@@ -50,6 +57,10 @@ class GlassInputBar extends StatelessWidget {
   final VoidCallback onAttach;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
+  final KeyEventResult Function(FocusNode, KeyEvent)? onKeyEvent;
+  final TapRegionCallback? onTapOutside;
+  final List<ComposerDirective> directives;
+  final ValueChanged<String>? onRemoveDirective;
   final String? pendingFilename;
   final VoidCallback? onRemovePending;
   final List<ComposerAttachment> pendingAttachments;
@@ -85,6 +96,10 @@ class GlassInputBar extends StatelessWidget {
     required this.onModelTap,
     this.onChanged,
     this.onSubmitted,
+    this.onKeyEvent,
+    this.onTapOutside,
+    this.directives = const [],
+    this.onRemoveDirective,
     this.pendingFilename,
     this.onRemovePending,
     this.pendingAttachments = const [],
@@ -132,6 +147,43 @@ class GlassInputBar extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (directives.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 2),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Wrap(
+                      key: const Key('slash-directive-chips'),
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final directive in directives)
+                          InputChip(
+                            key: ValueKey('slash-chip-${directive.id}'),
+                            label: Text(directive.label),
+                            onDeleted: onRemoveDirective == null
+                                ? null
+                                : () => onRemoveDirective!(directive.id),
+                            deleteIcon: const Icon(
+                              Icons.close_rounded,
+                              size: 16,
+                            ),
+                            backgroundColor: palette.accent.withValues(
+                              alpha: 0.12,
+                            ),
+                            side: BorderSide(
+                              color: palette.accent.withValues(alpha: 0.28),
+                            ),
+                            labelStyle: TextStyle(
+                              color: palette.textPrimary,
+                              fontSize: 12,
+                            ),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
               // Pending attachment chip — animates in/out of the layout.
               AnimatedSize(
                 duration: _kBarAnimDuration,
@@ -175,36 +227,40 @@ class GlassInputBar extends StatelessWidget {
                 duration: _kBarAnimDuration,
                 curve: _kBarAnimCurve,
                 alignment: Alignment.topCenter,
-                child: TextField(
-                  controller: textController,
-                  focusNode: focusNode,
-                  minLines: 1,
-                  maxLines: 5,
-                  textInputAction: TextInputAction.send,
-                  enabled: enabled,
-                  onChanged: onChanged,
-                  onSubmitted: enabled ? onSubmitted : null,
-                  cursorColor: palette.accent,
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontSize: 15,
-                    height: 1.35,
-                  ),
-                  decoration: InputDecoration(
-                    isCollapsed: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 12,
-                    ),
-                    hintText: hintText ?? strings.messageHint,
-                    hintStyle: TextStyle(
-                      color: palette.textMuted,
+                child: Focus(
+                  onKeyEvent: onKeyEvent,
+                  child: TextField(
+                    controller: textController,
+                    focusNode: focusNode,
+                    minLines: 1,
+                    maxLines: 5,
+                    textInputAction: TextInputAction.send,
+                    enabled: enabled,
+                    onChanged: onChanged,
+                    onSubmitted: enabled ? onSubmitted : null,
+                    onTapOutside: onTapOutside,
+                    cursorColor: palette.accent,
+                    style: TextStyle(
+                      color: palette.textPrimary,
                       fontSize: 15,
+                      height: 1.35,
                     ),
-                    filled: false,
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
+                    decoration: InputDecoration(
+                      isCollapsed: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 12,
+                      ),
+                      hintText: hintText ?? strings.messageHint,
+                      hintStyle: TextStyle(
+                        color: palette.textMuted,
+                        fontSize: 15,
+                      ),
+                      filled: false,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                    ),
                   ),
                 ),
               ),

@@ -99,6 +99,7 @@ class _WaitingWebSocketService extends ws.WebSocketService {
     String? conversationId,
     String? clientRequestId,
     bool ttsEnabled = true,
+    Map<String, dynamic>? turnDirectives,
   }) {
     normalTurns.add(content);
     return true;

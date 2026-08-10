@@ -52,6 +52,7 @@ class _RecordingWebSocketService extends ws.WebSocketService {
     String? conversationId,
     String? clientRequestId,
     bool ttsEnabled = true,
+    Map<String, dynamic>? turnDirectives,
   }) {
     sentTurns.add(_SentTurn(content, clientRequestId ?? ''));
     return true;
