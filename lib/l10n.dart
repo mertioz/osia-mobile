@@ -1709,6 +1709,88 @@ class OsiaStrings {
     return '${clause[0].toLowerCase()}${clause.substring(1)}';
   }
 
+  String _wor257(String key) =>
+      _wor257Messages[languageCode]?[key] ?? _wor257Messages['en']?[key] ?? '';
+
+  String _executionTraceActionFragment(String displayKey) =>
+      _wor257('action.$displayKey');
+
+  String executionTraceCompletedActions(Iterable<String> displayKeys) {
+    final actionKeys = displayKeys
+        .where((key) => _executionTraceActionFragment(key).isNotEmpty)
+        .toList(growable: false);
+    final actions = actionKeys
+        .map(_executionTraceActionFragment)
+        .toList(growable: false);
+    if (actions.isEmpty) return '';
+    if (actionKeys.length > 2 &&
+        actionKeys.toSet().length > 1 &&
+        actionKeys.toSet().length < actionKeys.length) {
+      final groups = <List<String>>[];
+      for (final key in actionKeys) {
+        if (groups.isEmpty || groups.last.last != key) {
+          groups.add(<String>[key]);
+        } else {
+          groups.last.add(key);
+        }
+      }
+      return groups.map(executionTraceCompletedActions).join(' ');
+    }
+    if (actions.length > 1 && actionKeys.toSet().length == 1) {
+      return '${_wor257('actions.repeated_prefix')}${actions.length}'
+          '${_wor257('actions.repeated_suffix')}';
+    }
+    final ending = _wor257('ending');
+    if (languageCode == 'ja') {
+      if (actions.length == 1) return '${actions.single}しました$ending';
+      final leading = actions.take(actions.length - 1).join('し、続いて');
+      return '$leading'
+          'し、${actions.last}しました$ending';
+    }
+    final first = '${_wor257('actions.prefix')}${actions.first}';
+    if (actions.length == 1) return '$first$ending';
+    if (actions.length == 2) {
+      return '$first${_wor257('actions.next_separator')}'
+          '${actions.last}$ending';
+    }
+    final middle = actions
+        .skip(1)
+        .take(actions.length - 2)
+        .join(_wor257('actions.separator'));
+    return '$first${_wor257('actions.next_separator')}$middle'
+        '${_wor257('actions.last_separator')}${actions.last}$ending';
+  }
+
+  String executionTraceRecoveredAction(String displayKey) {
+    final action = _executionTraceActionFragment(displayKey);
+    if (action.isEmpty) return executionTraceNaturalText('recovered_step');
+    return '${_wor257('recovery.prefix')}$action'
+        '${_wor257('recovery.suffix')}';
+  }
+
+  String executionTraceBlockedAction(String displayKey) {
+    final step = _wor257('step.$displayKey');
+    if (step.isEmpty) return executionTraceNaturalText('blocked_step');
+    return '${_wor257('blocker.prefix')}$step${_wor257('blocker.suffix')}';
+  }
+
+  String executionTraceNaturalText(String key) =>
+      key.isEmpty ? '' : _wor257('text.$key');
+
+  String executionTraceJoinWithBlocker(String completed, String blocker) {
+    if (completed.isEmpty) return blocker;
+    if (blocker.isEmpty) return completed;
+    final ending = _wor257('ending');
+    final completedClause = completed.endsWith(ending)
+        ? completed.substring(0, completed.length - ending.length)
+        : completed;
+    final continuation = switch (languageCode) {
+      'fr' || 'de' => '${blocker[0].toLowerCase()}${blocker.substring(1)}',
+      _ => blocker,
+    };
+    return '$completedClause${_wor257('join.blocker')}$continuation';
+  }
+
   /// Localized display name for a theme palette key.
   String themeName(String paletteKey) {
     switch (paletteKey) {
@@ -2080,6 +2162,275 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'summary.execution.terminal.cancelled': 'Confirmé la cancelación',
     'summary.execution.terminal.safety_block':
         'Detuve la ejecución por seguridad',
+  },
+};
+
+const Map<String, Map<String, String>> _wor257Messages = {
+  'en': {
+    'ending': '.',
+    'actions.prefix': 'I ',
+    'actions.next_separator': ', then ',
+    'actions.separator': ', ',
+    'actions.last_separator': ' and ',
+    'actions.repeated_prefix': 'I completed ',
+    'actions.repeated_suffix': ' related actions with OSIA.',
+    'join.blocker': ', but ',
+    'recovery.prefix': 'The first method did not work, so I tried another and ',
+    'recovery.suffix': '.',
+    'blocker.prefix': "I couldn't complete ",
+    'blocker.suffix': '.',
+    'action.execution.action.browser': 'worked in the browser',
+    'action.execution.action.document': 'handled a document',
+    'action.execution.action.filesystem': 'worked with files',
+    'action.execution.action.shell': 'ran a local operation',
+    'action.execution.action.connector': 'contacted a connected service',
+    'action.execution.action.memory': 'checked saved context',
+    'action.execution.action.scheduled_task': 'handled a scheduled task',
+    'action.execution.action.capability': 'used an OSIA capability',
+    'step.execution.action.browser': 'the browser step',
+    'step.execution.action.document': 'the document step',
+    'step.execution.action.filesystem': 'the file step',
+    'step.execution.action.shell': 'the local operation',
+    'step.execution.action.connector': 'the connected-service step',
+    'step.execution.action.memory': 'the saved-context check',
+    'step.execution.action.scheduled_task': 'the scheduled task',
+    'step.execution.action.capability': 'the OSIA action',
+    'text.simple_request': 'I handled the request.',
+    'text.in_progress': "I'm handling the request.",
+    'text.completed_step': 'I completed the requested step.',
+    'text.blocked_step': "I couldn't complete the next step.",
+    'text.step_cancelled': 'I stopped before the cancelled step.',
+    'text.recovered_step':
+        'The first method did not work, so I tried another and completed the step.',
+    'text.waiting_permission':
+        "I'm waiting for your authorization before continuing.",
+    'text.permission_unavailable':
+        "I couldn't continue because the required authorization was unavailable.",
+    'text.blocked_request': 'I had to stop before the request was complete.',
+    'text.cancelled_request': 'I stopped because the request was cancelled.',
+    'text.safety_block': 'I stopped before the unsafe step.',
+  },
+  'fr': {
+    'ending': '.',
+    'actions.prefix': 'J’ai ',
+    'actions.next_separator': ', puis ',
+    'actions.separator': ', ',
+    'actions.last_separator': ' et ',
+    'actions.repeated_prefix': 'J’ai réalisé ',
+    'actions.repeated_suffix': ' actions liées avec OSIA.',
+    'join.blocker': ', mais ',
+    'recovery.prefix':
+        'La première méthode n’a pas fonctionné, alors j’en ai essayé une autre et ',
+    'recovery.suffix': '.',
+    'blocker.prefix': 'Je n’ai pas pu terminer ',
+    'blocker.suffix': '.',
+    'action.execution.action.browser': 'utilisé le navigateur',
+    'action.execution.action.document': 'traité un document',
+    'action.execution.action.filesystem': 'travaillé avec des fichiers',
+    'action.execution.action.shell': 'effectué une opération locale',
+    'action.execution.action.connector': 'contacté un service connecté',
+    'action.execution.action.memory': 'consulté le contexte enregistré',
+    'action.execution.action.scheduled_task': 'traité une tâche planifiée',
+    'action.execution.action.capability': 'utilisé une capacité OSIA',
+    'step.execution.action.browser': 'l’étape dans le navigateur',
+    'step.execution.action.document': 'l’étape sur le document',
+    'step.execution.action.filesystem': 'l’étape sur les fichiers',
+    'step.execution.action.shell': 'l’opération locale',
+    'step.execution.action.connector': 'l’étape avec le service connecté',
+    'step.execution.action.memory': 'la consultation du contexte enregistré',
+    'step.execution.action.scheduled_task': 'la tâche planifiée',
+    'step.execution.action.capability': 'l’action OSIA',
+    'text.simple_request': 'J’ai pris la demande en charge.',
+    'text.in_progress': 'Je m’occupe de la demande.',
+    'text.completed_step': 'J’ai terminé l’étape demandée.',
+    'text.blocked_step': 'Je n’ai pas pu terminer l’étape suivante.',
+    'text.step_cancelled': 'Je me suis arrêté avant l’étape annulée.',
+    'text.recovered_step':
+        'La première méthode n’a pas fonctionné, alors j’en ai essayé une autre et terminé l’étape.',
+    'text.waiting_permission':
+        'J’attends ton autorisation avant de poursuivre.',
+    'text.permission_unavailable':
+        'Je n’ai pas pu poursuivre car l’autorisation nécessaire n’était pas disponible.',
+    'text.blocked_request':
+        'Je me suis arrêté avant d’avoir pu terminer la demande.',
+    'text.cancelled_request': 'Je me suis arrêté car la demande a été annulée.',
+    'text.safety_block': 'Je me suis arrêté avant l’étape risquée.',
+  },
+  'zh': {
+    'ending': '。',
+    'actions.prefix': '我',
+    'actions.next_separator': '，然后',
+    'actions.separator': '，',
+    'actions.last_separator': '，再',
+    'actions.repeated_prefix': '我通过 OSIA 完成了',
+    'actions.repeated_suffix': '项相关操作。',
+    'join.blocker': '，但',
+    'recovery.prefix': '第一种方法没有奏效，所以我换了一种方法，并',
+    'recovery.suffix': '。',
+    'blocker.prefix': '我没能完成',
+    'blocker.suffix': '。',
+    'action.execution.action.browser': '使用了浏览器',
+    'action.execution.action.document': '处理了文档',
+    'action.execution.action.filesystem': '处理了文件',
+    'action.execution.action.shell': '执行了本地操作',
+    'action.execution.action.connector': '联系了已连接的服务',
+    'action.execution.action.memory': '查看了保存的上下文',
+    'action.execution.action.scheduled_task': '处理了计划任务',
+    'action.execution.action.capability': '使用了 OSIA 功能',
+    'step.execution.action.browser': '浏览器中的步骤',
+    'step.execution.action.document': '文档步骤',
+    'step.execution.action.filesystem': '文件步骤',
+    'step.execution.action.shell': '本地操作',
+    'step.execution.action.connector': '连接服务步骤',
+    'step.execution.action.memory': '保存内容的检查',
+    'step.execution.action.scheduled_task': '计划任务',
+    'step.execution.action.capability': 'OSIA 操作',
+    'text.simple_request': '我已处理这项请求。',
+    'text.in_progress': '我正在处理这项请求。',
+    'text.completed_step': '我完成了所需步骤。',
+    'text.blocked_step': '我没能完成下一步。',
+    'text.step_cancelled': '我在已取消的步骤前停了下来。',
+    'text.recovered_step': '第一种方法没有奏效，所以我换了一种方法并完成了该步骤。',
+    'text.waiting_permission': '我正在等待你的授权，然后再继续。',
+    'text.permission_unavailable': '由于无法取得所需授权，我没能继续。',
+    'text.blocked_request': '我在完成请求前不得不停下来。',
+    'text.cancelled_request': '由于请求已取消，我停了下来。',
+    'text.safety_block': '我在有风险的步骤前停了下来。',
+  },
+  'ja': {
+    'ending': '。',
+    'actions.prefix': '',
+    'actions.next_separator': '、続いて',
+    'actions.separator': '、',
+    'actions.last_separator': '、さらに',
+    'actions.repeated_prefix': 'OSIA で',
+    'actions.repeated_suffix': '件の関連操作を完了しました。',
+    'join.blocker': 'が、',
+    'recovery.prefix': '最初の方法ではうまくいかなかったため、別の方法を試して、',
+    'recovery.suffix': 'しました。',
+    'blocker.prefix': '',
+    'blocker.suffix': 'を完了できませんでした。',
+    'action.execution.action.browser': 'ブラウザーで作業',
+    'action.execution.action.document': '文書を処理',
+    'action.execution.action.filesystem': 'ファイルを処理',
+    'action.execution.action.shell': 'ローカル操作を実行',
+    'action.execution.action.connector': '接続サービスに連絡',
+    'action.execution.action.memory': '保存済み情報を確認',
+    'action.execution.action.scheduled_task': '予定タスクを処理',
+    'action.execution.action.capability': 'OSIA の機能を使用',
+    'step.execution.action.browser': 'ブラウザーでの作業',
+    'step.execution.action.document': '文書の処理',
+    'step.execution.action.filesystem': 'ファイルの処理',
+    'step.execution.action.shell': 'ローカル操作',
+    'step.execution.action.connector': '接続サービスでの手順',
+    'step.execution.action.memory': '保存済み情報の確認',
+    'step.execution.action.scheduled_task': '予定タスク',
+    'step.execution.action.capability': 'OSIA の操作',
+    'text.simple_request': '依頼に対応しました。',
+    'text.in_progress': '依頼に対応しています。',
+    'text.completed_step': '必要な手順を完了しました。',
+    'text.blocked_step': '次の手順を完了できませんでした。',
+    'text.step_cancelled': '取り消された手順の前で停止しました。',
+    'text.recovered_step': '最初の方法ではうまくいかなかったため、別の方法で手順を完了しました。',
+    'text.waiting_permission': '続行する前に許可を待っています。',
+    'text.permission_unavailable': '必要な許可を取得できなかったため、続行できませんでした。',
+    'text.blocked_request': '依頼を完了する前に停止する必要がありました。',
+    'text.cancelled_request': '依頼が取り消されたため停止しました。',
+    'text.safety_block': '危険を伴う手順の前で停止しました。',
+  },
+  'de': {
+    'ending': '.',
+    'actions.prefix': 'Ich habe ',
+    'actions.next_separator': ', dann ',
+    'actions.separator': ', ',
+    'actions.last_separator': ' und ',
+    'actions.repeated_prefix': 'Ich habe ',
+    'actions.repeated_suffix':
+        ' zusammengehörige Aktionen mit OSIA abgeschlossen.',
+    'join.blocker': ', aber ',
+    'recovery.prefix':
+        'Die erste Methode hat nicht funktioniert, daher habe ich eine andere versucht und ',
+    'recovery.suffix': '.',
+    'blocker.prefix': 'Ich konnte ',
+    'blocker.suffix': ' nicht abschließen.',
+    'action.execution.action.browser': 'im Browser gearbeitet',
+    'action.execution.action.document': 'ein Dokument bearbeitet',
+    'action.execution.action.filesystem': 'Dateien bearbeitet',
+    'action.execution.action.shell': 'einen lokalen Vorgang ausgeführt',
+    'action.execution.action.connector': 'einen verbundenen Dienst kontaktiert',
+    'action.execution.action.memory': 'den gespeicherten Kontext geprüft',
+    'action.execution.action.scheduled_task':
+        'eine geplante Aufgabe bearbeitet',
+    'action.execution.action.capability': 'eine OSIA-Funktion verwendet',
+    'step.execution.action.browser': 'den Browser-Schritt',
+    'step.execution.action.document': 'den Dokument-Schritt',
+    'step.execution.action.filesystem': 'den Datei-Schritt',
+    'step.execution.action.shell': 'den lokalen Vorgang',
+    'step.execution.action.connector': 'den Schritt mit dem verbundenen Dienst',
+    'step.execution.action.memory': 'die Prüfung des gespeicherten Kontexts',
+    'step.execution.action.scheduled_task': 'die geplante Aufgabe',
+    'step.execution.action.capability': 'die OSIA-Aktion',
+    'text.simple_request': 'Ich habe die Anfrage bearbeitet.',
+    'text.in_progress': 'Ich bearbeite die Anfrage.',
+    'text.completed_step': 'Ich habe den erforderlichen Schritt abgeschlossen.',
+    'text.blocked_step': 'Ich konnte den nächsten Schritt nicht abschließen.',
+    'text.step_cancelled': 'Ich habe vor dem abgebrochenen Schritt angehalten.',
+    'text.recovered_step':
+        'Die erste Methode hat nicht funktioniert, daher habe ich eine andere versucht und den Schritt abgeschlossen.',
+    'text.waiting_permission':
+        'Ich warte auf deine Freigabe, bevor ich fortfahre.',
+    'text.permission_unavailable':
+        'Ich konnte nicht fortfahren, weil die erforderliche Freigabe nicht verfügbar war.',
+    'text.blocked_request':
+        'Ich musste anhalten, bevor die Anfrage abgeschlossen war.',
+    'text.cancelled_request':
+        'Ich habe angehalten, weil die Anfrage abgebrochen wurde.',
+    'text.safety_block': 'Ich habe vor dem riskanten Schritt angehalten.',
+  },
+  'es': {
+    'ending': '.',
+    'actions.prefix': 'Yo ',
+    'actions.next_separator': ', luego ',
+    'actions.separator': ', ',
+    'actions.last_separator': ' y ',
+    'actions.repeated_prefix': 'Completé ',
+    'actions.repeated_suffix': ' acciones relacionadas con OSIA.',
+    'join.blocker': ', pero ',
+    'recovery.prefix': 'El primer método no funcionó, así que probé otro y ',
+    'recovery.suffix': '.',
+    'blocker.prefix': 'No pude completar ',
+    'blocker.suffix': '.',
+    'action.execution.action.browser': 'trabajé en el navegador',
+    'action.execution.action.document': 'procesé un documento',
+    'action.execution.action.filesystem': 'trabajé con archivos',
+    'action.execution.action.shell': 'ejecuté una operación local',
+    'action.execution.action.connector': 'contacté un servicio conectado',
+    'action.execution.action.memory': 'consulté el contexto guardado',
+    'action.execution.action.scheduled_task': 'procesé una tarea programada',
+    'action.execution.action.capability': 'usé una función de OSIA',
+    'step.execution.action.browser': 'el paso del navegador',
+    'step.execution.action.document': 'el paso del documento',
+    'step.execution.action.filesystem': 'el paso de archivos',
+    'step.execution.action.shell': 'la operación local',
+    'step.execution.action.connector': 'el paso del servicio conectado',
+    'step.execution.action.memory': 'la consulta del contexto guardado',
+    'step.execution.action.scheduled_task': 'la tarea programada',
+    'step.execution.action.capability': 'la acción de OSIA',
+    'text.simple_request': 'Atendí la solicitud.',
+    'text.in_progress': 'Estoy atendiendo la solicitud.',
+    'text.completed_step': 'Completé el paso solicitado.',
+    'text.blocked_step': 'No pude completar el paso siguiente.',
+    'text.step_cancelled': 'Me detuve antes del paso cancelado.',
+    'text.recovered_step':
+        'El primer método no funcionó, así que probé otro y completé el paso.',
+    'text.waiting_permission':
+        'Estoy esperando tu autorización antes de continuar.',
+    'text.permission_unavailable':
+        'No pude continuar porque la autorización necesaria no estaba disponible.',
+    'text.blocked_request':
+        'Tuve que detenerme antes de completar la solicitud.',
+    'text.cancelled_request': 'Me detuve porque se canceló la solicitud.',
+    'text.safety_block': 'Me detuve antes del paso arriesgado.',
   },
 };
 

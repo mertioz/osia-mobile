@@ -270,50 +270,49 @@ void main() {
     },
   );
 
-  test('formatter preserves order, latest revisions, and semantic dedup', () {
-    final trace = uncheckedSnapshot(<Map<String, dynamic>>[
-      traceEvent(
-        id: 'trace-result',
-        sequence: 3,
-        kind: 'result',
-        displayKey: 'execution.result.completed',
-      ),
-      traceEvent(
-        id: 'trace-goal',
-        sequence: 1,
-        revision: 1,
-        kind: 'goal',
-        displayKey: 'execution.goal.answer',
-      ),
-      traceEvent(
-        id: 'trace-browser-a',
-        sequence: 2,
-        kind: 'action',
-        displayKey: 'execution.action.browser',
-      ),
-      traceEvent(
-        id: 'trace-browser-b',
-        sequence: 4,
-        kind: 'action',
-        displayKey: 'execution.action.browser',
-      ),
-      traceEvent(
-        id: 'trace-goal',
-        sequence: 1,
-        revision: 2,
-        kind: 'goal',
-        displayKey: 'execution.goal.complete_task',
-      ),
-    ]);
-    final expected = osiaStringsEn.executionTraceSummary(const <String>[
-      'execution.goal.complete_task',
-      'execution.action.browser',
-      'execution.result.completed',
-    ]);
+  test(
+    'formatter preserves order and latest revisions without lifecycle prose',
+    () {
+      final trace = uncheckedSnapshot(<Map<String, dynamic>>[
+        traceEvent(
+          id: 'trace-result',
+          sequence: 3,
+          kind: 'result',
+          displayKey: 'execution.result.completed',
+        ),
+        traceEvent(
+          id: 'trace-goal',
+          sequence: 1,
+          revision: 1,
+          kind: 'goal',
+          displayKey: 'execution.goal.answer',
+        ),
+        traceEvent(
+          id: 'trace-browser-a',
+          sequence: 2,
+          kind: 'action',
+          displayKey: 'execution.action.browser',
+        ),
+        traceEvent(
+          id: 'trace-browser-b',
+          sequence: 4,
+          kind: 'action',
+          displayKey: 'execution.action.browser',
+        ),
+        traceEvent(
+          id: 'trace-goal',
+          sequence: 1,
+          revision: 2,
+          kind: 'goal',
+          displayKey: 'execution.goal.complete_task',
+        ),
+      ]);
+      const expected = 'I worked in the browser.';
 
-    expect(formatExecutionTraceSummary(osiaStringsEn, trace), expected);
-    expect(formatExecutionTraceSummary(osiaStringsEn, trace), expected);
-  });
+      expect(formatExecutionTraceSummary(osiaStringsEn, trace), expected);
+      expect(formatExecutionTraceSummary(osiaStringsEn, trace), expected);
+    },
+  );
 
   test('formatter skips unsafe, non-public, and cross-turn events', () {
     const key = ExecutionTraceKey(
@@ -372,10 +371,7 @@ void main() {
     );
     final prose = formatExecutionTraceSummary(osiaStringsEn, trace);
 
-    expect(
-      prose,
-      osiaStringsEn.executionTraceSummary(const ['execution.action.browser']),
-    );
+    expect(prose, osiaStringsEn.executionTraceNaturalText('in_progress'));
     expect(prose, isNot(contains('secret')));
     expect(prose, isNot(contains('provider')));
   });
@@ -512,7 +508,7 @@ void main() {
     expect(find.text('Réflexion'), findsOneWidget);
     expect(
       formatExecutionTraceSummary(osiaStringsFr, trace),
-      'J’ai compris la demande, puis j’ai terminé l’étape.',
+      'J’ai terminé l’étape demandée.',
     );
     expect(
       find.text(formatExecutionTraceSummary(osiaStringsFr, trace)),
