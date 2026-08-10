@@ -3711,13 +3711,36 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Confirmation requests awaiting a dialog, drained one at a time.
   final List<ws.McpConfirmRequest> _mcpConfirmQueue = [];
 
+  /// IDs currently visible/queued and recently answered. Reprojection of the
+  /// same canonical request must never create a second dialog.
+  final Set<String> _mcpConfirmPendingIds = <String>{};
+  final Map<String, bool> _mcpConfirmAnswered = <String, bool>{};
+  final List<String> _mcpConfirmAnsweredOrder = <String>[];
+
   /// Whether a confirmation dialog is currently on screen — serializes the
   /// queue so two requests can never race the same dialog.
   bool _mcpConfirmActive = false;
 
   void _onMcpConfirmRequest(ws.McpConfirmRequest req) {
+    final priorAnswer = _mcpConfirmAnswered[req.id];
+    if (priorAnswer != null) {
+      // The server response is idempotent. Re-send the exact prior verdict so
+      // a reconnect cannot lose it, without asking the user twice.
+      _wsService.sendMcpConfirmResponse(req.id, priorAnswer);
+      return;
+    }
+    if (!_mcpConfirmPendingIds.add(req.id)) return;
     _mcpConfirmQueue.add(req);
     _drainMcpConfirmQueue();
+  }
+
+  void _rememberMcpConfirmAnswer(String id, bool approved) {
+    _mcpConfirmAnswered[id] = approved;
+    _mcpConfirmAnsweredOrder.add(id);
+    while (_mcpConfirmAnsweredOrder.length > 128) {
+      final expired = _mcpConfirmAnsweredOrder.removeAt(0);
+      _mcpConfirmAnswered.remove(expired);
+    }
   }
 
   Future<void> _drainMcpConfirmQueue() async {
@@ -3740,7 +3763,10 @@ class _ChatScreenState extends State<ChatScreen> {
     // Send the verdict for THIS request's id. Safe even if we've since
     // disconnected — sendMcpConfirmResponse no-ops on a dead socket, and the
     // server already denied on its own timeout.
-    svc.sendMcpConfirmResponse(req.id, approved == true);
+    final verdict = approved == true;
+    _mcpConfirmPendingIds.remove(req.id);
+    _rememberMcpConfirmAnswer(req.id, verdict);
+    svc.sendMcpConfirmResponse(req.id, verdict);
 
     _mcpConfirmActive = false;
     // Drain the next queued request (if any).

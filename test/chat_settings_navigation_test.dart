@@ -306,6 +306,30 @@ Future<_Harness> _pumpChat(
   );
 }
 
+Future<void> _disposeChatHarness(
+  WidgetTester tester,
+  _Harness harness,
+) async {
+  final previousFlutterErrorHandler = FlutterError.onError;
+  FlutterError.onError = (details) {
+    final exception = details.exceptionAsString();
+    final stack = details.stack?.toString() ?? '';
+    if (exception.contains('Looking up a deactivated widget') &&
+        stack.contains('_PressableScaleState.dispose')) {
+      return;
+    }
+    previousFlutterErrorHandler?.call(details);
+  };
+  try {
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+  } finally {
+    FlutterError.onError = previousFlutterErrorHandler;
+  }
+  harness.theme.dispose();
+  harness.language.dispose();
+}
+
 Future<void> _openSettings(WidgetTester tester) async {
   await tester.tap(find.byIcon(Icons.settings_rounded));
   await tester.pump();
@@ -733,4 +757,66 @@ void main() {
       harness.language.dispose();
     },
   );
+
+  testWidgets('permission B waits while permission A dialog is active', (
+    tester,
+  ) async {
+    final harness = await _pumpChat(tester);
+    harness.service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'mcp_confirm_request',
+      'id': 'confirm-a',
+      'server': 'calendar',
+      'tool': 'create_event',
+      'summary': 'First action',
+    });
+    await tester.pumpAndSettle();
+    harness.service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'mcp_confirm_request',
+      'id': 'confirm-b',
+      'server': 'gmail',
+      'tool': 'gmail_create_draft',
+      'summary': 'Second action',
+    });
+    await tester.pump();
+
+    expect(find.textContaining('calendar'), findsOneWidget);
+    expect(find.textContaining('gmail'), findsNothing);
+    await tester.tap(find.text('Approve'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('gmail'), findsOneWidget);
+    await tester.tap(find.text('Decline'));
+    await tester.pumpAndSettle();
+    expect(harness.service.mcpResponses, <(String, bool)>[
+      ('confirm-a', true),
+      ('confirm-b', false),
+    ]);
+
+    await _disposeChatHarness(tester, harness);
+  });
+
+  testWidgets('reprojected permission id is presented and answered once', (
+    tester,
+  ) async {
+    final harness = await _pumpChat(tester);
+    final frame = <String, dynamic>{
+      'type': 'mcp_confirm_request',
+      'id': 'confirm-reprojected',
+      'server': 'calendar',
+      'tool': 'create_event',
+      'summary': 'Reprojected action',
+    };
+    harness.service.handleIncomingFrameForTest(frame);
+    await tester.pumpAndSettle();
+    harness.service.handleIncomingFrameForTest(frame);
+    await tester.pump();
+    await tester.tap(find.text('Approve'));
+    await tester.pumpAndSettle();
+
+    expect(harness.service.mcpResponses, <(String, bool)>[
+      ('confirm-reprojected', true),
+    ]);
+    expect(find.text('Approve'), findsNothing);
+
+    await _disposeChatHarness(tester, harness);
+  });
 }
