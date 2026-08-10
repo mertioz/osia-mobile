@@ -10,8 +10,9 @@ import '../theme.dart';
 /// Used next to the conversation title in the app bar.
 class ConnectionBadge extends StatelessWidget {
   final ws.ConnectionState state;
+  final VoidCallback? onTap;
 
-  const ConnectionBadge({super.key, required this.state});
+  const ConnectionBadge({super.key, required this.state, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -26,28 +27,36 @@ class ConnectionBadge extends StatelessWidget {
       ws.ConnectionState.disconnected => (palette.error, strings.disconnected),
     };
 
-    return Tooltip(
-      message: label,
-      child: SizedBox(
-        width: 14,
-        height: 14,
-        child: Center(
-          child: state == ws.ConnectionState.connecting
-              ? _PulsingDot(color: dotColor)
-              : Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: dotColor,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: dotColor.withValues(alpha: 0.5),
-                        blurRadius: 4,
+    return Semantics(
+      button: onTap != null,
+      label: label,
+      child: Tooltip(
+        message: label,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: SizedBox(
+            width: 14,
+            height: 14,
+            child: Center(
+              child: state == ws.ConnectionState.connecting
+                  ? _PulsingDot(color: dotColor)
+                  : Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: dotColor,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: dotColor.withValues(alpha: 0.5),
+                            blurRadius: 4,
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
+                    ),
+            ),
+          ),
         ),
       ),
     );

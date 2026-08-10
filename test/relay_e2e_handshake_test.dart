@@ -29,6 +29,7 @@ void main() {
     await peer.mobileReadySeen.future.timeout(const Duration(seconds: 2));
 
     expect(service.state, ConnectionState.connected);
+    expect(service.committedTransportState, CommittedTransportState.switching);
     expect(service.relayHandshakeStateForTest(), <String, bool>{
       'pc_ready': true,
       'peer_ready': true,
@@ -82,6 +83,7 @@ void main() {
     await service.ensureConnected(reason: 'relay_only_pc_compatibility_test');
 
     expect(service.state, ConnectionState.connected);
+    expect(service.committedTransportState, CommittedTransportState.switching);
     expect(
       service.sendText(
         'relay-only compatibility',
@@ -95,6 +97,31 @@ void main() {
     );
     expect(frame['type'], 'text');
     expect(frame['client_request_id'], 'req-relay-only');
+  });
+
+  test('Relay label appears only after transport_committed', () async {
+    final peer = await _LocalRelayPeer.start(
+      token: token,
+      standbyReady: true,
+      autoCommitRelay: true,
+    );
+    addTearDown(peer.close);
+    final config = await _mobileConfig(peer.endpoint, token, 102);
+    final service = WebSocketService(
+      ip: '127.0.0.1',
+      token: token,
+      autoReconnect: false,
+      resolveRelay: () async => config,
+      lanDirectV1: true,
+      webRtcDirectV1: false,
+    );
+    addTearDown(service.dispose);
+
+    await service.ensureConnected(reason: 'relay_commit_truth_test');
+
+    expect(peer.relayCommitCount, 1);
+    expect(service.state, ConnectionState.connected);
+    expect(service.committedTransportState, CommittedTransportState.relayOsia);
   });
 
   test('app frame before E2E ready fails locally without plaintext', () async {
@@ -819,6 +846,8 @@ class _LocalRelayPeer {
     required this.sendPeerUnavailable,
     required this.terminalErrorCode,
     required this.terminalErrorConnections,
+    required this.standbyReady,
+    required this.autoCommitRelay,
   });
 
   final HttpServer _server;
@@ -827,6 +856,9 @@ class _LocalRelayPeer {
   final bool sendPeerUnavailable;
   final String terminalErrorCode;
   final int terminalErrorConnections;
+  final bool standbyReady;
+  final bool autoCommitRelay;
+  int relayCommitCount = 0;
   final List<WebSocket> _sockets = <WebSocket>[];
   final List<_PeerConnection> _connections = <_PeerConnection>[];
   final List<String> receivedTypes = <String>[];
@@ -859,6 +891,8 @@ class _LocalRelayPeer {
     bool sendPeerUnavailable = false,
     String terminalErrorCode = '',
     int terminalErrorConnections = 0,
+    bool standbyReady = false,
+    bool autoCommitRelay = false,
   }) async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final peer = _LocalRelayPeer._(
@@ -868,6 +902,8 @@ class _LocalRelayPeer {
       sendPeerUnavailable: sendPeerUnavailable,
       terminalErrorCode: terminalErrorCode,
       terminalErrorConnections: terminalErrorConnections,
+      standbyReady: standbyReady,
+      autoCommitRelay: autoCommitRelay,
     );
     if (!holdHandshake) peer._handshakeGate.complete();
     peer._requests = server.listen(peer._handleRequest);
@@ -979,7 +1015,10 @@ class _LocalRelayPeer {
         'e2e_chunk_max_count': relayE2eChunkMaxCount,
       }, role: 'mobile');
       // Deliberately arrives before E2E_HELLO to exercise the race.
-      _send(connection, 'PC_READY', <String, Object?>{'e2e': true});
+      _send(connection, 'PC_READY', <String, Object?>{
+        'e2e': true,
+        if (standbyReady) 'standby': true,
+      });
       if (sendPeerUnavailable) {
         _send(connection, 'ERROR', <String, Object?>{
           'code': 'peer_unavailable',
@@ -1262,7 +1301,7 @@ class _LocalRelayPeer {
     _PeerConnection connection,
     Map<String, dynamic> envelope,
   ) async {
-    if (!_mobileAppFrameCtrl.hasListener) return;
+    if (!autoCommitRelay && !_mobileAppFrameCtrl.hasListener) return;
     final keys = connection.e2eKeys;
     if (keys == null) {
       throw StateError('Encrypted app frame arrived before E2E setup');
@@ -1274,7 +1313,50 @@ class _LocalRelayPeer {
       replayGuard: connection.mobileReplayGuard,
       replayKey: 'mobile',
     );
+    if (autoCommitRelay && frame['type'] == 'transport_commit') {
+      relayCommitCount++;
+      await _sendEncryptedRawFrame(connection, <String, Object?>{
+        'type': 'transport_committed',
+        'transport': 'relay',
+        'attempt_id': frame['attempt_id'],
+      });
+      return;
+    }
+    if (!_mobileAppFrameCtrl.hasListener) return;
     _mobileAppFrameCtrl.add(frame);
+  }
+
+  Future<void> _sendEncryptedRawFrame(
+    _PeerConnection connection,
+    Map<String, Object?> frame,
+  ) async {
+    final context = connection.e2eContext;
+    final keys = connection.e2eKeys;
+    if (context == null || keys == null) {
+      throw StateError('E2E handshake has not completed');
+    }
+    final seq = ++connection.seq;
+    final encrypted = await encryptFrame(
+      frame,
+      keys: keys,
+      direction: RelayCryptoDirection.pcToMobile,
+      pairId: context.pairId,
+      role: 'pc',
+      priority: relayPriorityCritical,
+      finalFrame: false,
+      seq: seq,
+    );
+    connection.socket.add(
+      jsonEncode(<String, Object?>{
+        'v': 2,
+        'type': 'E2E_FRAME',
+        'role': 'pc',
+        'pair_id': context.pairId,
+        'seq': seq,
+        'ack': 0,
+        ...encrypted,
+      }),
+    );
   }
 
   void _send(

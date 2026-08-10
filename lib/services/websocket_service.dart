@@ -11,6 +11,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'lan_direct_transport.dart';
 import 'lan_discovery_service.dart';
+import 'execution_trace.dart';
 import 'relay_crypto_service.dart';
 import 'relay_service.dart';
 import 'storage_service.dart';
@@ -212,6 +213,9 @@ bool allowLegacyRendezvousFallbackForTest() => kAllowLegacyRendezvousFallback;
 /// Possible states of the WebSocket connection.
 enum ConnectionState { disconnected, connecting, connected }
 
+/// UI-safe truth for the one currently committed application route.
+enum CommittedTransportState { switching, lanDirect, webRtcP2p, relayOsia }
+
 // ── Incoming message types ────────────────────────────────────────────────
 
 /// Parsed incoming message from the OSIA server.
@@ -403,6 +407,7 @@ class HistoryMessage {
   final String clientRequestId;
   final String turnId;
   final String messageId;
+  final ExecutionTraceSnapshot? executionTrace;
   const HistoryMessage({
     required this.role,
     required this.content,
@@ -410,6 +415,7 @@ class HistoryMessage {
     this.clientRequestId = '',
     this.turnId = '',
     this.messageId = '',
+    this.executionTrace,
   });
 
   factory HistoryMessage.fromJson(Map<String, dynamic> json) {
@@ -434,6 +440,9 @@ class HistoryMessage {
           .toString(),
       turnId: (json['turn_id'] ?? '').toString(),
       messageId: (json['message_id'] ?? '').toString(),
+      executionTrace: ExecutionTraceSnapshot.parseHistory(
+        json['execution_trace'],
+      ),
     );
   }
 }
@@ -2812,6 +2821,8 @@ class WebSocketService {
   WebRtcDirectTransport? _webRtcTransport;
   bool _connectedViaLan = false;
   bool _connectedViaWebRtc = false;
+  CommittedTransportState _committedTransportState =
+      CommittedTransportState.switching;
   final ApplicationTransportCoordinator _transportCoordinator =
       applicationTransportCoordinator;
   ApplicationTransportLease? _transportLease;
@@ -2846,6 +2857,15 @@ class WebSocketService {
 
   final StreamController<RelayTransferEvent> _relayTransferCtrl =
       StreamController<RelayTransferEvent>.broadcast();
+
+  final StreamController<CommittedTransportState> _committedTransportCtrl =
+      StreamController<CommittedTransportState>.broadcast(sync: true);
+
+  final StreamController<ExecutionTraceSnapshot> _executionTraceCtrl =
+      StreamController<ExecutionTraceSnapshot>.broadcast(sync: true);
+  final Map<ExecutionTraceKey, ExecutionTraceAccumulator>
+  _executionTraceAccumulators =
+      <ExecutionTraceKey, ExecutionTraceAccumulator>{};
 
   final StreamController<ConfigData> _configCtrl =
       StreamController<ConfigData>.broadcast();
@@ -2993,6 +3013,17 @@ class WebSocketService {
   /// WebSocket protocol remain unchanged.
   Stream<RelayTransferEvent> get relayTransferStream =>
       _relayTransferCtrl.stream;
+
+  /// Current route only after its application transport has really committed.
+  CommittedTransportState get committedTransportState =>
+      _committedTransportState;
+
+  Stream<CommittedTransportState> get committedTransportStream =>
+      _committedTransportCtrl.stream;
+
+  /// Strict user-safe execution trace snapshots, outside [messageStream].
+  Stream<ExecutionTraceSnapshot> get executionTraceStream =>
+      _executionTraceCtrl.stream;
 
   /// Stream of full config snapshots (one per `get_config` reply). Kept off
   /// [messageStream] so the chat screen's sealed-message switch is untouched.
@@ -3717,6 +3748,40 @@ class WebSocketService {
     _onData(json);
   }
 
+  void _handleExecutionTraceFrame(Map<String, dynamic> json) {
+    final envelope = ExecutionTraceEnvelope.parse(json);
+    if (envelope == null) return;
+    final key = envelope.event.traceKey;
+    final activeRequest = _activeRequestByConv[key.conversationId];
+    final activeConversation = _activeConvByRequest[key.requestId];
+    if (activeRequest != key.requestId ||
+        activeConversation != key.conversationId ||
+        !_acceptedRequests.contains(key.requestId) ||
+        _turnByRequest[key.requestId] != key.turnId) {
+      return;
+    }
+    var accumulator = _executionTraceAccumulators[key];
+    if (accumulator == null) {
+      if (_executionTraceAccumulators.length >= _maxConvBuffers) {
+        ExecutionTraceKey? victim;
+        for (final entry in _executionTraceAccumulators.entries) {
+          if (entry.value.terminal) {
+            victim = entry.key;
+            break;
+          }
+        }
+        if (victim == null) return;
+        _executionTraceAccumulators.remove(victim);
+      }
+      accumulator = ExecutionTraceAccumulator(key);
+      _executionTraceAccumulators[key] = accumulator;
+    }
+    final snapshot = accumulator.merge(envelope);
+    if (snapshot != null && !_executionTraceCtrl.isClosed) {
+      _executionTraceCtrl.add(snapshot);
+    }
+  }
+
   @visibleForTesting
   void setPermissionConnectionForTest(bool connected) {
     if (connected) {
@@ -3985,6 +4050,11 @@ class WebSocketService {
   void markDirectTransportConnectedForTest(ApplicationTransportKind kind) {
     _connectedViaLan = kind == ApplicationTransportKind.lan;
     _connectedViaWebRtc = kind == ApplicationTransportKind.webrtc;
+    _publishCommittedTransport(
+      kind == ApplicationTransportKind.lan
+          ? CommittedTransportState.lanDirect
+          : CommittedTransportState.webRtcP2p,
+    );
     _setState(ConnectionState.connected);
   }
 
@@ -4057,6 +4127,10 @@ class WebSocketService {
     );
 
     _beginPermissionReconnect();
+    _publishCommittedTransport(
+      CommittedTransportState.switching,
+      connectGeneration: connectGeneration,
+    );
     _setState(ConnectionState.connecting);
     unawaited(
       Future<void>.microtask(() async {
@@ -4124,6 +4198,7 @@ class WebSocketService {
       lease?.release();
     }();
     _connectedViaRelay = false;
+    _publishCommittedTransport(CommittedTransportState.switching);
     _resetRelayE2eState();
     _relayConfig = null;
     _relayReadyCompleter = null;
@@ -5237,6 +5312,8 @@ class WebSocketService {
     _messageCtrl.close();
     _errorCtrl.close();
     _relayTransferCtrl.close();
+    _committedTransportCtrl.close();
+    _executionTraceCtrl.close();
     _configCtrl.close();
     _permissionSnapshotCtrl.close();
     _permissionAckCtrl.close();
@@ -5276,6 +5353,7 @@ class WebSocketService {
     _seenApplicationEventIds.clear();
     _applicationEventOrder.clear();
     _lastApplicationSequence.clear();
+    _executionTraceAccumulators.clear();
     _pendingPermissionRevocations.clear();
     _documentProgress.clear();
     _knownDocumentScopes.clear();
@@ -6010,6 +6088,7 @@ class WebSocketService {
       if (_relayCommitConfirmed) {
         _relaySignalingStandby = false;
         _markConnected();
+        _publishCommittedTransport(CommittedTransportState.relayOsia);
         _completeRelayReady(true);
         return;
       }
@@ -6078,6 +6157,7 @@ class WebSocketService {
     _connectedViaLan = false;
     _connectedViaWebRtc = false;
     _connectedViaRelay = false;
+    _publishCommittedTransport(CommittedTransportState.switching);
     _relayConfig = null;
     _completeRelayReady(false);
     _resetRelayE2eState();
@@ -6102,6 +6182,23 @@ class WebSocketService {
     if (_state == newState) return;
     _state = newState;
     _connectionCtrl.add(newState);
+  }
+
+  void _publishCommittedTransport(
+    CommittedTransportState state, {
+    int? connectGeneration,
+  }) {
+    if (_disposed || _committedTransportCtrl.isClosed) return;
+    if (connectGeneration != null && !_isCurrentConnect(connectGeneration)) {
+      return;
+    }
+    if (state != CommittedTransportState.switching &&
+        _transportLease?.active != true) {
+      return;
+    }
+    if (_committedTransportState == state) return;
+    _committedTransportState = state;
+    _committedTransportCtrl.add(state);
   }
 
   /// Enqueue a parsed message for ordered, paced delivery to listeners.
@@ -6477,6 +6574,10 @@ class WebSocketService {
       _connectedViaLan = true;
       _lastTransportKind = ApplicationTransportKind.lan;
       retainLease = true;
+      _publishCommittedTransport(
+        CommittedTransportState.lanDirect,
+        connectGeneration: connectGeneration,
+      );
       _markConnected();
       _reconnectTimer?.cancel();
       _reconnectTimer = null;
@@ -6504,6 +6605,7 @@ class WebSocketService {
     final hadActiveTurn = _hasActiveApplicationTurn;
     _lanTransport = null;
     _connectedViaLan = false;
+    _publishCommittedTransport(CommittedTransportState.switching);
     _clearChatGptEphemeralLogin();
     _releaseTransportLease();
     _setState(ConnectionState.disconnected);
@@ -6565,7 +6667,9 @@ class WebSocketService {
       final ready = await transport.connect(
         attemptGeneration: ++_webRtcAttemptGeneration,
       );
-      if (!_isCurrentConnect(connectGeneration) || !ready) {
+      if (!_isCurrentConnect(connectGeneration) ||
+          !ready ||
+          !transport.genuineP2p) {
         await transport.close();
         return false;
       }
@@ -6576,6 +6680,10 @@ class WebSocketService {
       _connectedViaWebRtc = true;
       _lastTransportKind = ApplicationTransportKind.webrtc;
       retainLease = true;
+      _publishCommittedTransport(
+        CommittedTransportState.webRtcP2p,
+        connectGeneration: connectGeneration,
+      );
       _markConnected();
       _reconnectTimer?.cancel();
       _reconnectTimer = null;
@@ -6605,6 +6713,7 @@ class WebSocketService {
     final hadActiveTurn = info.hadActiveTurn || _hasActiveApplicationTurn;
     _webRtcTransport = null;
     _connectedViaWebRtc = false;
+    _publishCommittedTransport(CommittedTransportState.switching);
     _clearChatGptEphemeralLogin();
     _releaseTransportLease();
     _setState(ConnectionState.disconnected);
@@ -6779,6 +6888,10 @@ class WebSocketService {
       _relaySignalingStandby = false;
       _lastTransportKind = ApplicationTransportKind.relay;
       retainLease = true;
+      _publishCommittedTransport(
+        CommittedTransportState.relayOsia,
+        connectGeneration: connectGeneration,
+      );
       return true;
     } finally {
       if (!retainLease) {
@@ -8201,6 +8314,8 @@ class WebSocketService {
       }
 
       switch (type) {
+        case 'execution_trace':
+          _handleExecutionTraceFrame(json);
         case 'transcript':
           if (content != null) {
             _emit(
@@ -8785,6 +8900,7 @@ class WebSocketService {
     _completeRelayReady(false);
     _relayReadyCompleter = null;
     if (directTransportActive) return;
+    _publishCommittedTransport(CommittedTransportState.switching);
     _markPermissionsOffline();
     _setState(ConnectionState.disconnected);
     if (relayDroppedWhileConnected && !_intentionalClose) {

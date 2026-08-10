@@ -11,6 +11,7 @@ import '../services/audio_service.dart';
 import '../services/attachment_service.dart';
 import '../services/background_connection_service.dart';
 import '../services/connection_lifecycle_service.dart';
+import '../services/execution_trace.dart';
 import '../services/notification_service.dart';
 import '../services/rendezvous_service.dart';
 import '../services/relay_service.dart';
@@ -20,10 +21,12 @@ import '../theme.dart';
 import '../widgets/accent_logo.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/connection_badge.dart';
+import '../widgets/execution_trace_block.dart';
 import '../widgets/glass_input_bar.dart';
 import '../widgets/mcp_confirm_dialog.dart';
 import '../widgets/model_selector_sheet.dart';
 import '../widgets/thinking_indicator.dart';
+import '../widgets/transport_status_sheet.dart';
 import 'autonomous_screen.dart';
 import 'settings_screen.dart';
 
@@ -157,6 +160,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _connSub;
   StreamSubscription? _errSub;
   StreamSubscription? _relayTransferSub;
+  StreamSubscription? _executionTraceSub;
   StreamSubscription? _newChatSub;
   StreamSubscription? _cronNotificationSub;
   StreamSubscription? _configSub;
@@ -165,6 +169,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _attachmentProtocolSub;
   StreamSubscription? _documentProgressSub;
   StreamSubscription? _autonomousSub;
+  ExecutionTraceSnapshot? _liveExecutionTrace;
   String? _connError;
   final List<String> _abandonedAudioRequestIds = <String>[];
   String? _currentResponseAudioRequestId;
@@ -497,6 +502,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _convStreamSub = _wsService.convStreamStream.listen(_onConvStream);
     _busySub = _wsService.conversationBusyStream.listen(_onConversationBusy);
     _relayTransferSub = _wsService.relayTransferStream.listen(_onRelayTransfer);
+    _executionTraceSub = _wsService.executionTraceStream.listen(
+      _onExecutionTrace,
+    );
     _attachmentProtocolSub = _wsService.attachmentProtocolStream.listen(
       _onAttachmentProtocol,
     );
@@ -1030,9 +1038,13 @@ class _ChatScreenState extends State<ChatScreen> {
                   clientRequestId: m.clientRequestId,
                   turnId: m.turnId,
                   messageId: m.messageId,
+                  executionTrace: m.executionTrace,
                 ),
               ),
             );
+          if (messages.any((message) => message.executionTrace != null)) {
+            _liveExecutionTrace = null;
+          }
           _thinking = false;
           _noResponse = false;
           // Feature 2: persisted history is shown in full — reset the reveal
@@ -1401,6 +1413,11 @@ class _ChatScreenState extends State<ChatScreen> {
       // Terminal frame for the active conversation — finalize the streaming
       // bubble (the streaming-finalize the old StatusMessage done/error did).
       final hadBubble = _streamingIndex != null;
+      final liveTrace = _matchingLiveTrace(
+        conversationId: event.conversationId,
+        clientRequestId: event.clientRequestId,
+        turnId: event.turnId,
+      );
       // Feature 2: the turn ended — stop the reveal and FLUSH any buffered text
       // not yet shown so the finalized bubble is always complete (no missing
       // tail), regardless of how far the typewriter had got.
@@ -1417,7 +1434,9 @@ class _ChatScreenState extends State<ChatScreen> {
           _entries[idx] = _entries[idx].copyWith(
             content: full,
             isStreaming: false,
+            executionTrace: liveTrace,
           );
+          if (liveTrace != null) _liveExecutionTrace = null;
           _streamingIndex = null;
         }
       });
@@ -1458,6 +1477,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _wsService.bufferedText(event.conversationId);
     if (text.isEmpty) return;
     final bool reduced = Motion.reduced(context);
+    final liveTrace = _matchingLiveTrace(
+      conversationId: event.conversationId,
+      clientRequestId: event.clientRequestId,
+      turnId: event.turnId,
+    );
     setState(() {
       _thinking = false;
       _noResponse = false;
@@ -1472,6 +1496,7 @@ class _ChatScreenState extends State<ChatScreen> {
           clientRequestId: event.clientRequestId,
           turnId: event.turnId,
           messageId: event.messageId,
+          executionTrace: liveTrace,
         );
         if (reduced) {
           _typeRevealed = text.length;
@@ -1488,6 +1513,7 @@ class _ChatScreenState extends State<ChatScreen> {
           clientRequestId: event.clientRequestId,
           turnId: event.turnId,
           messageId: event.messageId,
+          executionTrace: liveTrace,
         );
         _streamingIndex = _entries.length - 1;
         _typeTarget = text;
@@ -1504,12 +1530,14 @@ class _ChatScreenState extends State<ChatScreen> {
             clientRequestId: event.clientRequestId,
             turnId: event.turnId,
             messageId: event.messageId,
+            executionTrace: liveTrace,
           ),
         );
         _streamingIndex = _entries.length - 1;
         _typeTarget = text;
         _typeRevealed = reduced ? text.length : 0;
       }
+      if (liveTrace != null) _liveExecutionTrace = null;
     });
     if (reduced) {
       // Reduced motion: full text is already shown. Cancel any timer a prior
@@ -1693,6 +1721,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _entries.clear();
       _chatDocumentProgress = null;
+      _liveExecutionTrace = null;
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
@@ -1839,6 +1868,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _entries.clear();
       _chatDocumentProgress = null;
+      _liveExecutionTrace = null;
       _awaitingResponse = false;
       _thinking = false;
       _noResponse = false;
@@ -1907,6 +1937,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _entries.clear();
       _chatDocumentProgress = null;
+      _liveExecutionTrace = null;
       _awaitingResponse = false;
       _thinking = false;
       _noResponse = false;
@@ -1970,6 +2001,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _conversations = _conversations.where((c) => c.id != conv.id).toList();
       if (deletingActive) {
         _entries.clear();
+        _liveExecutionTrace = null;
         _thinking = false;
         _noResponse = false;
         _streamingIndex = null;
@@ -2851,6 +2883,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _attachmentCancellation = null;
       _chatDocumentProgress = null;
+      _liveExecutionTrace = null;
       _awaitingResponse = true;
       _thinking = true;
       _noResponse = false;
@@ -2867,6 +2900,56 @@ class _ChatScreenState extends State<ChatScreen> {
       clientRequestId: _pendingTurn?.clientRequestId ?? '',
     );
     if (sent && mounted) setState(() {});
+  }
+
+  void _onExecutionTrace(ExecutionTraceSnapshot snapshot) {
+    if (!mounted) return;
+    final key = snapshot.key;
+    final activeConversation = _activeConversationId;
+    if (activeConversation != null &&
+        activeConversation.isNotEmpty &&
+        key.conversationId != activeConversation) {
+      return;
+    }
+    final pendingRequest = _pendingTurn?.clientRequestId ?? '';
+    final matchingEntry = _entries.lastIndexWhere(
+      (entry) =>
+          !entry.isUser &&
+          !entry.isSystem &&
+          entry.clientRequestId == key.requestId &&
+          entry.turnId == key.turnId,
+    );
+    if (pendingRequest.isNotEmpty &&
+        pendingRequest != key.requestId &&
+        matchingEntry < 0) {
+      return;
+    }
+    setState(() {
+      if (matchingEntry >= 0) {
+        _entries[matchingEntry] = _entries[matchingEntry].copyWith(
+          executionTrace: snapshot,
+        );
+        _liveExecutionTrace = null;
+      } else {
+        _liveExecutionTrace = snapshot;
+      }
+    });
+    _scrollToBottomAnimated();
+  }
+
+  ExecutionTraceSnapshot? _matchingLiveTrace({
+    required String conversationId,
+    required String clientRequestId,
+    required String turnId,
+  }) {
+    final snapshot = _liveExecutionTrace;
+    if (snapshot == null ||
+        snapshot.key.conversationId != conversationId ||
+        snapshot.key.requestId != clientRequestId ||
+        snapshot.key.turnId != turnId) {
+      return null;
+    }
+    return snapshot;
   }
 
   /// Arm (or re-arm) the no-response watchdog. Fires [_onFirstTokenTimeout]
@@ -3721,6 +3804,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _connSub?.cancel();
     _errSub?.cancel();
     _relayTransferSub?.cancel();
+    _executionTraceSub?.cancel();
     _newChatSub?.cancel();
     _cronNotificationSub?.cancel();
     _configSub?.cancel();
@@ -3790,7 +3874,10 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            ConnectionBadge(state: _connState),
+            ConnectionBadge(
+              state: _connState,
+              onTap: () => showTransportStatusSheet(context, _wsService),
+            ),
           ],
         ),
         actions: [
@@ -3814,7 +3901,11 @@ class _ChatScreenState extends State<ChatScreen> {
           Column(
             children: [
               Expanded(
-                child: _entries.isEmpty && !_thinking && !_noResponse
+                child:
+                    _entries.isEmpty &&
+                        !_thinking &&
+                        !_noResponse &&
+                        _liveExecutionTrace == null
                     ? _buildEmptyState(palette, strings)
                     : ListView.builder(
                         controller: _scrollCtrl,
@@ -3834,7 +3925,11 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         itemCount:
                             _entries.length +
-                            ((_showThinkingTrailer || _noResponse) ? 1 : 0),
+                            ((_liveExecutionTrace != null ||
+                                    _showThinkingTrailer ||
+                                    _noResponse)
+                                ? 1
+                                : 0),
                         itemBuilder: (context, index) {
                           // Trailing slot: the pre-stream thinking indicator,
                           // or — after a 12s no-first-token timeout — the
@@ -3845,32 +3940,56 @@ class _ChatScreenState extends State<ChatScreen> {
                           // [InlineThinkingDots] on that bubble instead, so the
                           // standalone indicator is skipped to avoid two.
                           if (index == _entries.length) {
+                            final trace = _liveExecutionTrace;
+                            if (trace != null) {
+                              return ExecutionTraceBlock(
+                                key: ValueKey(
+                                  'trace_${trace.key.conversationId}_'
+                                  '${trace.key.requestId}_${trace.key.turnId}',
+                                ),
+                                snapshot: trace,
+                              );
+                            }
                             return _showThinkingTrailer
                                 ? const ThinkingIndicator()
                                 : _buildNoResponseTile(palette, strings);
                           }
                           final entry = _entries[index];
                           final isAssistant = !entry.isUser && !entry.isSystem;
-                          return ChatBubble(
-                            // Stable key per slot so the bubble (and its
-                            // blinking-cursor Timer) is preserved while
-                            // the streaming text grows.
-                            key: ValueKey('msg_$index'),
-                            text: entry.content,
-                            isUser: entry.isUser,
-                            isTranscript: entry.isTranscript,
-                            isStreaming: entry.isStreaming,
-                            isSystem: entry.isSystem,
-                            // Mid-stream pause: tiny dots inline at the end of
-                            // the streaming text (separate from the full
-                            // ThinkingIndicator). Only on the streaming bubble.
-                            inlineTrailing:
-                                entry.isStreaming && _isThinkingMidStream
-                                ? const InlineThinkingDots()
-                                : null,
-                            onSpeak: isAssistant
-                                ? () => _speakMessage(entry)
-                                : null,
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (entry.executionTrace case final trace?)
+                                ExecutionTraceBlock(
+                                  key: ValueKey(
+                                    'trace_${trace.key.conversationId}_'
+                                    '${trace.key.requestId}_${trace.key.turnId}',
+                                  ),
+                                  snapshot: trace,
+                                  collapsed:
+                                      trace.terminal && !entry.isStreaming,
+                                ),
+                              ChatBubble(
+                                // Stable key per slot so the bubble (and its
+                                // blinking-cursor Timer) is preserved while
+                                // the streaming text grows.
+                                key: ValueKey('msg_$index'),
+                                text: entry.content,
+                                isUser: entry.isUser,
+                                isTranscript: entry.isTranscript,
+                                isStreaming: entry.isStreaming,
+                                isSystem: entry.isSystem,
+                                // Mid-stream pause: tiny dots inline at the end
+                                // of the streaming text. Trace remains separate.
+                                inlineTrailing:
+                                    entry.isStreaming && _isThinkingMidStream
+                                    ? const InlineThinkingDots()
+                                    : null,
+                                onSpeak: isAssistant
+                                    ? () => _speakMessage(entry)
+                                    : null,
+                              ),
+                            ],
                           );
                         },
                       ),
@@ -4484,6 +4603,7 @@ class _ChatEntry {
   final String clientRequestId;
   final String turnId;
   final String messageId;
+  final ExecutionTraceSnapshot? executionTrace;
 
   const _ChatEntry({
     required this.content,
@@ -4495,6 +4615,7 @@ class _ChatEntry {
     this.clientRequestId = '',
     this.turnId = '',
     this.messageId = '',
+    this.executionTrace,
   });
 
   _ChatEntry copyWith({
@@ -4504,6 +4625,7 @@ class _ChatEntry {
     String? clientRequestId,
     String? turnId,
     String? messageId,
+    ExecutionTraceSnapshot? executionTrace,
   }) {
     return _ChatEntry(
       content: content ?? this.content,
@@ -4515,6 +4637,7 @@ class _ChatEntry {
       clientRequestId: clientRequestId ?? this.clientRequestId,
       turnId: turnId ?? this.turnId,
       messageId: messageId ?? this.messageId,
+      executionTrace: executionTrace ?? this.executionTrace,
     );
   }
 }

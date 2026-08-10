@@ -212,6 +212,7 @@ class WebRtcDirectTransport {
   bool _helloSent = false;
   bool _peerAuthenticated = false;
   bool _commitSent = false;
+  bool _genuineP2p = false;
   bool _terminalSignalSent = false;
   bool _closedNotified = false;
   String _activeRequestId = '';
@@ -221,6 +222,7 @@ class WebRtcDirectTransport {
   bool get active =>
       _state == WebRtcDirectState.ready ||
       _state == WebRtcDirectState.activeTurn;
+  bool get genuineP2p => active && _genuineP2p;
 
   Future<bool> connect({required int attemptGeneration}) async {
     if (_state != WebRtcDirectState.idle || !capability.enabled) return false;
@@ -586,8 +588,13 @@ class WebRtcDirectTransport {
       final signal = validateWebRtcSignal(frame, destinationRole: 'mobile');
       if (signal['attempt_id'] != attemptId ||
           signal['generation'] != generation ||
-          _state != WebRtcDirectState.authenticating ||
-          !authorizeCommit()) {
+          _state != WebRtcDirectState.authenticating) {
+        throw const FormatException('WebRTC commit authorization failed');
+      }
+      if (!await _refreshSelectedPairTruth()) {
+        throw const FormatException('WebRTC selected pair is not direct P2P');
+      }
+      if (!authorizeCommit()) {
         throw const FormatException('WebRTC commit authorization failed');
       }
       _commitSent = true;
@@ -611,7 +618,6 @@ class WebRtcDirectTransport {
       }
       _state = WebRtcDirectState.ready;
       _completeReady(true);
-      unawaited(_logSelectedPair());
       return;
     }
     if (!active || frame['type'] == 'auth') {
@@ -825,27 +831,45 @@ class WebRtcDirectTransport {
     }
   }
 
-  Future<void> _logSelectedPair() async {
+  Future<bool> _refreshSelectedPairTruth() async {
     var localType = 'unknown';
     var remoteType = 'unknown';
     var protocol = 'unknown';
-    try {
-      final summary = await _peerConnection?.selectedCandidateSummary();
-      localType = summary?['local_type'] ?? 'unknown';
-      remoteType = summary?['remote_type'] ?? 'unknown';
-      protocol = summary?['protocol'] ?? 'unknown';
-    } catch (_) {
-      // Candidate diagnostics are best-effort and never include addresses.
+    for (var attempt = 0; attempt < 4; attempt++) {
+      try {
+        final summary = await _peerConnection?.selectedCandidateSummary();
+        localType = _safeCandidateType(summary?['local_type']);
+        remoteType = _safeCandidateType(summary?['remote_type']);
+        protocol = _safeCandidateProtocol(summary?['protocol']);
+      } catch (_) {
+        // The authoritative result remains unknown and cannot commit as P2P.
+      }
+      if (localType != 'unknown' && remoteType != 'unknown') break;
+      if (attempt < 3) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
     }
     final direct =
         const <String>{'host', 'srflx', 'prflx'}.contains(localType) &&
         const <String>{'host', 'srflx', 'prflx'}.contains(remoteType);
+    _genuineP2p = direct;
     debugPrint(
       '[OSIA WebRTC] direct ready attempt=${attemptId.substring(0, 8)} '
       'generation=$generation local_type=$localType remote_type=$remoteType '
       'protocol=$protocol direct=$direct',
     );
+    return direct;
   }
+
+  String _safeCandidateType(String? value) =>
+      const <String>{'host', 'srflx', 'prflx', 'relay'}.contains(value)
+      ? value!
+      : 'unknown';
+
+  String _safeCandidateProtocol(String? value) =>
+      const <String>{'udp', 'tcp'}.contains(value?.toLowerCase())
+      ? value!.toLowerCase()
+      : 'unknown';
 
   Future<void> fail(String category) {
     _sendTerminalSignal('webrtc_failed', category);
@@ -875,21 +899,25 @@ class WebRtcDirectTransport {
   }) async {
     final hadActiveTurn = _state == WebRtcDirectState.activeTurn;
     _state = WebRtcDirectState.closing;
+    _genuineP2p = false;
     _connectTimer?.cancel();
     _disconnectTimer?.cancel();
     _completeReady(false);
-    final channel = _channel;
-    _channel = null;
-    if (channel != null) {
-      try {
-        await channel.close();
-      } catch (_) {}
-    }
     final peer = _peerConnection;
     _peerConnection = null;
     if (peer != null) {
       try {
         await peer.close();
+      } catch (_) {}
+    }
+    final channel = _channel;
+    _channel = null;
+    if (channel != null) {
+      // flutter_webrtc may deliver the peer's final data-channel state on the
+      // next event turn. Let it arrive before the channel closes its streams.
+      await Future<void>.delayed(Duration.zero);
+      try {
+        await channel.close();
       } catch (_) {}
     }
     _reassembler.clear();

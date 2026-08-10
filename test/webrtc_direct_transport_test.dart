@@ -103,6 +103,11 @@ class FakePeer implements WebRtcPeerConnectionAdapter {
   int answerCount = 0;
   int closeCount = 0;
   String currentState = 'new';
+  Map<String, String> candidateSummary = <String, String>{
+    'local_type': 'host',
+    'remote_type': 'srflx',
+    'protocol': 'udp',
+  };
 
   @override
   set onDataChannel(
@@ -128,11 +133,7 @@ class FakePeer implements WebRtcPeerConnectionAdapter {
 
   @override
   Future<Map<String, String>> selectedCandidateSummary() async =>
-      <String, String>{
-        'local_type': 'host',
-        'remote_type': 'srflx',
-        'protocol': 'udp',
-      };
+      candidateSummary;
   @override
   Future<String> connectionState() async => currentState;
   @override
@@ -191,8 +192,9 @@ class DirectHarness {
   ApplicationTransportLease? lease;
   int authorizeCount = 0;
 
-  Future<({RelaySessionKeys keys, OutboundSequence sequence})>
-  activate() async {
+  Future<({RelaySessionKeys keys, OutboundSequence sequence})> activate({
+    int expectedAuthorizeCount = 1,
+  }) async {
     final connecting = transport.connect(attemptGeneration: 1);
     await pumpAsync();
     final prepare = signals.single;
@@ -314,7 +316,7 @@ class DirectHarness {
         sequence: 10,
       ),
     );
-    expect(authorizeCount, 1);
+    expect(authorizeCount, expectedAuthorizeCount);
     await injectEncrypted(
       pcSignal(
         'webrtc_direct_commit_ack',
@@ -420,6 +422,24 @@ void main() {
     expect(harness.peer.remoteOfferCount, 0);
     expect(await connecting, isFalse);
     expect(harness.transport.state, WebRtcDirectState.disconnected);
+  });
+
+  test('TURN-selected candidate pair never commits as genuine P2P', () async {
+    final harness = DirectHarness();
+    harness.peer.candidateSummary = <String, String>{
+      'local_type': 'relay',
+      'remote_type': 'srflx',
+      'protocol': 'udp',
+    };
+    expect(
+      await harness
+          .activate(expectedAuthorizeCount: 0)
+          .then((_) => true, onError: (_) => false),
+      isFalse,
+    );
+    expect(harness.authorizeCount, 0);
+    expect(harness.transport.genuineP2p, isFalse);
+    expect(harness.coordinator.activeKind, isNull);
   });
 
   test('active-turn close is terminal and never authorizes fallback', () async {
