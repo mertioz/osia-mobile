@@ -834,6 +834,39 @@ class OsiaStrings {
     _ => 'Project settings',
   };
 
+  String get deleteProject => switch (languageCode) {
+    'fr' => 'Supprimer le projet',
+    'zh' => '删除项目',
+    'ja' => 'プロジェクトを削除',
+    'de' => 'Projekt löschen',
+    'es' => 'Eliminar proyecto',
+    _ => 'Delete project',
+  };
+
+  String deleteProjectConfirmation(
+    String name,
+    int count,
+  ) => switch (languageCode) {
+    'fr' when count == 1 =>
+      'Supprimer le projet « $name » et sa conversation ? Cette action est définitive.',
+    'fr' =>
+      'Supprimer le projet « $name » et ses $count conversations ? Cette action est définitive.',
+    'zh' => '删除项目“$name”及其中的 $count 个对话？此操作无法撤销。',
+    'ja' => 'プロジェクト「$name」とその $count 件の会話を削除しますか？この操作は取り消せません。',
+    'de' when count == 1 =>
+      'Projekt „$name“ und seine 1 Unterhaltung löschen? Diese Aktion ist endgültig.',
+    'de' =>
+      'Projekt „$name“ und seine $count Unterhaltungen löschen? Diese Aktion ist endgültig.',
+    'es' when count == 1 =>
+      '¿Eliminar el proyecto «$name» y su conversación? Esta acción es permanente.',
+    'es' =>
+      '¿Eliminar el proyecto «$name» y sus $count conversaciones? Esta acción es permanente.',
+    _ when count == 1 =>
+      'Delete project “$name” and its 1 conversation? This action is permanent.',
+    _ =>
+      'Delete project “$name” and its $count conversations? This action is permanent.',
+  };
+
   String get allowFolderContext => switch (languageCode) {
     'fr' =>
       'Autoriser OSIA à utiliser les autres conversations de ce projet comme contexte',

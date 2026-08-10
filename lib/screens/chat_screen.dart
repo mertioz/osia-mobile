@@ -185,6 +185,8 @@ class _ChatScreenState extends State<ChatScreen> {
   int _conversationFolderSnapshotRevision = -1;
   String? _projectCreateOperationId;
   String? _projectCreateName;
+  String? _projectNewChatOperationId;
+  String? _projectDeleteOperationId;
   String? _bulkDeleteOperationId;
   int? _bulkDeleteExpectedCount;
   String? _activeConversationId;
@@ -820,6 +822,12 @@ class _ChatScreenState extends State<ChatScreen> {
           _projectCreateOperationId = null;
           _projectCreateName = null;
         }
+        if (_projectNewChatOperationId == operationId) {
+          _projectNewChatOperationId = null;
+        }
+        if (_projectDeleteOperationId == operationId) {
+          _projectDeleteOperationId = null;
+        }
         if (_bulkDeleteOperationId == operationId) {
           _bulkDeleteOperationId = null;
           _bulkDeleteExpectedCount = null;
@@ -853,7 +861,11 @@ class _ChatScreenState extends State<ChatScreen> {
             _activeConversationTitle = active.title;
           }
         });
-      case ws.ActiveConversationMessage(:final id, :final title):
+      case ws.ActiveConversationMessage(
+        :final id,
+        :final title,
+        :final operationId,
+      ):
         // Defensive mirror of the conversation_history guard below: an inbound
         // active_conversation must never silently repoint the view off the
         // conversation the user is on. Adopt it only when nothing is displayed
@@ -864,10 +876,18 @@ class _ChatScreenState extends State<ChatScreen> {
         // unsolicited server repoint, so ignore it: the displayed conversation
         // changes only on explicit user action, never in reaction to a frame.
         final viewingActive = _activeConversationId;
+        final selectingProjectConversation =
+            _projectNewChatOperationId != null &&
+            operationId == _projectNewChatOperationId;
         if (viewingActive != null &&
             id != viewingActive &&
-            id != _pendingConvLoadId) {
+            id != _pendingConvLoadId &&
+            !selectingProjectConversation) {
           return;
+        }
+        if (selectingProjectConversation) {
+          _projectNewChatOperationId = null;
+          _onNewChat();
         }
         setState(() {
           _activeConversationId = id;
@@ -1834,6 +1854,26 @@ class _ChatScreenState extends State<ChatScreen> {
     Navigator.of(context).maybePop();
   }
 
+  void _newConversationInProject(ws.ConversationFolder folder) {
+    if (_projectNewChatOperationId != null) return;
+    if (_attachmentInteractionLocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _attachmentBusy
+                ? 'Cancel the attachment upload first.'
+                : 'Wait for PC to accept the attachment turn.',
+          ),
+        ),
+      );
+      return;
+    }
+    _projectNewChatOperationId = _wsService.sendNewConversationInProject(
+      folder.id,
+    );
+    Navigator.of(context).maybePop();
+  }
+
   /// Handle a `new_chat` push from the PC (WOR-10): reset the chat UI to a
   /// fresh conversation locally. Unlike [_newConversation], it does NOT echo a
   /// `new_conversation` back to the server (the PC already started the chat, so
@@ -2299,6 +2339,11 @@ class _ChatScreenState extends State<ChatScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
+              leading: Icon(Icons.add_comment_outlined, color: palette.accent),
+              title: Text(strings.newChat),
+              onTap: () => Navigator.of(ctx).pop('new_chat'),
+            ),
+            ListTile(
               leading: Icon(Icons.edit_outlined, color: palette.accent),
               title: Text(strings.renameFolder),
               onTap: () => Navigator.of(ctx).pop('rename'),
@@ -2327,12 +2372,22 @@ class _ChatScreenState extends State<ChatScreen> {
                   ? () => Navigator.of(ctx).pop('down')
                   : null,
             ),
+            ListTile(
+              leading: Icon(Icons.delete_outline_rounded, color: palette.error),
+              title: Text(
+                strings.deleteProject,
+                style: TextStyle(color: palette.error),
+              ),
+              onTap: () => Navigator.of(ctx).pop('delete'),
+            ),
           ],
         ),
       ),
     );
     if (!mounted) return;
-    if (action == 'rename') {
+    if (action == 'new_chat') {
+      _newConversationInProject(folder);
+    } else if (action == 'rename') {
       await _renameConversationFolder(folder);
     } else if (action == 'settings') {
       await _showConversationFolderSettings(folder);
@@ -2340,6 +2395,67 @@ class _ChatScreenState extends State<ChatScreen> {
       _reorderConversationFolder(folder.id, -1);
     } else if (action == 'down') {
       _reorderConversationFolder(folder.id, 1);
+    } else if (action == 'delete') {
+      await _confirmDeleteConversationFolder(folder);
+    }
+  }
+
+  Future<void> _confirmDeleteConversationFolder(
+    ws.ConversationFolder folder,
+  ) async {
+    if (_projectDeleteOperationId != null) return;
+    _projectDeleteOperationId = 'preview';
+    final strings = OsiaL10n.of(context);
+    final palette = OsiaTheme.of(context);
+    try {
+      final snapshot = await _wsService.requestCanonicalConversationSnapshot();
+      if (!mounted) return;
+      final canonicalFolder = snapshot.folders
+          .where((item) => item.id == folder.id)
+          .firstOrNull;
+      if (canonicalFolder == null) return;
+      final count = snapshot.conversations
+          .where((conversation) => conversation.folderId == folder.id)
+          .length;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: Text(strings.deleteProject),
+          content: Text(
+            strings.deleteProjectConfirmation(canonicalFolder.name, count),
+            style: TextStyle(color: palette.textMuted, fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(strings.cancel),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(
+                strings.deleteProject,
+                style: TextStyle(color: palette.error),
+              ),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      _projectDeleteOperationId = _wsService.sendDeleteConversationProject(
+        folder.id,
+        expectedCount: count,
+      );
+    } on Object {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(strings.connectionFailed)));
+      }
+    } finally {
+      if (_projectDeleteOperationId == 'preview') {
+        _projectDeleteOperationId = null;
+      }
     }
   }
 

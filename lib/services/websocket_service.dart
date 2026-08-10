@@ -390,7 +390,8 @@ class ConversationsMessage extends OsiaMessage {
 class ActiveConversationMessage extends OsiaMessage {
   final String? id;
   final String? title;
-  const ActiveConversationMessage({this.id, this.title});
+  final String operationId;
+  const ActiveConversationMessage({this.id, this.title, this.operationId = ''});
 }
 
 /// A single past message in a conversation history.
@@ -4423,6 +4424,32 @@ class WebSocketService {
     _send({'type': 'new_conversation'});
   }
 
+  /// Read a fresh PC-canonical conversation snapshot for destructive counts.
+  Future<ConversationsMessage> requestCanonicalConversationSnapshot() async {
+    final operationId = 'snapshot_${newClientRequestId()}';
+    final completer = Completer<ConversationsMessage>();
+    late StreamSubscription<OsiaMessage> subscription;
+    subscription = messageStream.listen((message) {
+      if (message is ConversationsMessage &&
+          message.operationId == operationId &&
+          !completer.isCompleted) {
+        completer.complete(message);
+      }
+    });
+    if (!_send({
+      'type': 'get_conversation_snapshot',
+      'operation_id': operationId,
+    })) {
+      await subscription.cancel();
+      throw StateError('conversation snapshot request could not be sent');
+    }
+    try {
+      return await completer.future.timeout(const Duration(seconds: 5));
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
   /// Send the WOR-10 "new chat" signal (`{"type":"new_chat"}`) to the server.
   void sendNewChat() {
     _send({'type': 'new_chat'});
@@ -4534,6 +4561,31 @@ class WebSocketService {
       'type': 'move_conversation_to_folder',
       'conversation_id': conversationId,
       'folder_id': folderId,
+      'operation_id': op,
+    });
+    return op;
+  }
+
+  String sendNewConversationInProject(String folderId, {String? operationId}) {
+    final op = _conversationFolderOperationId(operationId);
+    _send({
+      'type': 'new_conversation_in_project',
+      'folder_id': folderId,
+      'operation_id': op,
+    });
+    return op;
+  }
+
+  String sendDeleteConversationProject(
+    String folderId, {
+    required int expectedCount,
+    String? operationId,
+  }) {
+    final op = _conversationFolderOperationId(operationId);
+    _send({
+      'type': 'delete_conversation_project',
+      'folder_id': folderId,
+      'expected_count': expectedCount,
       'operation_id': op,
     });
     return op;
@@ -8339,7 +8391,13 @@ class WebSocketService {
           final id = json['id']?.toString();
           final title = json['title']?.toString();
           debugPrint('[OSIA WS] active_conversation received');
-          _emit(ActiveConversationMessage(id: id, title: title));
+          _emit(
+            ActiveConversationMessage(
+              id: id,
+              title: title,
+              operationId: (json['operation_id'] ?? '').toString(),
+            ),
+          );
         case 'models_list':
           final catalogue = json['catalogue'];
           final rawProviders = catalogue is Map ? catalogue['providers'] : null;

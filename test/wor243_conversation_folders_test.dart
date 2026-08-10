@@ -113,6 +113,24 @@ void main() {
       null,
       operationId: 'op-move-out',
     );
+    service.sendNewConversationInProject(
+      'folder-alpha',
+      operationId: 'op-project-chat',
+    );
+    service.sendNewConversationInProject(
+      'folder-alpha',
+      operationId: 'op-project-chat',
+    );
+    service.sendDeleteConversationProject(
+      'folder-alpha',
+      expectedCount: 3,
+      operationId: 'op-project-delete',
+    );
+    service.sendDeleteConversationProject(
+      'folder-alpha',
+      expectedCount: 3,
+      operationId: 'op-project-delete',
+    );
     service.sendBulkDeleteUngroupedConversations(
       expectedCount: 3,
       operationId: 'op-delete',
@@ -131,6 +149,10 @@ void main() {
       'reorder_conversation_folders',
       'move_conversation_to_folder',
       'move_conversation_to_folder',
+      'new_conversation_in_project',
+      'new_conversation_in_project',
+      'delete_conversation_project',
+      'delete_conversation_project',
       'bulk_delete_ungrouped_conversations',
       'bulk_delete_ungrouped_conversations',
     ]);
@@ -144,8 +166,87 @@ void main() {
     expect(frames[6], containsPair('folder_id', 'folder-alpha'));
     expect(frames[7]['folder_id'], isNull);
     expect(frames[8], frames[9]);
-    expect(frames[8], containsPair('expected_count', 3));
-    expect(frames[8], containsPair('operation_id', 'op-delete'));
+    expect(frames[8], containsPair('folder_id', 'folder-alpha'));
+    expect(frames[10], frames[11]);
+    expect(frames[10], containsPair('expected_count', 3));
+    expect(frames[12], frames[13]);
+    expect(frames[12], containsPair('expected_count', 3));
+    expect(frames[12], containsPair('operation_id', 'op-delete'));
+  });
+
+  test(
+    'destructive confirmation requests a fresh canonical snapshot',
+    () async {
+      final frames = <Map<String, dynamic>>[];
+      final service = WebSocketService(
+        ip: '127.0.0.1',
+        token: 'test-token',
+        autoReconnect: false,
+        sendFrameForTest: (frame) {
+          frames.add(frame);
+          return true;
+        },
+      );
+      addTearDown(service.dispose);
+
+      final pending = service.requestCanonicalConversationSnapshot();
+      final operationId = frames.single['operation_id'] as String;
+      service.handleIncomingFrameForTest(<String, dynamic>{
+        'type': 'conversations',
+        'version': 2,
+        'snapshot_revision': 8,
+        'operation_id': 'unrelated-refresh',
+        'items': const <Map<String, dynamic>>[],
+        'folders': const <Map<String, dynamic>>[],
+      });
+      service.handleIncomingFrameForTest(<String, dynamic>{
+        'type': 'conversations',
+        'version': 2,
+        'snapshot_revision': 9,
+        'operation_id': operationId,
+        'items': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'member',
+            'title': 'Member',
+            'folder_id': 'folder-alpha',
+          },
+        ],
+        'folders': <Map<String, dynamic>>[
+          <String, dynamic>{'id': 'folder-alpha', 'name': 'Alpha', 'order': 0},
+        ],
+      });
+
+      final snapshot = await pending;
+      expect(frames.single['type'], 'get_conversation_snapshot');
+      expect(operationId, startsWith('snapshot_'));
+      expect(snapshot.operationId, operationId);
+      expect(snapshot.snapshotRevision, 9);
+      expect(snapshot.conversations.single.folderId, 'folder-alpha');
+    },
+  );
+
+  test('active project chat pointer keeps its operation correlation', () async {
+    final service = WebSocketService(
+      ip: '127.0.0.1',
+      token: 'test-token',
+      autoReconnect: false,
+    );
+    addTearDown(service.dispose);
+
+    final pending = service.messageStream
+        .where((message) => message is ActiveConversationMessage)
+        .cast<ActiveConversationMessage>()
+        .first;
+    service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'active_conversation',
+      'id': 'conv-project-new',
+      'title': 'New conversation',
+      'operation_id': 'op-project-new',
+    });
+
+    final message = await pending;
+    expect(message.id, 'conv-project-new');
+    expect(message.operationId, 'op-project-new');
   });
 
   test('projects render before ungrouped conversations', () {
@@ -183,6 +284,8 @@ void main() {
             strings.folderName,
             strings.renameFolder,
             strings.folderSettings,
+            strings.deleteProject,
+            strings.deleteProjectConfirmation('OSIA', 3),
             strings.allowFolderContext,
             strings.moveToFolder,
             strings.removeFromProject,
@@ -208,6 +311,45 @@ void main() {
       expect(visibleCopy, isNot(contains(forbidden)));
     }
     expect(osiaStringsEn.createFolder, 'Create project');
+    expect(osiaStringsEn.deleteProject, 'Delete project');
+    expect(
+      osiaStringsFr.deleteProjectConfirmation('OSIA', 3),
+      'Supprimer le projet « OSIA » et ses 3 conversations ? Cette action est définitive.',
+    );
     expect(osiaStringsFr.createFolder, 'Créer un projet');
   });
+
+  test(
+    'project actions use a fresh canonical count and select the new chat',
+    () {
+      final source = File('lib/screens/chat_screen.dart').readAsStringSync();
+      final menu = source.indexOf(
+        'Future<void> _showConversationFolderActions(',
+      );
+      final newChat = source.indexOf("pop('new_chat')", menu);
+      final rename = source.indexOf("pop('rename')", menu);
+      final settings = source.indexOf("pop('settings')", menu);
+      final delete = source.indexOf("pop('delete')", menu);
+      final confirmation = source.indexOf(
+        'Future<void> _confirmDeleteConversationFolder(',
+        menu,
+      );
+
+      expect(menu, greaterThanOrEqualTo(0));
+      expect(newChat, inInclusiveRange(menu, rename));
+      expect(rename, lessThan(settings));
+      expect(settings, lessThan(delete));
+      expect(
+        source.indexOf('requestCanonicalConversationSnapshot()', confirmation),
+        greaterThan(confirmation),
+      );
+      expect(
+        source.indexOf('if (confirmed != true) return;', confirmation),
+        greaterThan(confirmation),
+      );
+      expect(source, contains('selectingProjectConversation'));
+      expect(source, contains('operationId == _projectNewChatOperationId'));
+      expect(source, contains('_onNewChat();'));
+    },
+  );
 }
