@@ -206,6 +206,7 @@ class SlashCommandPalette extends StatelessWidget {
     SlashPaletteSelectionType.model => Icons.smart_toy_outlined,
     SlashPaletteSelectionType.reasoning => Icons.psychology_outlined,
     SlashPaletteSelectionType.conversation => Icons.chat_bubble_outline_rounded,
+    SlashPaletteSelectionType.browser => Icons.public_rounded,
     SlashPaletteSelectionType.command => Icons.terminal_rounded,
   };
 
@@ -217,6 +218,8 @@ class SlashCommandPalette extends StatelessWidget {
       locale.startsWith('fr') ? 'MODÈLES' : 'MODELS',
     SlashPaletteSelectionType.reasoning =>
       locale.startsWith('fr') ? 'RAISONNEMENT' : 'REASONING',
+    SlashPaletteSelectionType.browser =>
+      locale.startsWith('fr') ? 'NAVIGATEUR' : 'BROWSER',
     SlashPaletteSelectionType.command =>
       locale.startsWith('fr') ? 'COMMANDES' : 'COMMANDS',
   };

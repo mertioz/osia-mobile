@@ -13,6 +13,7 @@ void main() {
       'model',
       'reasoning',
       'conversation',
+      'browser',
       'tools',
       'status',
       'help',
@@ -80,6 +81,33 @@ void main() {
           (error) => error.code,
           'code',
           'unknown_directive_metadata',
+        ),
+      ),
+    );
+  });
+
+  test('browser backend override is a bounded replay-stable turn enum', () {
+    const directives = SlashTurnDirectivesV1(
+      browserBackendOverride: 'personal',
+    );
+    expect(directives.isEmpty, isFalse);
+    expect(directives.toJson()['browser_backend_override'], 'personal');
+    expect(
+      SlashTurnDirectivesV1.fromJson(
+        directives.toJson(),
+      ).browserBackendOverride,
+      'personal',
+    );
+    expect(
+      () => SlashTurnDirectivesV1.fromJson({
+        ...directives.toJson(),
+        'browser_backend_override': 'automatic',
+      }),
+      throwsA(
+        isA<SlashDirectiveException>().having(
+          (error) => error.code,
+          'code',
+          'unsupported_browser_backend',
         ),
       ),
     );

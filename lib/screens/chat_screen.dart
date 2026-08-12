@@ -2968,6 +2968,15 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
+    if (selection.type == SlashPaletteSelectionType.browser) {
+      _applySlashDirectives(
+        _slashDirectives.copyWith(
+          browserBackendOverride: selection.value as String,
+        ),
+        'browser',
+      );
+      return;
+    }
 
     switch (selection.handlerContract) {
       case 'set_current_web_requirement_v1':
@@ -2985,6 +2994,8 @@ class _ChatScreenState extends State<ChatScreen> {
         _showSlashReasoning();
       case 'select_conversation_reference_v1':
         _showSlashConversations();
+      case 'select_browser_backend_v1':
+        _showSlashBrowserBackends();
       case 'show_safe_tools_v1':
       case 'show_safe_status_v1':
       case 'show_available_help_v1':
@@ -3086,6 +3097,29 @@ class _ChatScreenState extends State<ChatScreen> {
     _slashPaletteController.show(rows, _onSlashSelection);
   }
 
+  void _showSlashBrowserBackends() {
+    final rows = ['personal', 'isolated']
+        .map(
+          (backend) => SlashPaletteSelection(
+            type: SlashPaletteSelectionType.browser,
+            id: 'browser.$backend',
+            title: backend == 'personal'
+                ? (_slashLocale.startsWith('fr')
+                      ? 'Navigateur personnel'
+                      : 'Personal Browser')
+                : (_slashLocale.startsWith('fr')
+                      ? 'Profil isolé OSIA'
+                      : 'Isolated OSIA browser'),
+            description: _slashLocale.startsWith('fr')
+                ? 'Ce tour uniquement'
+                : 'This turn only',
+            value: backend,
+          ),
+        )
+        .toList(growable: false);
+    _slashPaletteController.show(rows, _onSlashSelection);
+  }
+
   void _applySlashDirectives(SlashTurnDirectivesV1 directives, String alias) {
     try {
       directives.validateBounds();
@@ -3136,6 +3170,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (reasoning != null) {
       rows.add(ComposerDirective(id: 'reasoning', label: reasoning));
     }
+    final browser = _slashDirectives.browserBackendOverride;
+    if (browser != null) {
+      rows.add(ComposerDirective(id: 'browser', label: '/browser $browser'));
+    }
     return rows;
   }
 
@@ -3149,6 +3187,9 @@ class _ChatScreenState extends State<ChatScreen> {
         'conversation' => _slashDirectives.copyWith(conversationRefs: const []),
         'model' => _slashDirectives.copyWith(clearModelOverride: true),
         'reasoning' => _slashDirectives.copyWith(clearReasoningOverride: true),
+        'browser' => _slashDirectives.copyWith(
+          clearBrowserBackendOverride: true,
+        ),
         _ => _slashDirectives,
       };
     });
