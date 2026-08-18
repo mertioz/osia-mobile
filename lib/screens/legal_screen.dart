@@ -72,6 +72,11 @@ class LegalScreen extends StatelessWidget {
                     'Contact : ${currentLegalManifest.publicContactEmail}',
                     style: TextStyle(color: palette.textMuted, fontSize: 13),
                   ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Public visé : B2C et B2B · âge minimal prévu : ${currentLegalManifest.minimumAge} ans',
+                    style: TextStyle(color: palette.textMuted, fontSize: 13),
+                  ),
                   if (isTerms) ...[
                     const SizedBox(height: 6),
                     Text(
@@ -85,8 +90,8 @@ class LegalScreen extends StatelessWidget {
             const SizedBox(height: 24),
             Text(
               isTerms
-                  ? 'Le document complet distingue le logiciel local, le site, le relais, les fournisseurs tiers, les fichiers, les outils et les futures offres payantes. Les sorties IA doivent être vérifiées et les outils agissent avec les droits du compte PC.'
-                  : 'Le document complet décrit ce qui reste sur le PC ou le mobile, ce qui part au fournisseur choisi, ainsi que les métadonnées visibles sur LAN, WebRTC, STUN et le relais. Le relais protège la charge applicative par chiffrement de bout en bout, sans masquer toutes les métadonnées réseau.',
+                  ? 'Le document complet couvre les actions agentiques, Gmail REST, Browser et Personal Browser, les fournisseurs et coûts tiers, les tâches planifiées et les contrôles d’exécution. OSIA ne réserve jamais une capacité fonctionnelle à un paiement ; aucun achat, abonnement ou élément cosmétique OSIA n’existe dans ce brouillon.'
+                  : 'Le document complet décrit les données locales, les contenus nécessaires envoyés au fournisseur choisi, Gmail REST, les endpoints personnalisés, Browser et Personal Browser, les artefacts temporaires, l’anti-rejeu et Adaptive Intelligence. Le transport suit LAN, puis WebRTC, puis relais chiffré de repli, sans masquer toutes les métadonnées réseau.',
               style: TextStyle(
                 color: palette.textPrimary.withValues(alpha: 0.86),
                 fontSize: 15,
@@ -95,7 +100,7 @@ class LegalScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              'Cette copie intégrée fournit un résumé et les métadonnées de version hors ligne. Le texte canonique complet est publié sur osia.space.',
+              'Cette copie intégrée fournit un résumé et les métadonnées de version hors ligne. Le texte canonique complet reste accessible en brouillon non approuvé et non en vigueur sur osia.space.',
               style: TextStyle(color: palette.textMuted, height: 1.5),
             ),
             const SizedBox(height: 24),

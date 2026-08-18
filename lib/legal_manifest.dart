@@ -34,18 +34,18 @@ class OsiaLegalManifest {
 
 const currentLegalManifest = OsiaLegalManifest(
   publicationState: 'draftForLegalReview',
-  termsVersion: '2026-07-14-draft.1',
-  privacyVersion: '2026-07-14-draft.1',
-  lastUpdated: '2026-07-14',
+  termsVersion: '2026-08-18-draft.3',
+  privacyVersion: '2026-08-18-draft.3',
+  lastUpdated: '2026-08-18',
   publicContactEmail: 'contact@osia.space',
   governingLaw: 'France',
   plannedEffectiveYear: 2026,
   effectiveDate: null,
-  materialChange: false,
+  materialChange: true,
   termsAcceptanceRequired: false,
   termsUrl: 'https://osia.space/legal/terms',
   privacyUrl: 'https://osia.space/legal/privacy',
-  minimumAge: null,
+  minimumAge: 18,
 );
 
 class LegalAcceptanceState {

@@ -25,13 +25,16 @@ void main() {
     expect(currentLegalManifest.termsUrl, 'https://osia.space/legal/terms');
     expect(currentLegalManifest.privacyUrl, 'https://osia.space/legal/privacy');
     expect(currentLegalManifest.publicationState, 'draftForLegalReview');
-    expect(currentLegalManifest.termsVersion, '2026-07-14-draft.1');
-    expect(currentLegalManifest.privacyVersion, '2026-07-14-draft.1');
+    expect(currentLegalManifest.termsVersion, '2026-08-18-draft.3');
+    expect(currentLegalManifest.privacyVersion, '2026-08-18-draft.3');
+    expect(currentLegalManifest.lastUpdated, '2026-08-18');
     expect(currentLegalManifest.publicContactEmail, 'contact@osia.space');
     expect(currentLegalManifest.governingLaw, 'France');
     expect(currentLegalManifest.plannedEffectiveYear, 2026);
     expect(currentLegalManifest.effectiveDate, isNull);
+    expect(currentLegalManifest.materialChange, isTrue);
     expect(currentLegalManifest.termsAcceptanceRequired, isFalse);
+    expect(currentLegalManifest.minimumAge, 18);
   });
 
   test('review draft is safe offline and never forces acceptance', () {
@@ -116,6 +119,10 @@ void main() {
       );
 
       expect(find.textContaining('contact@osia.space'), findsOneWidget);
+      expect(
+        find.textContaining('B2C et B2B · âge minimal prévu : 18 ans'),
+        findsOneWidget,
+      );
       expect(
         find.textContaining('Entrée en vigueur prévue en 2026'),
         findsOneWidget,
