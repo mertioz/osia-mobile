@@ -229,6 +229,10 @@ class TranscriptMessage extends OsiaMessage {
   final String conversationId;
   final String clientRequestId;
   final String turnId;
+  final String runId;
+  final String providerId;
+  final String modelId;
+  final String effectiveReasoning;
   final String messageId;
 
   const TranscriptMessage(
@@ -236,6 +240,10 @@ class TranscriptMessage extends OsiaMessage {
     this.conversationId = '',
     this.clientRequestId = '',
     this.turnId = '',
+    this.runId = '',
+    this.providerId = '',
+    this.modelId = '',
+    this.effectiveReasoning = '',
     this.messageId = '',
   });
 }
@@ -280,11 +288,21 @@ class StatusMessage extends OsiaMessage {
   final String conversationId;
   final String clientRequestId;
   final String turnId;
+  final String runId;
+  final String providerId;
+  final String modelId;
+  final String effectiveReasoning;
+  final bool preAcceptRejection;
   const StatusMessage(
     this.content, {
     this.conversationId = '',
     this.clientRequestId = '',
     this.turnId = '',
+    this.runId = '',
+    this.providerId = '',
+    this.modelId = '',
+    this.effectiveReasoning = '',
+    this.preAcceptRejection = false,
   });
 }
 
@@ -294,6 +312,10 @@ class TurnAcceptedMessage extends OsiaMessage {
   final String conversationId;
   final bool persisted;
   final String status;
+  final String runId;
+  final String providerId;
+  final String modelId;
+  final String effectiveReasoning;
 
   const TurnAcceptedMessage({
     required this.clientRequestId,
@@ -301,6 +323,33 @@ class TurnAcceptedMessage extends OsiaMessage {
     required this.conversationId,
     required this.persisted,
     required this.status,
+    this.runId = '',
+    this.providerId = '',
+    this.modelId = '',
+    this.effectiveReasoning = '',
+  });
+}
+
+/// Exact identity of one canonical Chat turn. Optional metadata is additive so
+/// older PC versions remain compatible while unified durable runs can preserve
+/// their run and effective model authority end to end.
+class ChatTurnIdentity {
+  final String conversationId;
+  final String requestId;
+  final String turnId;
+  final String runId;
+  final String providerId;
+  final String modelId;
+  final String effectiveReasoning;
+
+  const ChatTurnIdentity({
+    required this.conversationId,
+    required this.requestId,
+    required this.turnId,
+    this.runId = '',
+    this.providerId = '',
+    this.modelId = '',
+    this.effectiveReasoning = '',
   });
 }
 
@@ -409,6 +458,10 @@ class HistoryMessage {
   final String turnId;
   final String messageId;
   final ExecutionTraceSnapshot? executionTrace;
+  final String runId;
+  final String providerId;
+  final String modelId;
+  final String effectiveReasoning;
   const HistoryMessage({
     required this.role,
     required this.content,
@@ -417,6 +470,10 @@ class HistoryMessage {
     this.turnId = '',
     this.messageId = '',
     this.executionTrace,
+    this.runId = '',
+    this.providerId = '',
+    this.modelId = '',
+    this.effectiveReasoning = '',
   });
 
   factory HistoryMessage.fromJson(Map<String, dynamic> json) {
@@ -441,6 +498,10 @@ class HistoryMessage {
           .toString(),
       turnId: (json['turn_id'] ?? '').toString(),
       messageId: (json['message_id'] ?? '').toString(),
+      runId: (json['run_id'] ?? '').toString(),
+      providerId: (json['provider_id'] ?? json['provider'] ?? '').toString(),
+      modelId: (json['model_id'] ?? json['model'] ?? '').toString(),
+      effectiveReasoning: (json['effective_reasoning'] ?? '').toString(),
       executionTrace: ExecutionTraceSnapshot.parseHistory(
         json['execution_trace'],
       ),
@@ -452,7 +513,16 @@ class HistoryMessage {
 class ConversationHistoryMessage extends OsiaMessage {
   final String? id;
   final List<HistoryMessage> messages;
-  const ConversationHistoryMessage({this.id, required this.messages});
+  final bool replayed;
+  final bool legacyRouteUnavailable;
+  final String requestId;
+  const ConversationHistoryMessage({
+    this.id,
+    required this.messages,
+    this.replayed = false,
+    this.legacyRouteUnavailable = false,
+    this.requestId = '',
+  });
 }
 
 /// One available model exposed by the server.
@@ -1546,6 +1616,8 @@ class AutonomousProgressMessage {
   final String? diagnosticTimestamp;
   final int? protocolVersion;
   final String? runId;
+  final bool? legacyCompatibility;
+  final String? checkpointTaskId;
   final int? planRevision;
   final int? authorizationRevision;
   final int? policyEpoch;
@@ -1598,6 +1670,8 @@ class AutonomousProgressMessage {
     this.diagnosticTimestamp,
     this.protocolVersion,
     this.runId,
+    this.legacyCompatibility,
+    this.checkpointTaskId,
     this.planRevision,
     this.authorizationRevision,
     this.policyEpoch,
@@ -1711,6 +1785,11 @@ class AutonomousProgressMessage {
       diagnosticTimestamp: pickStr(['transition_at', 'diagnosticTimestamp']),
       protocolVersion: pickInt(['protocol_version', 'protocolVersion']),
       runId: pickStr(['run_id', 'runId']),
+      legacyCompatibility: pickBool([
+        'legacy_compatibility',
+        'legacyCompatibility',
+      ]),
+      checkpointTaskId: pickStr(['checkpoint_task_id', 'checkpointTaskId']),
       planRevision: pickInt(['plan_revision', 'planRevision']),
       authorizationRevision: pickInt([
         'authorization_revision',
@@ -2122,6 +2201,10 @@ class ConvStreamEvent {
   final String clientRequestId;
   final String turnId;
   final String messageId;
+  final String runId;
+  final String providerId;
+  final String modelId;
+  final String effectiveReasoning;
   final String? delta;
   final bool done;
   final bool error;
@@ -2136,6 +2219,10 @@ class ConvStreamEvent {
     this.clientRequestId = '',
     this.turnId = '',
     this.messageId = '',
+    this.runId = '',
+    this.providerId = '',
+    this.modelId = '',
+    this.effectiveReasoning = '',
     this.delta,
     this.done = false,
     this.error = false,
@@ -2151,6 +2238,10 @@ class ConversationBusyEvent {
   final String message;
   final String clientRequestId;
   final String turnId;
+  final String runId;
+  final String providerId;
+  final String modelId;
+  final String effectiveReasoning;
 
   const ConversationBusyEvent({
     required this.conversationId,
@@ -2158,6 +2249,10 @@ class ConversationBusyEvent {
     this.message = '',
     this.clientRequestId = '',
     this.turnId = '',
+    this.runId = '',
+    this.providerId = '',
+    this.modelId = '',
+    this.effectiveReasoning = '',
   });
 }
 
@@ -2265,7 +2360,8 @@ class McpOauthUrl {
 /// The server sends this to the originating client when a *write* MCP tool is
 /// about to run on a mobile-initiated turn, and BLOCKS the agent until the
 /// client replies with [WebSocketService.sendMcpConfirmResponse] carrying the
-/// SAME [id]. On timeout (120s) / disconnect / no-response the server denies.
+/// SAME [id]. Timeout / final teardown / no-response denies; transient Mobile
+/// reconnects may reproject the same device-bound request.
 ///
 /// Like [ConfigData], [McpStatusMessage] and the other standalone stream
 /// messages, this is deliberately NOT part of the sealed [OsiaMessage]
@@ -2299,6 +2395,13 @@ class McpConfirmRequest {
   final int rootCount;
   final String safeReason;
   final double? expiresAt;
+  final String conversationId;
+  final String requestId;
+  final String turnId;
+  final String runId;
+  final String providerId;
+  final String modelId;
+  final String effectiveReasoning;
 
   bool get isPcOnlyColossalDeletion =>
       confirmationKind == 'colossal_deletion_pc_only';
@@ -2316,9 +2419,30 @@ class McpConfirmRequest {
     this.rootCount = 0,
     this.safeReason = '',
     this.expiresAt,
+    this.conversationId = '',
+    this.requestId = '',
+    this.turnId = '',
+    this.runId = '',
+    this.providerId = '',
+    this.modelId = '',
+    this.effectiveReasoning = '',
   });
 
   factory McpConfirmRequest.fromJson(Map<String, dynamic> json) {
+    String exactCorrelationField(String name, {String? legacyName}) {
+      final hasCanonical = json.containsKey(name);
+      final raw = hasCanonical
+          ? json[name]
+          : legacyName == null
+          ? null
+          : json[legacyName];
+      if (raw == null) return '';
+      // Preserve malformed presence as an unmatchable sentinel so the Chat
+      // projection fails closed instead of treating a coerced or erased field
+      // as a correlation-free legacy permission.
+      return raw is String ? raw : '!invalid!';
+    }
+
     String coerceSummary(dynamic raw) {
       if (raw is String) return raw;
       if (raw is List) {
@@ -2361,6 +2485,16 @@ class McpConfirmRequest {
       expiresAt: json['expires_at'] is num
           ? (json['expires_at'] as num).toDouble()
           : null,
+      conversationId: exactCorrelationField('conversation_id'),
+      requestId: exactCorrelationField(
+        'request_id',
+        legacyName: 'client_request_id',
+      ),
+      turnId: exactCorrelationField('turn_id'),
+      runId: exactCorrelationField('run_id'),
+      providerId: exactCorrelationField('provider_id', legacyName: 'provider'),
+      modelId: exactCorrelationField('model_id', legacyName: 'model'),
+      effectiveReasoning: exactCorrelationField('effective_reasoning'),
     );
   }
 }
@@ -2772,6 +2906,8 @@ class WebSocketService {
   bool _awaitingAutonomousSnapshot = true;
   bool _expectNewAutonomousRun = false;
   AutonomousProgressMessage? _autonomousProgress;
+  String _autonomousResumeTarget = '';
+  int _autonomousResumeSequence = 0;
   String _autonomousAbandonState = '';
   String _autonomousAbandonEffectState = '';
   String _browserProgressSessionId = '';
@@ -2841,6 +2977,7 @@ class WebSocketService {
   int _reconnectAttempt = 0;
   int _connectGeneration = 0;
   int _socketGeneration = 0;
+  int _applicationTransportGeneration = 0;
   bool _intentionalClose = false;
   bool _suppressReconnectOnce = false;
   bool _disposed = false;
@@ -2985,16 +3122,24 @@ class WebSocketService {
   final Map<String, String> _activeConvByRequest = {};
   final Set<String> _acceptedRequests = {};
   final Map<String, String> _turnByRequest = <String, String>{};
+  final Map<String, String> _runByRequest = <String, String>{};
+  final Map<String, String> _providerByRequest = <String, String>{};
+  final Map<String, String> _modelByRequest = <String, String>{};
+  final Map<String, String> _reasoningByRequest = <String, String>{};
   final Map<String, String> _toolAttemptByRequest = <String, String>{};
   final Set<String> _pendingChatCancellationRequests = <String>{};
   final Map<String, String> _sentChatCancellationTargets = <String, String>{};
   String _autonomousCancellationTarget = '';
+  AutonomousProgressMessage? _pendingLegacyAutonomousCancellation;
+  int _legacyAutonomousCancellationSentGeneration = -1;
   final Set<String> _unboundRequestIds = <String>{};
   final Set<String> _seenCronNotifications = {};
   final Set<String> _respondedScheduledAuthorizationRequests = {};
   final Set<String> _seenApplicationEventIds = <String>{};
+  final Map<String, String> _applicationEventIdentityById = <String, String>{};
   final Queue<String> _applicationEventOrder = Queue<String>();
   final Map<String, int> _lastApplicationSequence = <String, int>{};
+  final Set<String> _pendingApplicationReplayStreams = <String>{};
   final Map<String, _MediaCorrelation> _mediaByConversation =
       <String, _MediaCorrelation>{};
 
@@ -3002,6 +3147,7 @@ class WebSocketService {
   /// buffers the user never explicitly leaves or deletes (e.g. a server-streamed
   /// id absent from the local list). Live streams are never evicted.
   static const int _maxConvBuffers = 32;
+  static const int _maxApplicationEventHistory = 2048;
 
   final StreamController<ConvStreamEvent> _convStreamCtrl =
       StreamController<ConvStreamEvent>.broadcast();
@@ -3134,6 +3280,8 @@ class WebSocketService {
   bool get autonomousProgressLive =>
       _autonomousProgressLive && _state == ConnectionState.connected;
 
+  bool get autonomousResumeRequested => _autonomousResumeTarget.isNotEmpty;
+
   /// Stream of live MCP connector status pushes (`mcp_status`, WOR-44 Phase 4).
   /// Kept off [messageStream] for the same reason as [configStream]. Each event
   /// reports a subset of servers (a transition broadcast is scoped to the
@@ -3144,8 +3292,8 @@ class WebSocketService {
   /// Stream of write-tool confirmation requests (`mcp_confirm_request`, WOR-44
   /// Phase 5). Kept off [messageStream] for the same reason as [configStream].
   /// Each event MUST be answered with [sendMcpConfirmResponse] (matching its
-  /// id); the server blocks the agent until then, and denies on timeout (120s)
-  /// / disconnect.
+  /// id); the server blocks the agent until then. Timeout/final teardown denies;
+  /// transient reconnects may reproject the same device-bound request.
   Stream<McpConfirmRequest> get mcpConfirmStream => _mcpConfirmCtrl.stream;
 
   /// Stream of OAuth authorization URLs (`mcp_oauth_url`, WOR-96 PART 2b).
@@ -3215,6 +3363,35 @@ class WebSocketService {
 
   String waitingTurnStatus(String id) => _waitingTurnStatusByConv[id] ?? '';
 
+  ChatTurnIdentity? activeTurnIdentity(String conversationId) {
+    final requestId = _activeRequestByConv[conversationId] ?? '';
+    if (requestId.isEmpty) return null;
+    return ChatTurnIdentity(
+      conversationId: conversationId,
+      requestId: requestId,
+      turnId: _turnByRequest[requestId] ?? '',
+      runId: _runByRequest[requestId] ?? '',
+      providerId: _providerByRequest[requestId] ?? '',
+      modelId: _modelByRequest[requestId] ?? '',
+      effectiveReasoning: _reasoningByRequest[requestId] ?? '',
+    );
+  }
+
+  ExecutionTraceSnapshot? executionTraceForConversation(String conversationId) {
+    final identity = activeTurnIdentity(conversationId);
+    if (identity == null || identity.turnId.isEmpty) return null;
+    for (final entry in _executionTraceAccumulators.entries) {
+      final key = entry.key;
+      if (key.conversationId == identity.conversationId &&
+          key.requestId == identity.requestId &&
+          key.turnId == identity.turnId &&
+          (identity.runId.isEmpty || key.runId == identity.runId)) {
+        return entry.value.snapshot;
+      }
+    }
+    return null;
+  }
+
   bool isConversationCancellationRequested(
     String id, {
     String clientRequestId = '',
@@ -3281,6 +3458,198 @@ class WebSocketService {
     }.contains(progress.event);
   }
 
+  static final RegExp _autonomousControlIdPattern = RegExp(
+    r'^[A-Za-z0-9._:-]+$',
+  );
+
+  static bool _validAutonomousControlId(String value, int maximum) =>
+      value.isNotEmpty &&
+      value.length <= maximum &&
+      _autonomousControlIdPattern.hasMatch(value);
+
+  bool _hasExactLegacyAutonomousControlIdentity(
+    AutonomousProgressMessage progress,
+  ) {
+    final runId = progress.runId ?? '';
+    final checkpointTaskId = progress.checkpointTaskId ?? '';
+    final taskId = progress.taskId ?? '';
+    final operationId = progress.operationId ?? '';
+    final toolAttemptId = progress.toolAttemptId ?? '';
+    final planRevision = progress.planRevision;
+    final authorizationRevision = progress.authorizationRevision;
+    final sequence = progress.sequence;
+    return progress.schemaVersion == 1 &&
+        _validAutonomousControlId(runId, 256) &&
+        runId != 'idle' &&
+        _validAutonomousControlId(checkpointTaskId, 160) &&
+        (taskId.isEmpty || _validAutonomousControlId(taskId, 160)) &&
+        (operationId.isEmpty || _validAutonomousControlId(operationId, 160)) &&
+        (toolAttemptId.isEmpty ||
+            _validAutonomousControlId(toolAttemptId, 160)) &&
+        planRevision != null &&
+        planRevision >= 0 &&
+        authorizationRevision != null &&
+        authorizationRevision >= 0 &&
+        sequence != null &&
+        sequence >= 1;
+  }
+
+  bool _sameLegacyAutonomousControlIdentity(
+    AutonomousProgressMessage displayed,
+    AutonomousProgressMessage current, {
+    required bool requireSameSequence,
+  }) {
+    if (!_hasExactLegacyAutonomousControlIdentity(displayed) ||
+        !_hasExactLegacyAutonomousControlIdentity(current)) {
+      return false;
+    }
+    final runId = displayed.runId!;
+    final checkpointTaskId = displayed.checkpointTaskId!;
+    final taskId = displayed.taskId ?? '';
+    final operationId = displayed.operationId ?? '';
+    final toolAttemptId = displayed.toolAttemptId ?? '';
+    final planRevision = displayed.planRevision!;
+    final authorizationRevision = displayed.authorizationRevision!;
+    final sequence = displayed.sequence!;
+    return current.schemaVersion == 1 &&
+        current.runId == runId &&
+        current.checkpointTaskId == checkpointTaskId &&
+        (current.taskId ?? '') == taskId &&
+        (current.operationId ?? '') == operationId &&
+        (current.toolAttemptId ?? '') == toolAttemptId &&
+        current.planRevision == planRevision &&
+        current.authorizationRevision == authorizationRevision &&
+        (!requireSameSequence || current.sequence == sequence);
+  }
+
+  bool canRequestLegacyAutonomousCancellation(
+    AutonomousProgressMessage progress,
+  ) {
+    final current = _autonomousProgress;
+    return _state == ConnectionState.connected &&
+        autonomousProgressLive &&
+        current != null &&
+        progress.legacyCompatibility != false &&
+        current.legacyCompatibility != false &&
+        progress.terminal != true &&
+        canAbandonAutonomousWork &&
+        _sameLegacyAutonomousControlIdentity(
+          progress,
+          current,
+          requireSameSequence: true,
+        );
+  }
+
+  bool canRequestLegacyAutonomousResume(AutonomousProgressMessage progress) {
+    final current = _autonomousProgress;
+    return _state == ConnectionState.connected &&
+        autonomousProgressLive &&
+        current != null &&
+        progress.legacyCompatibility != false &&
+        current.legacyCompatibility != false &&
+        progress.terminal != true &&
+        progress.event == 'interrupted' &&
+        progress.resumable == true &&
+        _autonomousResumeTarget.isEmpty &&
+        _sameLegacyAutonomousControlIdentity(
+          progress,
+          current,
+          requireSameSequence: true,
+        );
+  }
+
+  bool isLegacyAutonomousCancellationRequested(
+    AutonomousProgressMessage progress,
+  ) {
+    final current = _autonomousProgress;
+    if (current == null ||
+        progress.legacyCompatibility == false ||
+        current.legacyCompatibility == false ||
+        !_sameLegacyAutonomousControlIdentity(
+          progress,
+          current,
+          requireSameSequence: false,
+        )) {
+      return false;
+    }
+    return (_pendingLegacyAutonomousCancellation != null &&
+            _autonomousCancellationTarget ==
+                _legacyAutonomousCancellationKey(progress)) ||
+        current.abandonState == 'abandon_requested' ||
+        current.runState == 'cancellation_requested' ||
+        current.durableState == 'cancellation_requested';
+  }
+
+  void _clearPendingLegacyAutonomousCancellation() {
+    _pendingLegacyAutonomousCancellation = null;
+    _legacyAutonomousCancellationSentGeneration = -1;
+    _autonomousCancellationTarget = '';
+  }
+
+  String _legacyAutonomousCancellationKey(AutonomousProgressMessage progress) =>
+      '${progress.runId ?? ''}\u0000${progress.checkpointTaskId ?? ''}'
+      '\u0000${progress.planRevision ?? -1}'
+      '\u0000${progress.authorizationRevision ?? -1}'
+      '\u0000${progress.taskId ?? ''}'
+      '\u0000${progress.operationId ?? ''}'
+      '\u0000${progress.toolAttemptId ?? ''}';
+
+  bool _dispatchPendingLegacyAutonomousCancellation() {
+    final pending = _pendingLegacyAutonomousCancellation;
+    final current = _autonomousProgress;
+    if (pending == null ||
+        current == null ||
+        _state != ConnectionState.connected ||
+        !autonomousProgressLive) {
+      return false;
+    }
+    // Auxiliary authorization frames remain backward-compatible and may omit
+    // the canonical identity. They cannot prove a target change, so keep the
+    // immutable Stop intent parked until the next exact progress snapshot.
+    if (!_hasExactLegacyAutonomousControlIdentity(current)) return false;
+    if (current.legacyCompatibility == false) {
+      _clearPendingLegacyAutonomousCancellation();
+      return false;
+    }
+    if (current.terminal == true ||
+        !_sameLegacyAutonomousControlIdentity(
+          pending,
+          current,
+          requireSameSequence: false,
+        )) {
+      _clearPendingLegacyAutonomousCancellation();
+      return false;
+    }
+    if (current.abandonState == 'abandoned_proven') {
+      _clearPendingLegacyAutonomousCancellation();
+      return true;
+    }
+    if (_legacyAutonomousCancellationSentGeneration ==
+        _applicationTransportGeneration) {
+      return true;
+    }
+    final taskId = pending.taskId ?? '';
+    final operationId = pending.operationId ?? '';
+    final toolAttemptId = pending.toolAttemptId ?? '';
+    final sent = _send(<String, dynamic>{
+      'type': 'cancel_active_work',
+      'schema_version': 1,
+      'scope': 'autonomous',
+      'run_id': pending.runId,
+      'checkpoint_task_id': pending.checkpointTaskId,
+      'plan_revision': pending.planRevision,
+      'authorization_revision': pending.authorizationRevision,
+      if (taskId.isNotEmpty) 'task_id': taskId,
+      if (operationId.isNotEmpty) 'operation_id': operationId,
+      if (toolAttemptId.isNotEmpty) 'tool_attempt_id': toolAttemptId,
+    });
+    if (sent) {
+      _legacyAutonomousCancellationSentGeneration =
+          _applicationTransportGeneration;
+    }
+    return sent;
+  }
+
   static String newClientRequestId() {
     final random = Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));
@@ -3317,6 +3686,10 @@ class WebSocketService {
       _activeConvByRequest.remove(req);
       _acceptedRequests.remove(req);
       _turnByRequest.remove(req);
+      _runByRequest.remove(req);
+      _providerByRequest.remove(req);
+      _modelByRequest.remove(req);
+      _reasoningByRequest.remove(req);
       _toolAttemptByRequest.remove(req);
       _pendingChatCancellationRequests.remove(req);
       _sentChatCancellationTargets.remove(req);
@@ -3328,6 +3701,10 @@ class WebSocketService {
     _unboundRequestIds.remove(clientRequestId);
     _acceptedRequests.remove(clientRequestId);
     _turnByRequest.remove(clientRequestId);
+    _runByRequest.remove(clientRequestId);
+    _providerByRequest.remove(clientRequestId);
+    _modelByRequest.remove(clientRequestId);
+    _reasoningByRequest.remove(clientRequestId);
     _toolAttemptByRequest.remove(clientRequestId);
     _pendingChatCancellationRequests.remove(clientRequestId);
     _sentChatCancellationTargets.remove(clientRequestId);
@@ -3343,10 +3720,14 @@ class WebSocketService {
     _activeConvByRequest.clear();
     _acceptedRequests.clear();
     _turnByRequest.clear();
+    _runByRequest.clear();
+    _providerByRequest.clear();
+    _modelByRequest.clear();
+    _reasoningByRequest.clear();
     _toolAttemptByRequest.clear();
     _pendingChatCancellationRequests.clear();
     _sentChatCancellationTargets.clear();
-    _autonomousCancellationTarget = '';
+    _clearPendingLegacyAutonomousCancellation();
     _unboundRequestIds.clear();
     _pendingConvs.clear();
     _waitingTurnStatusByConv.clear();
@@ -3361,8 +3742,28 @@ class WebSocketService {
       (_streamBuffers[id]?.streaming ?? false) ||
       _busyConvs.contains(id);
 
+  void _ackCanonicalApplicationEvent(String streamId, int sequence) {
+    scheduleMicrotask(() {
+      _send(<String, dynamic>{
+        'type': 'event_ack',
+        'schema_version': 1,
+        'stream_id': streamId,
+        'sequence': sequence,
+      });
+    });
+  }
+
+  void _requestCanonicalApplicationReplay(String streamId, int afterSequence) {
+    if (!_pendingApplicationReplayStreams.add(streamId)) return;
+    _send(<String, dynamic>{
+      'type': 'event_replay_request',
+      'schema_version': 1,
+      'stream_id': streamId,
+      'after_sequence': afterSequence,
+    });
+  }
+
   bool _acceptCanonicalApplicationEvent(Map<String, dynamic> json) {
-    if (!_directFirstEnabled) return true;
     final type = json['type']?.toString() ?? '';
     final canonicalTypes = <String>{
       'transcript',
@@ -3373,31 +3774,147 @@ class WebSocketService {
       'turn_accepted',
       'turn_status',
       'conversation_busy_changed',
+      'action_truth_changed',
     };
-    if (type == 'status' && json['conversation_id'] != null) {
-      canonicalTypes.add('status');
+    final legacyRunAlias = const <String>{
+      'status',
+      'response_done',
+      'turn_complete',
+      'done',
+      'error',
+      'conversation_busy',
+      'conversation_busy_changed',
+    }.contains(type);
+    if (const <String>{
+      'status',
+      'response_done',
+      'turn_complete',
+      'done',
+      'conversation_busy',
+    }.contains(type)) {
+      canonicalTypes.add(type);
+    }
+    if (type == 'error' && json['conversation_id'] != null) {
+      canonicalTypes.add('error');
     }
     if (!canonicalTypes.contains(type)) return true;
-    final conversationId = json['conversation_id']?.toString() ?? '';
-    final requestId =
-        json['request_id']?.toString() ??
-        json['client_request_id']?.toString() ??
-        '';
-    final turnId = json['turn_id']?.toString() ?? '';
-    final eventId = json['event_id']?.toString() ?? '';
-    final eventType = json['event_type']?.toString() ?? '';
+    final rawConversationId = json['conversation_id'];
+    final rawRequestId = json['request_id'];
+    final rawTurnId = json['turn_id'];
+    final rawRunId = json['run_id'];
+    final rawProviderId = json['provider_id'];
+    final rawModelId = json['model_id'];
+    final rawEffectiveReasoning = json['effective_reasoning'];
+    final conversationId = rawConversationId is String ? rawConversationId : '';
+    final requestId = rawRequestId is String ? rawRequestId : '';
+    final turnId = rawTurnId is String ? rawTurnId : '';
+    final runId = rawRunId is String ? rawRunId : '';
+    final providerId = rawProviderId is String ? rawProviderId : '';
+    final modelId = rawModelId is String ? rawModelId : '';
+    final effectiveReasoning = rawEffectiveReasoning is String
+        ? rawEffectiveReasoning
+        : '';
+    final activeRequest = _activeRequestByConv[conversationId] ?? '';
+    final correlationRequest = requestId.isNotEmpty ? requestId : activeRequest;
+    final boundTurn = _turnByRequest[correlationRequest] ?? '';
+    final requestRun = _runByRequest[correlationRequest] ?? '';
+    final activeRun = _runByRequest[activeRequest] ?? '';
+    final boundRun = requestRun.isNotEmpty ? requestRun : activeRun;
+    final boundProvider = _providerByRequest[correlationRequest] ?? '';
+    final boundModel = _modelByRequest[correlationRequest] ?? '';
+    final boundReasoning = _reasoningByRequest[correlationRequest] ?? '';
+    final hasBoundReasoning = _reasoningByRequest.containsKey(
+      correlationRequest,
+    );
+    final runAware = json.containsKey('run_id') || boundRun.isNotEmpty;
+    final durableEnvelope = json['stream_id'] is String;
+    final requiresRouteBinding =
+        durableEnvelope && type != 'action_truth_changed';
+    if (legacyRunAlias && !runAware) return true;
+    if (runAware &&
+        (rawConversationId is! String ||
+            rawRequestId is! String ||
+            rawTurnId is! String ||
+            rawRunId is! String ||
+            conversationId.isEmpty ||
+            requestId.isEmpty ||
+            turnId.isEmpty ||
+            runId.isEmpty ||
+            (requiresRouteBinding && rawProviderId is! String) ||
+            (requiresRouteBinding && rawModelId is! String) ||
+            (requiresRouteBinding && rawEffectiveReasoning is! String) ||
+            (requiresRouteBinding && providerId.isEmpty) ||
+            (requiresRouteBinding && modelId.isEmpty) ||
+            (boundTurn.isNotEmpty && boundTurn != turnId) ||
+            (boundRun.isNotEmpty && boundRun != runId) ||
+            (requiresRouteBinding &&
+                boundProvider.isNotEmpty &&
+                boundProvider != providerId) ||
+            (requiresRouteBinding &&
+                boundModel.isNotEmpty &&
+                boundModel != modelId) ||
+            (requiresRouteBinding &&
+                hasBoundReasoning &&
+                boundReasoning != effectiveReasoning))) {
+      debugPrint('[OSIA WS] rejected incomplete run-aware event type=$type');
+      return false;
+    }
+    if (!durableEnvelope) {
+      // Legacy chat projection events never carry semantic execution
+      // authority. Keep older PC/server transports usable, while refusing an
+      // unsequenced ActionTruth projection that could not be ACKed or replayed.
+      if (type == 'action_truth_changed') return false;
+      final legacyEventId = json['event_id']?.toString() ?? '';
+      if (legacyEventId.isNotEmpty) {
+        if (_seenApplicationEventIds.contains(legacyEventId)) return false;
+        _seenApplicationEventIds.add(legacyEventId);
+        _applicationEventIdentityById[legacyEventId] = 'legacy';
+        _applicationEventOrder.addLast(legacyEventId);
+        while (_applicationEventOrder.length > _maxApplicationEventHistory) {
+          final removed = _applicationEventOrder.removeFirst();
+          _seenApplicationEventIds.remove(removed);
+          _applicationEventIdentityById.remove(removed);
+        }
+      }
+      return true;
+    }
+    final eventId = json['event_id'] is String
+        ? json['event_id'] as String
+        : '';
+    final eventType = json['event_type'] is String
+        ? json['event_type'] as String
+        : '';
     final sequence = json['sequence'];
     final terminal = json['terminal'];
-    final needsMessageId = type != 'conversation_busy_changed';
+    final streamId = json['stream_id'] is String
+        ? json['stream_id'] as String
+        : '';
+    final createdAt = json['created_at'];
+    final producerId = json['producer_id'];
+    final payloadVersion = json['payload_version'];
+    final needsMessageId = !const <String>{
+      'conversation_busy_changed',
+      'action_truth_changed',
+    }.contains(type);
     if (conversationId.isEmpty ||
         requestId.isEmpty ||
         turnId.isEmpty ||
+        runId.isEmpty ||
+        (requiresRouteBinding && providerId.isEmpty) ||
+        (requiresRouteBinding && modelId.isEmpty) ||
+        (requiresRouteBinding && !json.containsKey('effective_reasoning')) ||
         eventId.isEmpty ||
         eventType != type ||
+        streamId.isEmpty ||
         sequence is! int ||
         sequence <= 0 ||
+        createdAt is! num ||
+        producerId != 'osia-pc' ||
+        payloadVersion != 1 ||
         terminal is! bool ||
-        (needsMessageId && (json['message_id']?.toString() ?? '').isEmpty)) {
+        (needsMessageId &&
+            (json['message_id'] is! String ||
+                (json['message_id'] as String).isEmpty))) {
       debugPrint('[OSIA WS] rejected incomplete canonical event type=$type');
       return false;
     }
@@ -3410,7 +3927,9 @@ class WebSocketService {
         media?.requestId == requestId;
     final recoveredBinding =
         json['recovered'] == true && type == 'turn_accepted';
-    if (!ownsRequest && !recoveredBinding) {
+    final replayed = json['replayed'] == true;
+    final historical = json['historical'] == true;
+    if (!ownsRequest && !recoveredBinding && !replayed) {
       debugPrint('[OSIA WS] rejected unowned canonical event type=$type');
       return false;
     }
@@ -3423,19 +3942,94 @@ class WebSocketService {
       );
       return false;
     }
+    final knownRun = _runByRequest[requestId] ?? '';
+    final knownProvider = _providerByRequest[requestId] ?? '';
+    final knownModel = _modelByRequest[requestId] ?? '';
+    final knownReasoning = _reasoningByRequest[requestId] ?? '';
+    final hasKnownReasoning = _reasoningByRequest.containsKey(requestId);
+    if ((knownRun.isNotEmpty && knownRun != runId) ||
+        (requiresRouteBinding &&
+            knownProvider.isNotEmpty &&
+            knownProvider != providerId) ||
+        (requiresRouteBinding &&
+            knownModel.isNotEmpty &&
+            knownModel != modelId) ||
+        (requiresRouteBinding &&
+            hasKnownReasoning &&
+            knownReasoning != effectiveReasoning)) {
+      debugPrint('[OSIA WS] rejected mismatched canonical event type=$type');
+      return false;
+    }
     _turnByRequest.putIfAbsent(requestId, () => turnId);
-    if (_seenApplicationEventIds.contains(eventId)) return false;
-    final sequenceKey = '$conversationId\u0000$requestId\u0000$turnId';
+    final eventIdentity = '$streamId\u0000$sequence';
+    final seenEventIdentity = _applicationEventIdentityById[eventId];
+    if (seenEventIdentity != null) {
+      if (seenEventIdentity != eventIdentity) {
+        debugPrint('[OSIA WS] rejected conflicting canonical event id');
+        return false;
+      }
+      // A reconnect may replay the last already-rendered projection verbatim.
+      // Keep the UI/event ledger deduplicated, but let an exact queued Stop use
+      // the previously validated four-ID binding on this new socket generation.
+      if (_pendingChatCancellationRequests.contains(requestId)) {
+        _dispatchChatCancellation(requestId);
+      }
+      _ackCanonicalApplicationEvent(streamId, sequence);
+      return false;
+    }
+    final sequenceKey = streamId;
     final previous = _lastApplicationSequence[sequenceKey] ?? 0;
     if (sequence <= previous) {
       debugPrint('[OSIA WS] rejected stale canonical event type=$type');
+      if (_pendingChatCancellationRequests.contains(requestId)) {
+        _dispatchChatCancellation(requestId);
+      }
+      _ackCanonicalApplicationEvent(streamId, sequence);
       return false;
     }
+    if (sequence > previous + 1) {
+      debugPrint(
+        '[OSIA WS] canonical event gap stream=$streamId '
+        'expected=${previous + 1} received=$sequence',
+      );
+      _requestCanonicalApplicationReplay(streamId, previous);
+      return false;
+    }
+    // Refresh insertion order as well as value so the bounded ledger behaves
+    // as LRU: a long-running active turn cannot be evicted merely because its
+    // key was first observed before many short-lived turns.
+    _lastApplicationSequence.remove(sequenceKey);
     _lastApplicationSequence[sequenceKey] = sequence;
+    while (_lastApplicationSequence.length > _maxApplicationEventHistory) {
+      _lastApplicationSequence.remove(_lastApplicationSequence.keys.first);
+    }
     _seenApplicationEventIds.add(eventId);
+    _applicationEventIdentityById[eventId] = eventIdentity;
     _applicationEventOrder.addLast(eventId);
-    while (_applicationEventOrder.length > 2048) {
-      _seenApplicationEventIds.remove(_applicationEventOrder.removeFirst());
+    while (_applicationEventOrder.length > _maxApplicationEventHistory) {
+      final removed = _applicationEventOrder.removeFirst();
+      _seenApplicationEventIds.remove(removed);
+      _applicationEventIdentityById.remove(removed);
+    }
+    _pendingApplicationReplayStreams.remove(streamId);
+    _ackCanonicalApplicationEvent(streamId, sequence);
+    if (type == 'action_truth_changed') {
+      // This envelope participates in ordering/replay but carries no chat
+      // presentation route.  Semantic truth remains backend-owned.
+      return false;
+    }
+    if (historical && (!ownsRequest || terminal != true)) {
+      // Completed history is rendered from canonical conversation hydration;
+      // replaying its old thinking/chunk frames would fake live activity.
+      return false;
+    }
+    if (replayed && !ownsRequest && !recoveredBinding) return false;
+    _runByRequest.putIfAbsent(requestId, () => runId);
+    _providerByRequest.putIfAbsent(requestId, () => providerId);
+    _modelByRequest.putIfAbsent(requestId, () => modelId);
+    _reasoningByRequest.putIfAbsent(requestId, () => effectiveReasoning);
+    if (_pendingChatCancellationRequests.contains(requestId)) {
+      _dispatchChatCancellation(requestId);
     }
     return true;
   }
@@ -3513,6 +4107,10 @@ class WebSocketService {
     String message = '',
     String clientRequestId = '',
     String turnId = '',
+    String runId = '',
+    String providerId = '',
+    String modelId = '',
+    String effectiveReasoning = '',
   }) {
     if (id.isEmpty) return;
     if (busy) {
@@ -3528,6 +4126,18 @@ class WebSocketService {
           message: message,
           clientRequestId: clientRequestId,
           turnId: turnId,
+          runId: runId.isNotEmpty
+              ? runId
+              : (_runByRequest[clientRequestId] ?? ''),
+          providerId: providerId.isNotEmpty
+              ? providerId
+              : (_providerByRequest[clientRequestId] ?? ''),
+          modelId: modelId.isNotEmpty
+              ? modelId
+              : (_modelByRequest[clientRequestId] ?? ''),
+          effectiveReasoning: effectiveReasoning.isNotEmpty
+              ? effectiveReasoning
+              : (_reasoningByRequest[clientRequestId] ?? ''),
         ),
       );
     }
@@ -3540,6 +4150,46 @@ class WebSocketService {
         json['client_request_id']?.toString() ??
         '';
     final turnId = json['turn_id']?.toString() ?? '';
+    final runId = json['run_id']?.toString() ?? '';
+    final providerId =
+        (json['provider_id'] ?? json['provider'])?.toString() ?? '';
+    final modelId = (json['model_id'] ?? json['model'])?.toString() ?? '';
+    final effectiveReasoning = json['effective_reasoning']?.toString() ?? '';
+    if (reqId.isNotEmpty) {
+      final knownTurn = _turnByRequest[reqId] ?? '';
+      final knownRun = _runByRequest[reqId] ?? '';
+      final knownProvider = _providerByRequest[reqId] ?? '';
+      final knownModel = _modelByRequest[reqId] ?? '';
+      final knownReasoning = _reasoningByRequest[reqId] ?? '';
+      final hasKnownReasoning = _reasoningByRequest.containsKey(reqId);
+      if ((knownTurn.isNotEmpty && turnId.isNotEmpty && knownTurn != turnId) ||
+          (knownRun.isNotEmpty && runId.isNotEmpty && knownRun != runId) ||
+          (knownProvider.isNotEmpty &&
+              providerId.isNotEmpty &&
+              knownProvider != providerId) ||
+          (knownModel.isNotEmpty &&
+              modelId.isNotEmpty &&
+              knownModel != modelId) ||
+          (hasKnownReasoning && knownReasoning != effectiveReasoning)) {
+        return;
+      }
+      if (turnId.isNotEmpty) _turnByRequest.putIfAbsent(reqId, () => turnId);
+      if (runId.isNotEmpty) _runByRequest.putIfAbsent(reqId, () => runId);
+      if (providerId.isNotEmpty) {
+        _providerByRequest.putIfAbsent(reqId, () => providerId);
+      }
+      if (modelId.isNotEmpty) {
+        _modelByRequest.putIfAbsent(reqId, () => modelId);
+      }
+      if (runId.isNotEmpty) {
+        _reasoningByRequest.putIfAbsent(reqId, () => effectiveReasoning);
+      } else if (effectiveReasoning.isNotEmpty) {
+        _reasoningByRequest.putIfAbsent(reqId, () => effectiveReasoning);
+      }
+      if (_pendingChatCancellationRequests.contains(reqId)) {
+        _dispatchChatCancellation(reqId);
+      }
+    }
     if ((json['type'] ?? '').toString() == 'conversation_busy') {
       final message = json['message']?.toString() ?? '';
       _setConversationBusy(
@@ -3548,6 +4198,10 @@ class WebSocketService {
         message: message,
         clientRequestId: reqId,
         turnId: turnId,
+        runId: runId,
+        providerId: providerId,
+        modelId: modelId,
+        effectiveReasoning: effectiveReasoning,
       );
       return;
     }
@@ -3561,7 +4215,16 @@ class WebSocketService {
           )) {
         return;
       }
-      _setConversationBusy(id, true, clientRequestId: reqId, turnId: turnId);
+      _setConversationBusy(
+        id,
+        true,
+        clientRequestId: reqId,
+        turnId: turnId,
+        runId: runId,
+        providerId: providerId,
+        modelId: modelId,
+        effectiveReasoning: effectiveReasoning,
+      );
       return;
     }
     if (_shouldIgnoreConversationFrame(
@@ -3583,7 +4246,16 @@ class WebSocketService {
       );
     } else {
       _waitingTurnStatusByConv.remove(id);
-      _setConversationBusy(id, false, clientRequestId: reqId, turnId: turnId);
+      _setConversationBusy(
+        id,
+        false,
+        clientRequestId: reqId,
+        turnId: turnId,
+        runId: runId,
+        providerId: providerId,
+        modelId: modelId,
+        effectiveReasoning: effectiveReasoning,
+      );
     }
   }
 
@@ -3594,6 +4266,11 @@ class WebSocketService {
         json['client_request_id']?.toString() ??
         '';
     final turnId = json['turn_id']?.toString() ?? '';
+    final runId = json['run_id']?.toString() ?? '';
+    final providerId =
+        (json['provider_id'] ?? json['provider'])?.toString() ?? '';
+    final modelId = (json['model_id'] ?? json['model'])?.toString() ?? '';
+    final effectiveReasoning = json['effective_reasoning']?.toString() ?? '';
     final toolAttemptId = json['tool_attempt_id']?.toString() ?? '';
     final messageId = json['message_id']?.toString() ?? '';
     final status = json['status']?.toString() ?? 'accepted';
@@ -3603,6 +4280,41 @@ class WebSocketService {
     final knownTurn = _turnByRequest[reqId] ?? '';
     if (knownTurn.isNotEmpty && turnId.isNotEmpty && knownTurn != turnId) {
       return;
+    }
+    final knownRun = _runByRequest[reqId] ?? '';
+    if (knownRun.isNotEmpty && runId.isNotEmpty && knownRun != runId) return;
+    final knownProvider = _providerByRequest[reqId] ?? '';
+    if (knownProvider.isNotEmpty &&
+        providerId.isNotEmpty &&
+        knownProvider != providerId) {
+      return;
+    }
+    final knownModel = _modelByRequest[reqId] ?? '';
+    if (knownModel.isNotEmpty && modelId.isNotEmpty && knownModel != modelId) {
+      return;
+    }
+    final knownReasoning = _reasoningByRequest[reqId] ?? '';
+    final hasKnownReasoning = _reasoningByRequest.containsKey(reqId);
+    if (hasKnownReasoning && knownReasoning != effectiveReasoning) {
+      return;
+    }
+    if (reqId.isNotEmpty) {
+      if (turnId.isNotEmpty) _turnByRequest.putIfAbsent(reqId, () => turnId);
+      if (runId.isNotEmpty) _runByRequest.putIfAbsent(reqId, () => runId);
+      if (providerId.isNotEmpty) {
+        _providerByRequest.putIfAbsent(reqId, () => providerId);
+      }
+      if (modelId.isNotEmpty) {
+        _modelByRequest.putIfAbsent(reqId, () => modelId);
+      }
+      if (runId.isNotEmpty) {
+        _reasoningByRequest.putIfAbsent(reqId, () => effectiveReasoning);
+      } else if (effectiveReasoning.isNotEmpty) {
+        _reasoningByRequest.putIfAbsent(reqId, () => effectiveReasoning);
+      }
+      if (_pendingChatCancellationRequests.contains(reqId)) {
+        _dispatchChatCancellation(reqId);
+      }
     }
     if (id.isNotEmpty) {
       _unboundRequestIds.remove(reqId);
@@ -3639,9 +4351,6 @@ class WebSocketService {
         )) {
           return;
         }
-        if (reqId.isNotEmpty && turnId.isNotEmpty) {
-          _turnByRequest.putIfAbsent(reqId, () => turnId);
-        }
         if (reqId.isNotEmpty && toolAttemptId.isNotEmpty) {
           _toolAttemptByRequest[reqId] = toolAttemptId;
         }
@@ -3672,6 +4381,12 @@ class WebSocketService {
         conversationId: id,
         persisted: json['persisted'] == true,
         status: status,
+        runId: runId.isNotEmpty ? runId : knownRun,
+        providerId: providerId.isNotEmpty ? providerId : knownProvider,
+        modelId: modelId.isNotEmpty ? modelId : knownModel,
+        effectiveReasoning: effectiveReasoning.isNotEmpty
+            ? effectiveReasoning
+            : knownReasoning,
       ),
     );
   }
@@ -3701,7 +4416,7 @@ class WebSocketService {
       _autonomousAbandonEffectState = abandonEffectState;
       if (abandonState == 'abandoned_proven' &&
           _autonomousCancellationTarget.startsWith('$runId\u0000')) {
-        _autonomousCancellationTarget = '';
+        _clearPendingLegacyAutonomousCancellation();
       }
       final progress = _autonomousProgress;
       if (progress != null && !_autonomousCtrl.isClosed) {
@@ -3711,32 +4426,50 @@ class WebSocketService {
     }
     if (state != 'rejected') return;
     if (scope == 'chat') {
-      final requestId =
-          json['request_id']?.toString() ??
-          json['client_request_id']?.toString() ??
-          '';
-      if (requestId.isEmpty) return;
+      final rawConversationId = json['conversation_id'];
+      final rawRequestId = json['request_id'];
+      final rawTurnId = json['turn_id'];
+      final rawRunId = json['run_id'];
+      if (rawConversationId is! String ||
+          rawRequestId is! String ||
+          rawTurnId is! String ||
+          rawRunId is! String) {
+        return;
+      }
+      final conversationId = rawConversationId;
+      final requestId = rawRequestId;
+      final turnId = rawTurnId;
+      final runId = rawRunId;
+      if (conversationId.isEmpty ||
+          requestId.isEmpty ||
+          turnId.isEmpty ||
+          runId.isEmpty ||
+          !_pendingChatCancellationRequests.contains(requestId) ||
+          _activeConvByRequest[requestId] != conversationId ||
+          _turnByRequest[requestId] != turnId ||
+          _runByRequest[requestId] != runId) {
+        return;
+      }
       _pendingChatCancellationRequests.remove(requestId);
       _sentChatCancellationTargets.remove(requestId);
-      final conversationId =
-          json['conversation_id']?.toString() ??
-          _activeConvByRequest[requestId] ??
-          '';
-      if (conversationId.isNotEmpty) {
-        _setConversationBusy(
-          conversationId,
-          _hasLiveConversationTurn(conversationId),
-          clientRequestId: requestId,
-          turnId: _turnByRequest[requestId] ?? '',
-        );
-      }
+      _waitingTurnStatusByConv.remove(conversationId);
+      _setConversationBusy(
+        conversationId,
+        _hasLiveConversationTurn(conversationId),
+        clientRequestId: requestId,
+        turnId: turnId,
+        runId: runId,
+        providerId: _providerByRequest[requestId] ?? '',
+        modelId: _modelByRequest[requestId] ?? '',
+        effectiveReasoning: _reasoningByRequest[requestId] ?? '',
+      );
       return;
     }
     if (scope == 'autonomous') {
       final runId = json['run_id']?.toString() ?? '';
       if (runId.isEmpty ||
           _autonomousCancellationTarget.startsWith('$runId\u0000')) {
-        _autonomousCancellationTarget = '';
+        _clearPendingLegacyAutonomousCancellation();
         final progress = _autonomousProgress;
         if (progress != null && !_autonomousCtrl.isClosed) {
           _autonomousCtrl.add(progress);
@@ -3767,6 +4500,38 @@ class WebSocketService {
         _turnByRequest[key.requestId] != key.turnId) {
       return;
     }
+    final knownRun = _runByRequest[key.requestId] ?? '';
+    final knownProvider = _providerByRequest[key.requestId] ?? '';
+    final knownModel = _modelByRequest[key.requestId] ?? '';
+    final knownReasoning = _reasoningByRequest[key.requestId] ?? '';
+    final hasKnownReasoning = _reasoningByRequest.containsKey(key.requestId);
+    if ((knownRun.isNotEmpty && !key.hasCanonicalMetadata) ||
+        (knownRun.isNotEmpty && key.runId != knownRun) ||
+        (knownProvider.isNotEmpty &&
+            key.providerId.isNotEmpty &&
+            key.providerId != knownProvider) ||
+        (knownModel.isNotEmpty &&
+            key.modelId.isNotEmpty &&
+            key.modelId != knownModel) ||
+        (hasKnownReasoning && key.effectiveReasoning != knownReasoning)) {
+      return;
+    }
+    if (key.runId.isNotEmpty) _runByRequest[key.requestId] = key.runId;
+    if (key.providerId.isNotEmpty) {
+      _providerByRequest[key.requestId] = key.providerId;
+    }
+    if (key.modelId.isNotEmpty) {
+      _modelByRequest[key.requestId] = key.modelId;
+    }
+    if (key.hasCanonicalMetadata) {
+      _reasoningByRequest.putIfAbsent(
+        key.requestId,
+        () => key.effectiveReasoning,
+      );
+    }
+    if (_pendingChatCancellationRequests.contains(key.requestId)) {
+      _dispatchChatCancellation(key.requestId);
+    }
     var accumulator = _executionTraceAccumulators[key];
     if (accumulator == null) {
       if (_executionTraceAccumulators.length >= _maxConvBuffers) {
@@ -3784,6 +4549,11 @@ class WebSocketService {
       _executionTraceAccumulators[key] = accumulator;
     }
     final snapshot = accumulator.merge(envelope);
+    if (_pendingChatCancellationRequests.contains(key.requestId)) {
+      // The ordered envelope remains acknowledged and its sanitized trace is
+      // retained above, but a cancelled generation is never live-projectable.
+      return;
+    }
     if (snapshot != null && !_executionTraceCtrl.isClosed) {
       _executionTraceCtrl.add(snapshot);
     }
@@ -4234,7 +5004,14 @@ class WebSocketService {
     if (id.isNotEmpty &&
         isConversationBusy(id) &&
         _activeRequestByConv[id] != requestId) {
-      _setConversationBusy(id, true);
+      final activeRequest = _activeRequestByConv[id] ?? '';
+      _setConversationBusy(
+        id,
+        true,
+        clientRequestId: activeRequest,
+        turnId: _turnByRequest[activeRequest] ?? '',
+        runId: _runByRequest[activeRequest] ?? '',
+      );
       return false;
     }
     final sent = _send({
@@ -4249,7 +5026,9 @@ class WebSocketService {
     });
     if (sent) {
       _rememberRequest(id, requestId);
-      if (id.isNotEmpty) _setConversationBusy(id, true);
+      if (id.isNotEmpty) {
+        _setConversationBusy(id, true, clientRequestId: requestId);
+      }
     }
     return sent;
   }
@@ -4294,7 +5073,7 @@ class WebSocketService {
 
   /// Request cancellation of the exact canonical chat turn already in flight.
   /// If the PC has not accepted the turn yet, the intent remains bound to the
-  /// existing request id and is dispatched as soon as its turn id arrives.
+  /// existing request id and is dispatched only after turn and run ids arrive.
   bool requestChatCancellation({
     String conversationId = '',
     String clientRequestId = '',
@@ -4315,21 +5094,29 @@ class WebSocketService {
       return false;
     }
     _pendingChatCancellationRequests.add(requestId);
-    return _dispatchChatCancellation(requestId);
+    // The user intent is accepted once it is durably queued against the exact
+    // request. A temporarily unavailable socket must not keep the UI advancing;
+    // reconnect projection will retry the idempotent wire dispatch.
+    _dispatchChatCancellation(requestId);
+    return true;
   }
 
   bool _dispatchChatCancellation(String requestId) {
     if (!_pendingChatCancellationRequests.contains(requestId)) return false;
     final conversationId = _activeConvByRequest[requestId] ?? '';
     final turnId = _turnByRequest[requestId] ?? '';
-    if (conversationId.isEmpty || turnId.isEmpty) {
+    final runId = _runByRequest[requestId] ?? '';
+    // Unified Chat Stop is never guessed from a partial identity. The user's
+    // intent stays queued until turn_accepted has bound all four canonical IDs.
+    // Historical durable-run cancellation uses the separate legacy method.
+    if (conversationId.isEmpty || turnId.isEmpty || runId.isEmpty) {
       return true;
     }
     final toolAttemptId = _toolAttemptByRequest[requestId] ?? '';
     final target =
-        '$conversationId\u0000$requestId\u0000$turnId'
-        '\u0000$toolAttemptId';
-    if (_sentChatCancellationTargets.containsKey(requestId)) return true;
+        '$_applicationTransportGeneration\u0000$conversationId\u0000$requestId\u0000$turnId'
+        '\u0000$runId';
+    if (_sentChatCancellationTargets[requestId] == target) return true;
     final sent = _send(<String, dynamic>{
       'type': 'cancel_active_work',
       'schema_version': 1,
@@ -4338,6 +5125,7 @@ class WebSocketService {
       'request_id': requestId,
       'client_request_id': requestId,
       'turn_id': turnId,
+      'run_id': runId,
       if (toolAttemptId.isNotEmpty) 'tool_attempt_id': toolAttemptId,
     });
     if (sent) {
@@ -4361,6 +5149,8 @@ class WebSocketService {
         '$runId\u0000$taskId\u0000$operationId'
         '\u0000$toolAttemptId';
     if (_autonomousCancellationTarget == target) return true;
+    _pendingLegacyAutonomousCancellation = null;
+    _legacyAutonomousCancellationSentGeneration = -1;
     final sent = _send(<String, dynamic>{
       'type': 'cancel_active_work',
       'schema_version': 1,
@@ -4372,6 +5162,23 @@ class WebSocketService {
     });
     if (sent) _autonomousCancellationTarget = target;
     return sent;
+  }
+
+  /// Queue cancellation only for the exact legacy projection the user saw.
+  /// A reconnect replays this same immutable target only after a fresh
+  /// authoritative snapshot proves that every identity field still matches.
+  bool requestLegacyAutonomousCancellation(AutonomousProgressMessage progress) {
+    final target = _legacyAutonomousCancellationKey(progress);
+    if (_pendingLegacyAutonomousCancellation != null &&
+        _autonomousCancellationTarget == target) {
+      return true;
+    }
+    if (!canRequestLegacyAutonomousCancellation(progress)) return false;
+    _pendingLegacyAutonomousCancellation = progress;
+    _legacyAutonomousCancellationSentGeneration = -1;
+    _autonomousCancellationTarget = target;
+    _dispatchPendingLegacyAutonomousCancellation();
+    return true;
   }
 
   /// Accept one already-committed attachment batch as a normal text turn.
@@ -4397,7 +5204,14 @@ class WebSocketService {
     if (conversationId.isNotEmpty &&
         isConversationBusy(conversationId) &&
         _activeRequestByConv[conversationId] != clientRequestId) {
-      _setConversationBusy(conversationId, true);
+      final activeRequest = _activeRequestByConv[conversationId] ?? '';
+      _setConversationBusy(
+        conversationId,
+        true,
+        clientRequestId: activeRequest,
+        turnId: _turnByRequest[activeRequest] ?? '',
+        runId: _runByRequest[activeRequest] ?? '',
+      );
       return false;
     }
     final sent = _send(<String, dynamic>{
@@ -4414,7 +5228,11 @@ class WebSocketService {
     if (sent) {
       _rememberRequest(conversationId, clientRequestId);
       if (conversationId.isNotEmpty) {
-        _setConversationBusy(conversationId, true);
+        _setConversationBusy(
+          conversationId,
+          true,
+          clientRequestId: clientRequestId,
+        );
       }
     }
     return sent;
@@ -4486,7 +5304,14 @@ class WebSocketService {
     if (id.isNotEmpty &&
         isConversationBusy(id) &&
         _activeRequestByConv[id] != requestId) {
-      _setConversationBusy(id, true);
+      final activeRequest = _activeRequestByConv[id] ?? '';
+      _setConversationBusy(
+        id,
+        true,
+        clientRequestId: activeRequest,
+        turnId: _turnByRequest[activeRequest] ?? '',
+        runId: _runByRequest[activeRequest] ?? '',
+      );
       return false;
     }
     final sent = _send({
@@ -4501,7 +5326,9 @@ class WebSocketService {
     });
     if (sent) {
       _rememberRequest(id, requestId);
-      if (id.isNotEmpty) _setConversationBusy(id, true);
+      if (id.isNotEmpty) {
+        _setConversationBusy(id, true, clientRequestId: requestId);
+      }
     }
     return sent;
   }
@@ -5041,7 +5868,7 @@ class WebSocketService {
       return false;
     }
     _expectNewAutonomousRun = true;
-    _autonomousCancellationTarget = '';
+    _clearPendingLegacyAutonomousCancellation();
     _autonomousAbandonState = '';
     _autonomousAbandonEffectState = '';
     return _send({
@@ -5133,9 +5960,78 @@ class WebSocketService {
     _send({'type': 'autonomous_interrupt'});
   }
 
+  /// Pause only the exact legacy checkpoint currently accepted by this client.
+  bool requestLegacyAutonomousInterrupt(AutonomousProgressMessage progress) {
+    final current = _autonomousProgress;
+    final runId = progress.runId ?? '';
+    final taskId = progress.taskId ?? '';
+    final planRevision = progress.planRevision;
+    final authorizationRevision = progress.authorizationRevision;
+    final sequence = progress.sequence;
+    if (!autonomousProgressLive ||
+        current == null ||
+        runId.isEmpty ||
+        runId == 'idle' ||
+        taskId.isEmpty ||
+        current.runId != runId ||
+        current.taskId != taskId ||
+        current.planRevision != planRevision ||
+        current.authorizationRevision != authorizationRevision ||
+        current.sequence != sequence ||
+        planRevision == null ||
+        authorizationRevision == null ||
+        sequence == null ||
+        progress.terminal == true) {
+      return false;
+    }
+    return _send({
+      'type': 'autonomous_interrupt',
+      'schema_version': 1,
+      'run_id': runId,
+      'task_id': taskId,
+      'plan_revision': planRevision,
+      'authorization_revision': authorizationRevision,
+    });
+  }
+
   /// Resume a paused autonomous run (the server continues from its kept state).
   void sendAutonomousResume() {
     _send({'type': 'autonomous_resume'});
+  }
+
+  /// Resume one exact persisted run from the compatibility projection.
+  ///
+  /// Unified Chat never uses the uncorrelated historical method above. The
+  /// server revalidates this identity again after reloading the checkpoint.
+  bool requestLegacyAutonomousResume(AutonomousProgressMessage progress) {
+    final runId = progress.runId ?? '';
+    final checkpointTaskId = progress.checkpointTaskId ?? '';
+    final planRevision = progress.planRevision;
+    final authorizationRevision = progress.authorizationRevision;
+    final sequence = progress.sequence;
+    if (planRevision == null ||
+        authorizationRevision == null ||
+        sequence == null) {
+      return false;
+    }
+    final target =
+        '$runId\u0000$checkpointTaskId\u0000$planRevision'
+        '\u0000$authorizationRevision';
+    if (_autonomousResumeTarget == target) return true;
+    if (!canRequestLegacyAutonomousResume(progress)) return false;
+    final sent = _send({
+      'type': 'autonomous_resume',
+      'schema_version': 1,
+      'run_id': runId,
+      'task_id': checkpointTaskId,
+      'plan_revision': planRevision,
+      'authorization_revision': authorizationRevision,
+    });
+    if (sent) {
+      _autonomousResumeTarget = target;
+      _autonomousResumeSequence = sequence;
+    }
+    return sent;
   }
 
   /// Abandon the current autonomous run entirely (not resumable).
@@ -5360,16 +6256,22 @@ class WebSocketService {
     _activeConvByRequest.clear();
     _acceptedRequests.clear();
     _turnByRequest.clear();
+    _runByRequest.clear();
+    _providerByRequest.clear();
+    _modelByRequest.clear();
+    _reasoningByRequest.clear();
     _toolAttemptByRequest.clear();
     _pendingChatCancellationRequests.clear();
     _sentChatCancellationTargets.clear();
-    _autonomousCancellationTarget = '';
+    _clearPendingLegacyAutonomousCancellation();
     _unboundRequestIds.clear();
     _seenCronNotifications.clear();
     _mediaByConversation.clear();
     _seenApplicationEventIds.clear();
+    _applicationEventIdentityById.clear();
     _applicationEventOrder.clear();
     _lastApplicationSequence.clear();
+    _pendingApplicationReplayStreams.clear();
     _executionTraceAccumulators.clear();
     _pendingPermissionRevocations.clear();
     _documentProgress.clear();
@@ -5462,6 +6364,12 @@ class WebSocketService {
   void _requestAuthenticatedInitialState() {
     if (!_awaitingAuthenticatedInitialSync) return;
     _awaitingAuthenticatedInitialSync = false;
+    // The transport is now authenticated. Re-send each exact queued Chat Stop
+    // once in this new application-transport epoch even if recovery happens to
+    // produce no replay frame; target de-duplication keeps this idempotent.
+    for (final requestId in _pendingChatCancellationRequests.toList()) {
+      _dispatchChatCancellation(requestId);
+    }
     sendGetChatGptAccount();
     sendGetModels();
     requestPermissionSnapshot();
@@ -5487,6 +6395,8 @@ class WebSocketService {
   void _beginProgressReconnect() {
     _autonomousProgressLive = false;
     _awaitingAutonomousSnapshot = true;
+    _autonomousResumeTarget = '';
+    _autonomousResumeSequence = 0;
     _browserProgressLive = false;
     _documentProgressLive = false;
     _awaitingDocumentSnapshot = true;
@@ -5515,6 +6425,8 @@ class WebSocketService {
     final sequence = json['sequence'] as int;
     final sessionId = json['session_id'] as String;
     final runId = json['run_id'] as String;
+    final checkpointTaskId = json['checkpoint_task_id'];
+    final legacyCompatibility = json['legacy_compatibility'];
     final planRevision = json['plan_revision'] as int;
     final authorizationRevision = json['authorization_revision'] as int;
     final site = json['safe_site_display'] as String;
@@ -5531,6 +6443,10 @@ class WebSocketService {
         sessionId.length > 128 ||
         runId.isEmpty ||
         runId.length > 256 ||
+        (legacyCompatibility != null && legacyCompatibility is! bool) ||
+        (checkpointTaskId != null &&
+            (checkpointTaskId is! String ||
+                !_validAutonomousControlId(checkpointTaskId, 160))) ||
         planRevision < 0 ||
         authorizationRevision < 0 ||
         site.length > 512 ||
@@ -5680,6 +6596,13 @@ class WebSocketService {
     _lastAutonomousPlanRevision = planRevision;
     _lastAutonomousAuthorizationRevision = authorizationRevision;
     _autonomousTerminalSeen = json['terminal'] as bool;
+    if (_autonomousResumeTarget.isNotEmpty &&
+        (!_autonomousResumeTarget.startsWith('$runId\u0000') ||
+            json['terminal'] == true ||
+            sequence > _autonomousResumeSequence)) {
+      _autonomousResumeTarget = '';
+      _autonomousResumeSequence = 0;
+    }
     _autonomousProgressLive = true;
     _awaitingAutonomousSnapshot = false;
     _expectNewAutonomousRun = false;
@@ -6050,6 +6973,10 @@ class WebSocketService {
     if (clientRequestId.isEmpty) return;
     _acceptedRequests.remove(clientRequestId);
     _turnByRequest.remove(clientRequestId);
+    _runByRequest.remove(clientRequestId);
+    _providerByRequest.remove(clientRequestId);
+    _modelByRequest.remove(clientRequestId);
+    _reasoningByRequest.remove(clientRequestId);
     _toolAttemptByRequest.remove(clientRequestId);
     _pendingChatCancellationRequests.remove(clientRequestId);
     _sentChatCancellationTargets.remove(clientRequestId);
@@ -6275,6 +7202,7 @@ class WebSocketService {
     )) {
       return;
     }
+    if (_pendingChatCancellationRequests.contains(clientRequestId)) return;
     final st = _streamBuffers.putIfAbsent(convId, () => _ConvStreamState());
     final wasStreaming = st.streaming;
     // First chunk of a fresh turn: drop the previous turn's text.
@@ -6303,6 +7231,10 @@ class WebSocketService {
         clientRequestId: clientRequestId,
         turnId: turnId,
         messageId: messageId,
+        runId: _runByRequest[clientRequestId] ?? '',
+        providerId: _providerByRequest[clientRequestId] ?? '',
+        modelId: _modelByRequest[clientRequestId] ?? '',
+        effectiveReasoning: _reasoningByRequest[clientRequestId] ?? '',
         delta: delta,
       ),
     );
@@ -6327,6 +7259,7 @@ class WebSocketService {
     )) {
       return;
     }
+    if (_pendingChatCancellationRequests.contains(clientRequestId)) return;
     final st = _streamBuffers.putIfAbsent(convId, () => _ConvStreamState());
     st.text
       ..clear()
@@ -6347,6 +7280,10 @@ class WebSocketService {
         clientRequestId: clientRequestId,
         turnId: turnId,
         messageId: messageId,
+        runId: _runByRequest[clientRequestId] ?? '',
+        providerId: _providerByRequest[clientRequestId] ?? '',
+        modelId: _modelByRequest[clientRequestId] ?? '',
+        effectiveReasoning: _reasoningByRequest[clientRequestId] ?? '',
         delta: text,
       ),
     );
@@ -6366,6 +7303,10 @@ class WebSocketService {
     bool keepMediaPhase = false,
   }) {
     if (_convStreamCtrl.isClosed) return;
+    final runId = _runByRequest[clientRequestId] ?? '';
+    final providerId = _providerByRequest[clientRequestId] ?? '';
+    final modelId = _modelByRequest[clientRequestId] ?? '';
+    final effectiveReasoning = _reasoningByRequest[clientRequestId] ?? '';
     if (_shouldIgnoreConversationFrame(
       convId,
       clientRequestId: clientRequestId,
@@ -6393,6 +7334,10 @@ class WebSocketService {
           '',
           clientRequestId: clientRequestId,
           turnId: turnId,
+          runId: runId,
+          providerId: providerId,
+          modelId: modelId,
+          effectiveReasoning: effectiveReasoning,
           done: !error,
           error: error,
           untagged: true,
@@ -6420,6 +7365,10 @@ class WebSocketService {
         true,
         clientRequestId: clientRequestId,
         turnId: turnId,
+        runId: runId,
+        providerId: providerId,
+        modelId: modelId,
+        effectiveReasoning: effectiveReasoning,
       );
     } else {
       _forgetConversationRequest(convId);
@@ -6429,6 +7378,10 @@ class WebSocketService {
         false,
         clientRequestId: clientRequestId,
         turnId: turnId,
+        runId: runId,
+        providerId: providerId,
+        modelId: modelId,
+        effectiveReasoning: effectiveReasoning,
       );
     }
     if (kOsiaDebugPlaceholder) {
@@ -6443,6 +7396,10 @@ class WebSocketService {
         clientRequestId: clientRequestId,
         turnId: turnId,
         messageId: messageId,
+        runId: runId,
+        providerId: providerId,
+        modelId: modelId,
+        effectiveReasoning: effectiveReasoning,
         done: !error,
         error: error,
       ),
@@ -6464,15 +7421,30 @@ class WebSocketService {
       debugPrint('[OSIA WS] ignored stale or unowned media event');
       return false;
     }
+    final runId = _runByRequest[clientRequestId] ?? '';
+    final providerId = _providerByRequest[clientRequestId] ?? '';
+    final modelId = _modelByRequest[clientRequestId] ?? '';
+    final effectiveReasoning = _reasoningByRequest[clientRequestId] ?? '';
+    final activeRequest = _activeRequestByConv[conversationId] ?? '';
+    final releasesConversation =
+        activeRequest.isEmpty || activeRequest == clientRequestId;
     _mediaByConversation.remove(conversationId);
-    _forgetConversationRequest(conversationId);
-    _acceptedRequests.remove(clientRequestId);
-    _setConversationBusy(
-      conversationId,
-      false,
-      clientRequestId: clientRequestId,
-      turnId: turnId,
-    );
+    // A late media terminal belongs to its immutable request, not to whichever
+    // newer request may now own the conversation. Request-scoped cleanup keeps
+    // A from deleting B's active maps after a reconnect/history reconciliation.
+    _forgetRequest(clientRequestId);
+    if (releasesConversation) {
+      _setConversationBusy(
+        conversationId,
+        false,
+        clientRequestId: clientRequestId,
+        turnId: turnId,
+        runId: runId,
+        providerId: providerId,
+        modelId: modelId,
+        effectiveReasoning: effectiveReasoning,
+      );
+    }
     return true;
   }
 
@@ -6546,9 +7518,108 @@ class WebSocketService {
 
   /// Clear conversation [id]'s busy flag (WOR-103), used by recovery paths that
   /// learn a turn finished via refreshed history instead of a terminal frame.
-  void clearConversationBusy(String id) {
+  void clearConversationBusy(
+    String id, {
+    bool fromHistory = false,
+    ChatTurnIdentity? completedHistoryTurn,
+    String completedHistoryMessageId = '',
+  }) {
+    final completed = completedHistoryTurn;
+    if (fromHistory) {
+      // Persisted text proves that the reply can be rendered, but it does not
+      // prove that the canonical terminal/media phase has completed. A history
+      // reconciliation must therefore never release an exact live/media turn,
+      // nor may history for A clear a newer active binding B.
+      if (completed != null && completed.conversationId != id) return;
+      final media = _mediaByConversation[id];
+      if (media != null) {
+        final exactMedia =
+            completed != null &&
+            media.requestId == completed.requestId &&
+            media.turnId == completed.turnId &&
+            (completedHistoryMessageId.isEmpty ||
+                media.messageId == completedHistoryMessageId);
+        if (!exactMedia) {
+          debugPrint(
+            '[OSIA WS] history completion ignored while another media phase '
+            'owns the conversation',
+          );
+        }
+        return;
+      }
+      final active = activeTurnIdentity(id);
+      if (active != null) {
+        if (completed == null) return;
+        final exactTurn =
+            active.conversationId == completed.conversationId &&
+            active.requestId == completed.requestId &&
+            active.turnId == completed.turnId &&
+            active.runId == completed.runId &&
+            active.providerId == completed.providerId &&
+            active.modelId == completed.modelId &&
+            active.effectiveReasoning == completed.effectiveReasoning;
+        final canonicalTurn =
+            (active.runId.isNotEmpty &&
+                active.providerId.isNotEmpty &&
+                active.modelId.isNotEmpty) ||
+            (completed.runId.isNotEmpty &&
+                completed.providerId.isNotEmpty &&
+                completed.modelId.isNotEmpty);
+        if (!exactTurn || canonicalTurn) return;
+      }
+    }
     _forgetConversationRequest(id);
     _setConversationBusy(id, false);
+  }
+
+  bool _reconcileLegacyRouteUnavailableReplay(
+    ConversationHistoryMessage history,
+  ) {
+    final conversationId = history.id ?? '';
+    final requestId = history.requestId;
+    if (!history.replayed ||
+        !history.legacyRouteUnavailable ||
+        conversationId.isEmpty ||
+        requestId.isEmpty ||
+        _activeRequestByConv[conversationId] != requestId) {
+      return false;
+    }
+
+    HistoryMessage? persistedUser;
+    HistoryMessage? persistedAssistant;
+    var userIndex = -1;
+    var assistantIndex = -1;
+    for (var index = 0; index < history.messages.length; index++) {
+      final message = history.messages[index];
+      if (message.clientRequestId != requestId) continue;
+      if (message.conversationId.isNotEmpty &&
+          message.conversationId != conversationId) {
+        return false;
+      }
+      if (message.role == 'user') {
+        if (persistedUser != null) return false;
+        persistedUser = message;
+        userIndex = index;
+      } else if (message.role == 'assistant') {
+        if (persistedAssistant != null) return false;
+        persistedAssistant = message;
+        assistantIndex = index;
+      }
+    }
+    if (persistedUser == null ||
+        persistedAssistant == null ||
+        userIndex >= assistantIndex ||
+        persistedUser.turnId.isEmpty ||
+        persistedUser.turnId != persistedAssistant.turnId ||
+        persistedUser.messageId.isEmpty ||
+        persistedAssistant.messageId.isEmpty ||
+        persistedUser.messageId == persistedAssistant.messageId) {
+      return false;
+    }
+
+    _forgetConversationRequest(conversationId);
+    _setConversationBusy(conversationId, false);
+    return true;
   }
 
   Future<bool> _tryLanConnect(
@@ -7237,6 +8308,11 @@ class WebSocketService {
 
   void _markConnected() {
     if (_state != ConnectionState.connected) {
+      // Separate from [_socketGeneration], which owns relay callback lifetime.
+      // A retained relay signaling standby must stay valid when LAN/WebRTC wins,
+      // while exact Stop resend still needs a fresh idempotency epoch whenever
+      // the committed application transport reconnects.
+      _applicationTransportGeneration++;
       _setState(ConnectionState.connected);
     }
     _reconnectTimer?.cancel();
@@ -8254,7 +9330,12 @@ class WebSocketService {
       debugPrint('[OSIA WS] Socket open, sending auth');
 
       // Auth is the first message after the socket opens.
-      _send({'type': 'auth', 'token': token, 'device_id': _permissionDeviceId});
+      _send({
+        'type': 'auth',
+        'token': token,
+        'device_id': _permissionDeviceId,
+        'event_cursors': Map<String, int>.from(_lastApplicationSequence),
+      });
     } on TimeoutException {
       if (!_isCurrentConnect(connectGeneration)) return;
       final msg =
@@ -8315,6 +9396,11 @@ class WebSocketService {
           '';
       final turnId = json['turn_id']?.toString() ?? '';
       final messageId = json['message_id']?.toString() ?? '';
+      final runId = json['run_id']?.toString() ?? '';
+      final providerId =
+          (json['provider_id'] ?? json['provider'])?.toString() ?? '';
+      final modelId = (json['model_id'] ?? json['model'])?.toString() ?? '';
+      final effectiveReasoning = json['effective_reasoning']?.toString() ?? '';
 
       if (const <String>{
         'attachment_batch_accept',
@@ -8331,8 +9417,28 @@ class WebSocketService {
       }
 
       switch (type) {
+        case 'event_transport_context':
+          if (json['schema_version'] != 1) break;
+          final cursors = json['cursors'];
+          if (cursors is Map) {
+            for (final entry in cursors.entries) {
+              final streamId = entry.key?.toString() ?? '';
+              final sequence = entry.value;
+              if (streamId.isEmpty || sequence is! int || sequence < 0) {
+                continue;
+              }
+              final previous = _lastApplicationSequence[streamId] ?? 0;
+              if (sequence > previous) {
+                _lastApplicationSequence[streamId] = sequence;
+              }
+            }
+          }
         case 'execution_trace':
           _handleExecutionTraceFrame(json);
+        case 'action_truth_changed':
+          // Durable semantic truth is backend-owned. Mobile acknowledges this
+          // correlated projection event but never terminalizes an action from it.
+          break;
         case 'transcript':
           if (content != null) {
             _emit(
@@ -8341,6 +9447,10 @@ class WebSocketService {
                 conversationId: convId ?? '',
                 clientRequestId: clientRequestId,
                 turnId: turnId,
+                runId: runId,
+                providerId: providerId,
+                modelId: modelId,
+                effectiveReasoning: effectiveReasoning,
                 messageId: messageId,
               ),
             );
@@ -8348,29 +9458,33 @@ class WebSocketService {
         case 'response':
           if (content != null) {
             _markDocumentCanonicalTerminal('chat', turnId);
-            if (!_directFirstEnabled) _emit(ResponseMessage(content));
-            // WOR-53: also replace this conversation's buffer with the
-            // canonical full reply (parallel sink — no change to pacing).
-            _replaceConvText(
-              convId,
-              content,
-              clientRequestId: clientRequestId,
-              turnId: turnId,
-              messageId: messageId,
-            );
+            if (!_pendingChatCancellationRequests.contains(clientRequestId)) {
+              if (!_directFirstEnabled) _emit(ResponseMessage(content));
+              // WOR-53: also replace this conversation's buffer with the
+              // canonical full reply (parallel sink — no change to pacing).
+              _replaceConvText(
+                convId,
+                content,
+                clientRequestId: clientRequestId,
+                turnId: turnId,
+                messageId: messageId,
+              );
+            }
           }
         case 'response_chunk':
           if (content != null && content.isNotEmpty) {
-            if (!_directFirstEnabled) _emit(ResponseChunkMessage(content));
-            // WOR-53: also accrue the delta into this conversation's buffer so
-            // its reply survives a screen switch and hydrates on return.
-            _appendConvDelta(
-              convId,
-              content,
-              clientRequestId: clientRequestId,
-              turnId: turnId,
-              messageId: messageId,
-            );
+            if (!_pendingChatCancellationRequests.contains(clientRequestId)) {
+              if (!_directFirstEnabled) _emit(ResponseChunkMessage(content));
+              // WOR-53: also accrue the delta into this conversation's buffer so
+              // its reply survives a screen switch and hydrates on return.
+              _appendConvDelta(
+                convId,
+                content,
+                clientRequestId: clientRequestId,
+                turnId: turnId,
+                messageId: messageId,
+              );
+            }
           }
         case 'audio':
           if (data != null) {
@@ -8411,6 +9525,60 @@ class WebSocketService {
           }
         case 'status':
           if (content != null) {
+            final knownTurn = _turnByRequest[clientRequestId] ?? '';
+            final knownRun = _runByRequest[clientRequestId] ?? '';
+            final knownProvider = _providerByRequest[clientRequestId] ?? '';
+            final knownModel = _modelByRequest[clientRequestId] ?? '';
+            final knownReasoning = _reasoningByRequest[clientRequestId] ?? '';
+            final hasKnownReasoning = _reasoningByRequest.containsKey(
+              clientRequestId,
+            );
+            if ((knownTurn.isNotEmpty &&
+                    turnId.isNotEmpty &&
+                    knownTurn != turnId) ||
+                (knownRun.isNotEmpty &&
+                    runId.isNotEmpty &&
+                    knownRun != runId) ||
+                (knownProvider.isNotEmpty &&
+                    providerId.isNotEmpty &&
+                    knownProvider != providerId) ||
+                (knownModel.isNotEmpty &&
+                    modelId.isNotEmpty &&
+                    knownModel != modelId) ||
+                (hasKnownReasoning && knownReasoning != effectiveReasoning)) {
+              break;
+            }
+            if (clientRequestId.isNotEmpty) {
+              if (turnId.isNotEmpty) {
+                _turnByRequest.putIfAbsent(clientRequestId, () => turnId);
+              }
+              if (runId.isNotEmpty) {
+                _runByRequest.putIfAbsent(clientRequestId, () => runId);
+              }
+              if (providerId.isNotEmpty) {
+                _providerByRequest.putIfAbsent(
+                  clientRequestId,
+                  () => providerId,
+                );
+              }
+              if (modelId.isNotEmpty) {
+                _modelByRequest.putIfAbsent(clientRequestId, () => modelId);
+              }
+              if (runId.isNotEmpty) {
+                _reasoningByRequest.putIfAbsent(
+                  clientRequestId,
+                  () => effectiveReasoning,
+                );
+              } else if (effectiveReasoning.isNotEmpty) {
+                _reasoningByRequest.putIfAbsent(
+                  clientRequestId,
+                  () => effectiveReasoning,
+                );
+              }
+              if (_pendingChatCancellationRequests.contains(clientRequestId)) {
+                _dispatchChatCancellation(clientRequestId);
+              }
+            }
             if (content == 'done' && (convId == null || convId.isEmpty)) {
               _requestAuthenticatedInitialState();
             }
@@ -8420,6 +9588,13 @@ class WebSocketService {
                 conversationId: convId ?? '',
                 clientRequestId: clientRequestId,
                 turnId: turnId,
+                runId: runId.isNotEmpty ? runId : knownRun,
+                providerId: providerId.isNotEmpty ? providerId : knownProvider,
+                modelId: modelId.isNotEmpty ? modelId : knownModel,
+                effectiveReasoning: effectiveReasoning.isNotEmpty
+                    ? effectiveReasoning
+                    : knownReasoning,
+                preAcceptRejection: json['pre_accept_rejection'] == true,
               ),
             );
             // WOR-53: a terminal turn status finalizes the conversation's
@@ -8621,12 +9796,16 @@ class WebSocketService {
           debugPrint(
             '[OSIA WS] conversation_history: ${list.length} message(s)',
           );
-          _emit(
-            ConversationHistoryMessage(
-              id: json['id']?.toString(),
-              messages: list,
-            ),
+          final history = ConversationHistoryMessage(
+            id: json['id']?.toString(),
+            messages: list,
+            replayed: json['replayed'] == true,
+            legacyRouteUnavailable: json['legacy_route_unavailable'] == true,
+            requestId: (json['request_id'] ?? json['client_request_id'] ?? '')
+                .toString(),
           );
+          _reconcileLegacyRouteUnavailableReplay(history);
+          _emit(history);
         case 'api_keys':
           // Raw provider keys for pre-filling editors. Delivered on its own
           // [apiKeysStream] (NOT the paced message queue) so it can't disturb
@@ -8750,9 +9929,10 @@ class WebSocketService {
                   !_autonomousCancellationTarget.startsWith(
                     '$canonicalRunId\u0000',
                   ))) {
-            _autonomousCancellationTarget = '';
+            _clearPendingLegacyAutonomousCancellation();
           }
           _autonomousProgress = canonicalProgress;
+          _dispatchPendingLegacyAutonomousCancellation();
           final documentSnapshot = json['document_progress'];
           if (documentSnapshot is List) {
             for (final item in documentSnapshot.whereType<Map>()) {
@@ -8800,9 +9980,10 @@ class WebSocketService {
                   !_autonomousCancellationTarget.startsWith(
                     '$progressRunId\u0000',
                   ))) {
-            _autonomousCancellationTarget = '';
+            _clearPendingLegacyAutonomousCancellation();
           }
           _autonomousProgress = prog;
+          _dispatchPendingLegacyAutonomousCancellation();
           debugPrint(
             '[OSIA WS] autonomous_progress: event=${prog.event} '
             '${prog.tasksDone}/${prog.tasksTotal}',

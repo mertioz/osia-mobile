@@ -239,6 +239,67 @@ class _Harness {
   final LanguageController language;
 }
 
+int _canonicalSequence = 0;
+
+Map<String, dynamic> _canonicalTurnFrame({
+  required String type,
+  required String conversationId,
+  required String requestId,
+  required String turnId,
+  String runId = '',
+  String content = '',
+  String status = '',
+  bool terminal = false,
+  bool recovered = false,
+  String messageId = '',
+}) {
+  final sequence = ++_canonicalSequence;
+  final exactRunId = runId.isEmpty ? 'run-$turnId' : runId;
+  return <String, dynamic>{
+    'type': type,
+    'conversation_id': conversationId,
+    'request_id': requestId,
+    'client_request_id': requestId,
+    'turn_id': turnId,
+    'run_id': exactRunId,
+    'provider_id': 'provider-test',
+    'model_id': 'model-test',
+    'effective_reasoning': 'medium',
+    'message_id': messageId.isEmpty ? 'message-$turnId' : messageId,
+    'event_id': 'event-nav-$sequence',
+    'event_type': type,
+    'sequence': sequence,
+    'terminal': terminal,
+    if (content.isNotEmpty) 'content': content,
+    if (status.isNotEmpty) 'status': status,
+    if (recovered) 'recovered': true,
+  };
+}
+
+Map<String, dynamic> _correlatedMcpFrame({
+  required String id,
+  required String server,
+  required String tool,
+  required String summary,
+  required String conversationId,
+  required String requestId,
+  required String turnId,
+}) => <String, dynamic>{
+  'type': 'mcp_confirm_request',
+  'id': id,
+  'server': server,
+  'tool': tool,
+  'summary': summary,
+  'conversation_id': conversationId,
+  'request_id': requestId,
+  'client_request_id': requestId,
+  'turn_id': turnId,
+  'run_id': 'run-$turnId',
+  'provider_id': 'provider-test',
+  'model_id': 'model-test',
+  'effective_reasoning': 'medium',
+};
+
 Future<_Harness> _pumpChat(
   WidgetTester tester, {
   bool reducedMotion = false,
@@ -307,10 +368,7 @@ Future<_Harness> _pumpChat(
   );
 }
 
-Future<void> _disposeChatHarness(
-  WidgetTester tester,
-  _Harness harness,
-) async {
+Future<void> _disposeChatHarness(WidgetTester tester, _Harness harness) async {
   final previousFlutterErrorHandler = FlutterError.onError;
   FlutterError.onError = (details) {
     final exception = details.exceptionAsString();
@@ -376,6 +434,15 @@ void main() {
       await tester.pump();
       final requestId = service.sentTurns.single.$2;
       expect(requestId, isNotEmpty);
+      service.handleIncomingFrameForTest(
+        _canonicalTurnFrame(
+          type: 'turn_accepted',
+          conversationId: 'conv-nav',
+          requestId: requestId,
+          turnId: 'turn-nav',
+        ),
+      );
+      await tester.pump();
 
       await _openSettings(tester);
       final settings = tester.widget<SettingsScreen>(
@@ -397,30 +464,50 @@ void main() {
       await tester.pump();
       expect(find.textContaining('Navigation cron'), findsOneWidget);
 
-      service.handleIncomingFrameForTest(<String, dynamic>{
-        'type': 'mcp_confirm_request',
-        'id': 'confirm-nav',
-        'server': 'calendar',
-        'tool': 'create_event',
-        'summary': 'title',
-      });
+      service.handleIncomingFrameForTest(
+        _correlatedMcpFrame(
+          id: 'confirm-nav',
+          server: 'calendar',
+          tool: 'create_event',
+          summary: 'title',
+          conversationId: 'conv-nav',
+          requestId: requestId,
+          turnId: 'turn-nav',
+        ),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.textContaining('calendar'), findsOneWidget);
-      await tester.tap(find.text('Decline'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.textContaining('calendar'), findsNothing);
       expect(service.mcpResponses, <(String, bool)>[('confirm-nav', false)]);
 
-      service.handleIncomingFrameForTest(<String, dynamic>{
-        'type': 'mcp_confirm_request',
-        'id': 'confirm-nav-approve',
-        'server': 'gmail',
-        'tool': 'gmail_create_draft',
-        'summary': 'Create one temporary draft',
-      });
+      service.handleIncomingFrameForTest(
+        _canonicalTurnFrame(
+          type: 'response_chunk',
+          conversationId: 'conv-nav',
+          requestId: requestId,
+          turnId: 'turn-nav',
+          content: 'stream survives navigation',
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      await _closeSettings(tester);
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(find.textContaining('stream survives navigation'), findsOneWidget);
+      service.handleIncomingFrameForTest(
+        _correlatedMcpFrame(
+          id: 'confirm-nav-approve',
+          server: 'gmail',
+          tool: 'gmail_create_draft',
+          summary: 'Create one temporary draft',
+          conversationId: 'conv-nav',
+          requestId: requestId,
+          turnId: 'turn-nav',
+        ),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
+      expect(find.textContaining('gmail'), findsOneWidget);
       await tester.tap(find.text('Approve'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
@@ -428,19 +515,6 @@ void main() {
         ('confirm-nav', false),
         ('confirm-nav-approve', true),
       ]);
-
-      service.handleIncomingFrameForTest(<String, dynamic>{
-        'type': 'response_chunk',
-        'content': 'stream survives navigation',
-        'conversation_id': 'conv-nav',
-        'client_request_id': requestId,
-        'turn_id': 'turn-nav',
-      });
-      await tester.pump(const Duration(milliseconds: 50));
-      await _closeSettings(tester);
-      await tester.pump(const Duration(milliseconds: 150));
-
-      expect(find.textContaining('stream survives navigation'), findsOneWidget);
       expect(identical(service.socketIdentity, socket), isTrue);
       expect(service.socketGeneration, generation);
       expect(service.connectCalls, 0);
@@ -545,17 +619,28 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pump();
     final requestId = service.sentTurns.single.$2;
+    service.handleIncomingFrameForTest(
+      _canonicalTurnFrame(
+        type: 'turn_accepted',
+        conversationId: 'conv-nav',
+        requestId: requestId,
+        turnId: 'turn-coalesced',
+      ),
+    );
+    await tester.pump();
     final fullText =
         '${List<String>.generate(120, (index) => 'segment-$index').join(' ')} EXACT-WOR-122-END';
 
-    service.handleIncomingFrameForTest(<String, dynamic>{
-      'type': 'response_chunk',
-      'content': fullText,
-      'conversation_id': 'conv-nav',
-      'client_request_id': requestId,
-      'turn_id': 'turn-coalesced',
-      'message_id': 'message-coalesced',
-    });
+    service.handleIncomingFrameForTest(
+      _canonicalTurnFrame(
+        type: 'response_chunk',
+        conversationId: 'conv-nav',
+        requestId: requestId,
+        turnId: 'turn-coalesced',
+        content: fullText,
+        messageId: 'message-coalesced',
+      ),
+    );
     await tester.pump(const Duration(milliseconds: 16));
 
     var assistant = tester
@@ -565,22 +650,33 @@ void main() {
     expect(assistant.text.length, lessThan(fullText.length));
     expect(assistant.isStreaming, isTrue);
 
-    service.handleIncomingFrameForTest(<String, dynamic>{
-      'type': 'response',
-      'content': fullText,
-      'conversation_id': 'conv-nav',
-      'client_request_id': requestId,
-      'turn_id': 'turn-coalesced',
-      'message_id': 'message-coalesced',
-    });
-    service.handleIncomingFrameForTest(<String, dynamic>{
-      'type': 'status',
-      'content': 'done',
-      'conversation_id': 'conv-nav',
-      'client_request_id': requestId,
-      'turn_id': 'turn-coalesced',
-    });
-    await tester.pump();
+    service.handleIncomingFrameForTest(
+      _canonicalTurnFrame(
+        type: 'response',
+        conversationId: 'conv-nav',
+        requestId: requestId,
+        turnId: 'turn-coalesced',
+        content: fullText,
+        messageId: 'message-coalesced',
+      ),
+    );
+    service.handleIncomingFrameForTest(
+      _canonicalTurnFrame(
+        type: 'status',
+        conversationId: 'conv-nav',
+        requestId: requestId,
+        turnId: 'turn-coalesced',
+        content: 'done',
+        terminal: true,
+      ),
+    );
+    for (var tick = 0; tick < 100; tick++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      final current = tester
+          .widgetList<ChatBubble>(find.byType(ChatBubble))
+          .singleWhere((bubble) => !bubble.isUser);
+      if (!current.isStreaming) break;
+    }
 
     assistant = tester
         .widgetList<ChatBubble>(find.byType(ChatBubble))
@@ -595,14 +691,24 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pump();
     final secondRequestId = service.sentTurns.last.$2;
-    service.handleIncomingFrameForTest(<String, dynamic>{
-      'type': 'response_chunk',
-      'content': fullText,
-      'conversation_id': 'conv-nav',
-      'client_request_id': secondRequestId,
-      'turn_id': 'turn-dispose',
-      'message_id': 'message-dispose',
-    });
+    service.handleIncomingFrameForTest(
+      _canonicalTurnFrame(
+        type: 'turn_accepted',
+        conversationId: 'conv-nav',
+        requestId: secondRequestId,
+        turnId: 'turn-dispose',
+      ),
+    );
+    service.handleIncomingFrameForTest(
+      _canonicalTurnFrame(
+        type: 'response_chunk',
+        conversationId: 'conv-nav',
+        requestId: secondRequestId,
+        turnId: 'turn-dispose',
+        content: fullText,
+        messageId: 'message-dispose',
+      ),
+    );
     await tester.pump(const Duration(milliseconds: 1));
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 1));
@@ -634,14 +740,24 @@ void main() {
     final requestId = service.sentTurns.single.$2;
     const fullText = 'one large coalesced network chunk, shown in full';
 
-    service.handleIncomingFrameForTest(<String, dynamic>{
-      'type': 'response_chunk',
-      'content': fullText,
-      'conversation_id': 'conv-nav',
-      'client_request_id': requestId,
-      'turn_id': 'turn-reduced',
-      'message_id': 'message-reduced',
-    });
+    service.handleIncomingFrameForTest(
+      _canonicalTurnFrame(
+        type: 'turn_accepted',
+        conversationId: 'conv-nav',
+        requestId: requestId,
+        turnId: 'turn-reduced',
+      ),
+    );
+    service.handleIncomingFrameForTest(
+      _canonicalTurnFrame(
+        type: 'response_chunk',
+        conversationId: 'conv-nav',
+        requestId: requestId,
+        turnId: 'turn-reduced',
+        content: fullText,
+        messageId: 'message-reduced',
+      ),
+    );
     await tester.pump();
 
     final assistant = tester
@@ -650,21 +766,26 @@ void main() {
     expect(assistant.text, fullText);
     expect(service.bufferedText('conv-nav'), fullText);
 
-    service.handleIncomingFrameForTest(<String, dynamic>{
-      'type': 'response',
-      'content': fullText,
-      'conversation_id': 'conv-nav',
-      'client_request_id': requestId,
-      'turn_id': 'turn-reduced',
-      'message_id': 'message-reduced',
-    });
-    service.handleIncomingFrameForTest(<String, dynamic>{
-      'type': 'status',
-      'content': 'done',
-      'conversation_id': 'conv-nav',
-      'client_request_id': requestId,
-      'turn_id': 'turn-reduced',
-    });
+    service.handleIncomingFrameForTest(
+      _canonicalTurnFrame(
+        type: 'response',
+        conversationId: 'conv-nav',
+        requestId: requestId,
+        turnId: 'turn-reduced',
+        content: fullText,
+        messageId: 'message-reduced',
+      ),
+    );
+    service.handleIncomingFrameForTest(
+      _canonicalTurnFrame(
+        type: 'status',
+        conversationId: 'conv-nav',
+        requestId: requestId,
+        turnId: 'turn-reduced',
+        content: 'done',
+        terminal: true,
+      ),
+    );
 
     // Drain the service's legacy 30 ms pacing timer and the 80 ms scroll
     // follow-up; reduced motion itself has no reveal timer.
@@ -704,16 +825,28 @@ void main() {
         await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
         await tester.pump();
         final requestId = harness.service.sentTurns.single.$2;
+        harness.service.handleIncomingFrameForTest(
+          _canonicalTurnFrame(
+            type: 'turn_accepted',
+            conversationId: 'conv-nav',
+            requestId: requestId,
+            turnId: 'turn-old-audio',
+          ),
+        );
+        await tester.pump();
         harness.service.handleIncomingFrameForTest(<String, dynamic>{
           'type': 'new_chat',
         });
         await tester.pump();
-        harness.service.handleIncomingFrameForTest(<String, dynamic>{
-          'type': 'audio',
+        harness.service.handleIncomingFrameForTest({
+          ..._canonicalTurnFrame(
+            type: 'audio',
+            conversationId: 'conv-nav',
+            requestId: requestId,
+            turnId: 'turn-old-audio',
+          ),
           'data': 'bGF0ZQ==',
           'source': 'response',
-          'conversation_id': 'conv-nav',
-          'client_request_id': requestId,
         });
         await tester.pump(const Duration(milliseconds: 20));
         expect(
@@ -721,12 +854,45 @@ void main() {
           isEmpty,
         );
 
-        harness.service.handleIncomingFrameForTest(<String, dynamic>{
-          'type': 'audio',
+        await tester.enterText(find.byType(TextField), 'fresh response');
+        await tester.pump();
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump();
+        final freshRequestId = harness.service.sentTurns.last.$2;
+        harness.service.handleIncomingFrameForTest(
+          _canonicalTurnFrame(
+            type: 'turn_accepted',
+            conversationId: 'conv-new',
+            requestId: freshRequestId,
+            turnId: 'turn-fresh-audio',
+          ),
+        );
+        await tester.pump();
+        harness.service.handleIncomingFrameForTest({
+          ..._canonicalTurnFrame(
+            type: 'audio',
+            conversationId: 'conv-new',
+            requestId: freshRequestId,
+            turnId: 'turn-fresh-audio',
+            runId: 'run-stale-audio',
+          ),
+          'data': 'c3RhbGU=',
+          'source': 'response',
+        });
+        await tester.pump(const Duration(milliseconds: 20));
+        expect(
+          logs.where((line) => line.startsWith('[OSIA Chat] audio:')),
+          isEmpty,
+        );
+        harness.service.handleIncomingFrameForTest({
+          ..._canonicalTurnFrame(
+            type: 'audio',
+            conversationId: 'conv-new',
+            requestId: freshRequestId,
+            turnId: 'turn-fresh-audio',
+          ),
           'data': 'ZnJlc2g=',
           'source': 'response',
-          'conversation_id': 'conv-new',
-          'client_request_id': 'request-fresh',
         });
         await tester.pump(const Duration(milliseconds: 100));
 
@@ -759,34 +925,68 @@ void main() {
     },
   );
 
-  testWidgets('permission B waits while permission A dialog is active', (
+  testWidgets('correlated inline permissions remain distinct and answer once', (
     tester,
   ) async {
     final harness = await _pumpChat(tester);
-    harness.service.handleIncomingFrameForTest(<String, dynamic>{
-      'type': 'mcp_confirm_request',
-      'id': 'confirm-a',
-      'server': 'calendar',
-      'tool': 'create_event',
-      'summary': 'First action',
-    });
-    await tester.pumpAndSettle();
-    harness.service.handleIncomingFrameForTest(<String, dynamic>{
-      'type': 'mcp_confirm_request',
-      'id': 'confirm-b',
-      'server': 'gmail',
-      'tool': 'gmail_create_draft',
-      'summary': 'Second action',
-    });
+    await tester.enterText(find.byType(TextField), 'permission turn');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pump();
+    final requestId = harness.service.sentTurns.single.$2;
+    harness.service.handleIncomingFrameForTest(
+      _canonicalTurnFrame(
+        type: 'turn_accepted',
+        conversationId: 'conv-nav',
+        requestId: requestId,
+        turnId: 'turn-permission-queue',
+      ),
+    );
+    harness.service.handleIncomingFrameForTest(
+      _correlatedMcpFrame(
+        id: 'confirm-a',
+        server: 'calendar',
+        tool: 'create_event',
+        summary: 'First action',
+        conversationId: 'conv-nav',
+        requestId: requestId,
+        turnId: 'turn-permission-queue',
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    harness.service.handleIncomingFrameForTest(
+      _correlatedMcpFrame(
+        id: 'confirm-b',
+        server: 'gmail',
+        tool: 'gmail_create_draft',
+        summary: 'Second action',
+        conversationId: 'conv-nav',
+        requestId: requestId,
+        turnId: 'turn-permission-queue',
+      ),
+    );
     await tester.pump();
 
     expect(find.textContaining('calendar'), findsOneWidget);
-    expect(find.textContaining('gmail'), findsNothing);
-    await tester.tap(find.text('Approve'));
-    await tester.pumpAndSettle();
     expect(find.textContaining('gmail'), findsOneWidget);
-    await tester.tap(find.text('Decline'));
-    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('permission_confirm-a')),
+        matching: find.text('Approve'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.textContaining('gmail'), findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('permission_confirm-b')),
+        matching: find.text('Decline'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(harness.service.mcpResponses, <(String, bool)>[
       ('confirm-a', true),
       ('confirm-b', false),
@@ -799,19 +999,36 @@ void main() {
     tester,
   ) async {
     final harness = await _pumpChat(tester);
-    final frame = <String, dynamic>{
-      'type': 'mcp_confirm_request',
-      'id': 'confirm-reprojected',
-      'server': 'calendar',
-      'tool': 'create_event',
-      'summary': 'Reprojected action',
-    };
+    await tester.enterText(find.byType(TextField), 'reproject permission');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pump();
+    final requestId = harness.service.sentTurns.single.$2;
+    harness.service.handleIncomingFrameForTest(
+      _canonicalTurnFrame(
+        type: 'turn_accepted',
+        conversationId: 'conv-nav',
+        requestId: requestId,
+        turnId: 'turn-permission-reprojected',
+      ),
+    );
+    final frame = _correlatedMcpFrame(
+      id: 'confirm-reprojected',
+      server: 'calendar',
+      tool: 'create_event',
+      summary: 'Reprojected action',
+      conversationId: 'conv-nav',
+      requestId: requestId,
+      turnId: 'turn-permission-reprojected',
+    );
     harness.service.handleIncomingFrameForTest(frame);
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     harness.service.handleIncomingFrameForTest(frame);
     await tester.pump();
     await tester.tap(find.text('Approve'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(harness.service.mcpResponses, <(String, bool)>[
       ('confirm-reprojected', true),

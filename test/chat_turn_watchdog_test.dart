@@ -334,6 +334,7 @@ void main() {
         ),
       );
       await tester.pump();
+      await tester.pump();
       expect(find.text("OSIA didn't respond."), findsNothing);
       expect(find.text('The encrypted relay transfer failed.'), findsOneWidget);
 

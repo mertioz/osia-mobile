@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
 
+  characters: ^1.4.1
   crypto: ^3.0.0
   cryptography: ^2.7.0
   web_socket_channel: ^3.0.2

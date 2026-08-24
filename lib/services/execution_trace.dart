@@ -8,6 +8,7 @@ const int executionTraceMaxEvents = 24;
 const int executionTraceMaxSerializedBytes = 12 * 1024;
 
 enum ExecutionTraceKind {
+  reasoningSummary,
   goal,
   action,
   waitingPermission,
@@ -19,6 +20,8 @@ enum ExecutionTraceKind {
 
 const Map<String, ExecutionTraceKind> _kindByWire =
     <String, ExecutionTraceKind>{
+      'reasoning_summary': ExecutionTraceKind.reasoningSummary,
+      'public_reasoning_summary': ExecutionTraceKind.reasoningSummary,
       'goal': ExecutionTraceKind.goal,
       'action': ExecutionTraceKind.action,
       'waiting_permission': ExecutionTraceKind.waitingPermission,
@@ -30,6 +33,7 @@ const Map<String, ExecutionTraceKind> _kindByWire =
 
 const Map<String, ExecutionTraceKind> executionTraceDisplayKeys =
     <String, ExecutionTraceKind>{
+      'execution.reasoning.summary': ExecutionTraceKind.reasoningSummary,
       'execution.goal.answer': ExecutionTraceKind.goal,
       'execution.goal.complete_task': ExecutionTraceKind.goal,
       'execution.action.preparing': ExecutionTraceKind.action,
@@ -55,32 +59,115 @@ const Map<String, ExecutionTraceKind> executionTraceDisplayKeys =
 
 final RegExp _safeIdPattern = RegExp(r'^[A-Za-z0-9._:-]{1,256}$');
 
+bool _safeOptionalId(String value) =>
+    value.isEmpty || _safeIdPattern.hasMatch(value);
+
+bool _safeMetadata(String value, {int maxLength = 256}) {
+  if (value.length > maxLength) return false;
+  for (final unit in value.codeUnits) {
+    if (unit < 0x20 || unit == 0x7f) return false;
+  }
+  return true;
+}
+
+bool _safePublicSummary(String value) {
+  if (value.trim().isEmpty ||
+      value.length > 2000 ||
+      utf8.encode(value).length > 4096) {
+    return false;
+  }
+  if (RegExp(
+    r'<\s*/?\s*(?:think(?:ing)?|reasoning|analysis|tool(?:[_-]?(?:call|result|code))?|function_calls)\b',
+    caseSensitive: false,
+  ).hasMatch(value)) {
+    return false;
+  }
+  for (final unit in value.codeUnits) {
+    if ((unit < 0x20 && unit != 0x09 && unit != 0x0a) ||
+        unit == 0x7f ||
+        const <int>{
+          0x061c,
+          0x200e,
+          0x200f,
+          0x202a,
+          0x202b,
+          0x202c,
+          0x202d,
+          0x202e,
+          0x2066,
+          0x2067,
+          0x2068,
+          0x2069,
+        }.contains(unit)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 @immutable
 class ExecutionTraceKey {
   final String conversationId;
   final String requestId;
   final String turnId;
+  final String runId;
+  final String providerId;
+  final String modelId;
+  final String effectiveReasoning;
 
   const ExecutionTraceKey({
     required this.conversationId,
     required this.requestId,
     required this.turnId,
+    this.runId = '',
+    this.providerId = '',
+    this.modelId = '',
+    this.effectiveReasoning = '',
   });
+
+  /// Current unified-run traces carry the whole metadata group together.
+  /// A completely absent group remains valid only for historical snapshots.
+  bool get hasCanonicalMetadata =>
+      runId.isNotEmpty ||
+      providerId.isNotEmpty ||
+      modelId.isNotEmpty ||
+      effectiveReasoning.isNotEmpty;
 
   bool get valid =>
       _safeIdPattern.hasMatch(conversationId) &&
       _safeIdPattern.hasMatch(requestId) &&
-      _safeIdPattern.hasMatch(turnId);
+      _safeIdPattern.hasMatch(turnId) &&
+      _safeOptionalId(runId) &&
+      _safeMetadata(providerId) &&
+      _safeMetadata(modelId) &&
+      _safeMetadata(effectiveReasoning, maxLength: 64) &&
+      (!hasCanonicalMetadata ||
+          (runId.isNotEmpty &&
+              providerId.isNotEmpty &&
+              modelId.isNotEmpty &&
+              effectiveReasoning.isNotEmpty));
 
   @override
   bool operator ==(Object other) =>
       other is ExecutionTraceKey &&
       other.conversationId == conversationId &&
       other.requestId == requestId &&
-      other.turnId == turnId;
+      other.turnId == turnId &&
+      other.runId == runId &&
+      other.providerId == providerId &&
+      other.modelId == modelId &&
+      other.effectiveReasoning == effectiveReasoning;
 
   @override
-  int get hashCode => Object.hash(conversationId, requestId, turnId);
+  int get hashCode => Object.hash(
+    conversationId,
+    requestId,
+    turnId,
+    runId,
+    providerId,
+    modelId,
+    effectiveReasoning,
+  );
 }
 
 @immutable
@@ -125,6 +212,7 @@ class ExecutionTraceEvent {
   final String invocationId;
   final String toolAttemptId;
   final String permissionRequestId;
+  final String publicSummary;
 
   const ExecutionTraceEvent({
     required this.eventId,
@@ -138,6 +226,7 @@ class ExecutionTraceEvent {
     this.invocationId = '',
     this.toolAttemptId = '',
     this.permissionRequestId = '',
+    this.publicSummary = '',
   });
 
   static const Set<String> _requiredKeys = <String>{
@@ -158,6 +247,12 @@ class ExecutionTraceEvent {
     'invocation_id',
     'tool_attempt_id',
     'permission_request_id',
+    'run_id',
+    'provider_id',
+    'model_id',
+    'effective_reasoning',
+    'summary',
+    'public_summary',
   };
 
   static ExecutionTraceEvent? parse(
@@ -181,15 +276,24 @@ class ExecutionTraceEvent {
     final conversationId = raw['conversation_id'];
     final requestId = raw['request_id'];
     final turnId = raw['turn_id'];
+    final runId = raw['run_id'] ?? '';
+    final providerId = raw['provider_id'] ?? '';
+    final modelId = raw['model_id'] ?? '';
+    final effectiveReasoning = raw['effective_reasoning'] ?? '';
     final sequence = raw['sequence'];
     final revision = raw['revision'];
-    final kind = _kindByWire[raw['kind']];
+    final kindWire = raw['kind'];
+    final kind = _kindByWire[kindWire];
     final timestampRaw = raw['timestamp'];
     final terminal = raw['terminal'];
     if (eventId is! String ||
         conversationId is! String ||
         requestId is! String ||
         turnId is! String ||
+        runId is! String ||
+        providerId is! String ||
+        modelId is! String ||
+        effectiveReasoning is! String ||
         sequence is! int ||
         sequence < 1 ||
         revision is! int ||
@@ -205,11 +309,31 @@ class ExecutionTraceEvent {
       conversationId: conversationId,
       requestId: requestId,
       turnId: turnId,
+      runId: runId,
+      providerId: providerId,
+      modelId: modelId,
+      effectiveReasoning: effectiveReasoning,
     );
+    final metadataKeys = const <String>{
+      'run_id',
+      'provider_id',
+      'model_id',
+      'effective_reasoning',
+    };
+    final suppliedMetadataKeys = raw.keys.toSet().intersection(metadataKeys);
+    final exactCurrentMetadata =
+        suppliedMetadataKeys.isEmpty ||
+        (suppliedMetadataKeys.length == metadataKeys.length &&
+            runId.isNotEmpty &&
+            providerId.isNotEmpty &&
+            modelId.isNotEmpty);
     final timestamp = DateTime.tryParse(timestampRaw);
     final display = ExecutionTraceDisplay.parse(raw['display'], kind);
     if (!_safeIdPattern.hasMatch(eventId) ||
         !traceKey.valid ||
+        !exactCurrentMetadata ||
+        (kind == ExecutionTraceKind.reasoningSummary &&
+            suppliedMetadataKeys.length != metadataKeys.length) ||
         timestamp == null ||
         display == null) {
       return null;
@@ -226,11 +350,27 @@ class ExecutionTraceEvent {
     final invocationId = optionalId('invocation_id');
     final toolAttemptId = optionalId('tool_attempt_id');
     final permissionRequestId = optionalId('permission_request_id');
+    final canonicalSummary = raw['summary'];
+    final legacySummary = raw['public_summary'];
+    final publicSummary = canonicalSummary ?? legacySummary ?? '';
     if (<String>{
-      invocationId,
-      toolAttemptId,
-      permissionRequestId,
-    }.contains('!invalid!')) {
+          invocationId,
+          toolAttemptId,
+          permissionRequestId,
+        }.contains('!invalid!') ||
+        publicSummary is! String ||
+        (canonicalSummary != null && canonicalSummary is! String) ||
+        (legacySummary != null && legacySummary is! String) ||
+        (canonicalSummary is String &&
+            legacySummary is String &&
+            canonicalSummary != legacySummary)) {
+      return null;
+    }
+    if (kind == ExecutionTraceKind.reasoningSummary) {
+      if (!_safePublicSummary(publicSummary)) {
+        return null;
+      }
+    } else if (publicSummary.isNotEmpty) {
       return null;
     }
     return ExecutionTraceEvent(
@@ -245,6 +385,7 @@ class ExecutionTraceEvent {
       invocationId: invocationId,
       toolAttemptId: toolAttemptId,
       permissionRequestId: permissionRequestId,
+      publicSummary: publicSummary,
     );
   }
 
@@ -254,9 +395,16 @@ class ExecutionTraceEvent {
     'conversation_id': traceKey.conversationId,
     'request_id': traceKey.requestId,
     'turn_id': traceKey.turnId,
+    if (traceKey.hasCanonicalMetadata) 'run_id': traceKey.runId,
+    if (traceKey.hasCanonicalMetadata) 'provider_id': traceKey.providerId,
+    if (traceKey.hasCanonicalMetadata) 'model_id': traceKey.modelId,
+    if (traceKey.hasCanonicalMetadata)
+      'effective_reasoning': traceKey.effectiveReasoning,
     'sequence': sequence,
     'revision': revision,
-    'kind': _kindByWire.entries.firstWhere((entry) => entry.value == kind).key,
+    'kind': kind == ExecutionTraceKind.reasoningSummary
+        ? 'public_reasoning_summary'
+        : _kindByWire.entries.firstWhere((entry) => entry.value == kind).key,
     'display': display.toJson(),
     'timestamp': timestamp.toIso8601String(),
     'terminal': terminal,
@@ -265,6 +413,7 @@ class ExecutionTraceEvent {
     if (toolAttemptId.isNotEmpty) 'tool_attempt_id': toolAttemptId,
     if (permissionRequestId.isNotEmpty)
       'permission_request_id': permissionRequestId,
+    if (publicSummary.isNotEmpty) 'summary': publicSummary,
   };
 }
 
@@ -322,29 +471,73 @@ class ExecutionTraceSnapshot {
     'conversation_id': key.conversationId,
     'request_id': key.requestId,
     'turn_id': key.turnId,
+    if (key.hasCanonicalMetadata) 'run_id': key.runId,
+    if (key.hasCanonicalMetadata) 'provider_id': key.providerId,
+    if (key.hasCanonicalMetadata) 'model_id': key.modelId,
+    if (key.hasCanonicalMetadata) 'effective_reasoning': key.effectiveReasoning,
     'redaction_class': executionTraceRedactionClass,
     'events': events.map((event) => event.toJson()).toList(),
   };
 
   static ExecutionTraceSnapshot? parseHistory(Object? raw) {
+    const required = <String>{
+      'schema_version',
+      'conversation_id',
+      'request_id',
+      'turn_id',
+      'redaction_class',
+      'events',
+    };
+    const optional = <String>{
+      'run_id',
+      'provider_id',
+      'model_id',
+      'effective_reasoning',
+    };
     if (raw is! Map ||
+        !raw.keys.toSet().containsAll(required) ||
         raw.keys.toSet().difference(const <String>{
           'schema_version',
           'conversation_id',
           'request_id',
           'turn_id',
+          ...optional,
           'redaction_class',
           'events',
         }).isNotEmpty ||
-        raw.length != 6 ||
         raw['schema_version'] != executionTraceSchemaVersion ||
         raw['redaction_class'] != executionTraceRedactionClass) {
       return null;
     }
+    final suppliedOptional = raw.keys.toSet().intersection(optional);
+    if (suppliedOptional.isNotEmpty &&
+        suppliedOptional.length != optional.length) {
+      return null;
+    }
+    final conversationId = raw['conversation_id'];
+    final requestId = raw['request_id'];
+    final turnId = raw['turn_id'];
+    final runId = raw['run_id'] ?? '';
+    final providerId = raw['provider_id'] ?? '';
+    final modelId = raw['model_id'] ?? '';
+    final effectiveReasoning = raw['effective_reasoning'] ?? '';
+    if (conversationId is! String ||
+        requestId is! String ||
+        turnId is! String ||
+        runId is! String ||
+        providerId is! String ||
+        modelId is! String ||
+        effectiveReasoning is! String) {
+      return null;
+    }
     final key = ExecutionTraceKey(
-      conversationId: raw['conversation_id']?.toString() ?? '',
-      requestId: raw['request_id']?.toString() ?? '',
-      turnId: raw['turn_id']?.toString() ?? '',
+      conversationId: conversationId,
+      requestId: requestId,
+      turnId: turnId,
+      runId: runId,
+      providerId: providerId,
+      modelId: modelId,
+      effectiveReasoning: effectiveReasoning,
     );
     final items = raw['events'];
     if (!key.valid ||
@@ -379,6 +572,34 @@ class ExecutionTraceSnapshot {
   }
 }
 
+/// Returns [snapshot] only when it belongs to the exact visible Chat identity.
+///
+/// Current unified turns carry run/provider/model/reasoning together. Legacy
+/// history remains readable when both the message and its trace omit that whole
+/// metadata group, but an incomplete or stale identity never crosses messages.
+ExecutionTraceSnapshot? executionTraceForExactIdentity(
+  ExecutionTraceSnapshot? snapshot, {
+  required String conversationId,
+  required String requestId,
+  required String turnId,
+  required String runId,
+  required String providerId,
+  required String modelId,
+  required String effectiveReasoning,
+}) {
+  if (snapshot == null || !snapshot.key.valid) return null;
+  final key = snapshot.key;
+  return key.conversationId == conversationId &&
+          key.requestId == requestId &&
+          key.turnId == turnId &&
+          key.runId == runId &&
+          key.providerId == providerId &&
+          key.modelId == modelId &&
+          key.effectiveReasoning == effectiveReasoning
+      ? snapshot
+      : null;
+}
+
 class ExecutionTraceAccumulator {
   final ExecutionTraceKey key;
   final Map<String, ExecutionTraceEvent> _events =
@@ -389,6 +610,13 @@ class ExecutionTraceAccumulator {
   ExecutionTraceAccumulator(this.key);
 
   bool get terminal => _terminal;
+
+  ExecutionTraceSnapshot? get snapshot {
+    if (_events.isEmpty) return null;
+    final values = _events.values.toList()
+      ..sort((a, b) => a.sequence.compareTo(b.sequence));
+    return ExecutionTraceSnapshot(key: key, events: values);
+  }
 
   ExecutionTraceSnapshot? merge(ExecutionTraceEnvelope envelope) {
     if (envelope.event.traceKey != key) {

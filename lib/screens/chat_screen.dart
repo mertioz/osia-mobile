@@ -25,12 +25,9 @@ import '../widgets/chat_bubble.dart';
 import '../widgets/connection_badge.dart';
 import '../widgets/execution_trace_block.dart';
 import '../widgets/glass_input_bar.dart';
-import '../widgets/mcp_confirm_dialog.dart';
 import '../widgets/model_selector_sheet.dart';
 import '../widgets/slash_command_palette.dart';
-import '../widgets/thinking_indicator.dart';
 import '../widgets/transport_status_sheet.dart';
-import 'autonomous_screen.dart';
 import 'settings_screen.dart';
 
 enum _TurnPhase {
@@ -133,7 +130,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // Services
   late ws.WebSocketService _wsService;
   final AudioService _audioService = AudioService();
@@ -178,6 +175,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription? _attachmentProtocolSub;
   StreamSubscription? _documentProgressSub;
   StreamSubscription? _autonomousSub;
+  ws.AutonomousProgressMessage? _legacyRun;
   ExecutionTraceSnapshot? _liveExecutionTrace;
   String? _connError;
   final List<String> _abandonedAudioRequestIds = <String>[];
@@ -270,8 +268,14 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _typewriterTimer;
   // Full text the typewriter is revealing into the active streaming bubble.
   String _typeTarget = '';
-  // Characters of [_typeTarget] currently shown in the streaming bubble.
+  // Grapheme boundaries in [_typeTarget]; never split an emoji/combining mark.
+  List<int> _typeBoundaries = const <int>[0];
+  // Grapheme clusters of [_typeTarget] currently shown in the streaming bubble.
   int _typeRevealed = 0;
+  bool _terminalDrainPending = false;
+  DateTime? _terminalDrainDeadline;
+  ExecutionTraceSnapshot? _terminalDrainTrace;
+  int? _terminalDrainGeneration;
 
   // WOR-75/WOR-53/WOR-62 (recovery poll): when the displayed conversation has an
   // in-flight turn whose streamed chunks never reached us — the socket dropped
@@ -300,11 +304,11 @@ class _ChatScreenState extends State<ChatScreen> {
   // True while we sent a turn and haven't yet seen status=done/error.
   bool _awaitingResponse = false;
 
-  // ── Optimistic thinking + no-response watchdog ──────────────────────────
+  // ── Real activity + no-response watchdog ────────────────────────────────
   // Standalone UI state (deliberately NOT a sealed [ws.OsiaMessage] subtype):
-  // the thinking indicator is shown locally the instant the user taps send —
-  // before any network round-trip — to mask first-token latency. A 12s timer
-  // armed at send is cancelled at the FIRST SIGN OF LIFE from the server for
+  // the compact thinking disclosure appears only after authoritative server
+  // activity or recovered pending state. A 12s timer armed at send is cancelled
+  // at the FIRST SIGN OF LIFE from the server for
   // this turn — any turn-progress frame: a status (thinking / tool-status)
   // update, an audio frame, the voice transcript, or the first response_chunk
   // / full response, whichever lands first. It therefore only elapses on TOTAL
@@ -312,8 +316,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // multi-step task the server keeps emitting status/tool/audio frames well
   // before the final reply's first token, so the watchdog stands down and the
   // false error never shows. If it does elapse with no frame at all,
-  // [_noResponse] flips and an inline "no response" + Réessayer tile replaces
-  // the thinking dots.
+  // [_noResponse] flips and an inline "no response" + Réessayer tile appears.
   static const Duration _firstTokenTimeout = Duration(seconds: 12);
   // Queueing all chunks locally is not a peer acknowledgement. Preserve the
   // 12-second small-frame path, but let the endpoint's 30-second chunk expiry
@@ -335,6 +338,8 @@ class _ChatScreenState extends State<ChatScreen> {
   // The last text turn we sent, captured so "Réessayer" re-sends it verbatim
   // (file + prompt) without the user retyping. Cleared on switch/new/reset.
   _PendingTurn? _pendingTurn;
+  _ActiveTurnProjection? _activeTurn;
+  int _turnGeneration = 0;
 
   // Auto-TTS preference (Settings → Voice). When false, audio frames that
   // arrive with a response are not played automatically. WOR-78 Fix B: defaults
@@ -350,6 +355,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _slashPaletteController.addListener(_onSlashPaletteChanged);
     _notificationService = OsiaNotificationService(storage: widget.storage);
     _pendingHandoff = widget.handoff;
@@ -448,6 +454,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _connSub = _wsService.connectionStream.listen((state) {
       if (state != ws.ConnectionState.connected) {
         _attachmentCancellation?.cancel();
+        _mcpConfirmQueue.clear();
+        _mcpConfirmPendingIds.clear();
       }
       if (mounted) {
         setState(() {
@@ -461,6 +469,9 @@ class _ChatScreenState extends State<ChatScreen> {
             _wsService.sendGetModels();
             // Pull config too, so we know whether the AI hierarchy is on.
             _wsService.sendGetConfig();
+            // Legacy durable runs may still exist on the PC. They are surfaced
+            // read-only/controllable inside Chat; this never starts a new run.
+            _wsService.sendGetAutonomousStatus();
             final pendingProjectCreate = _projectCreateOperationId;
             final pendingProjectName = _projectCreateName;
             if (pendingProjectCreate != null && pendingProjectName != null) {
@@ -501,6 +512,7 @@ class _ChatScreenState extends State<ChatScreen> {
             if (displayed != null &&
                 displayed.isNotEmpty &&
                 _wsService.isPending(displayed)) {
+              _recoverActiveTurnProjection(displayed);
               _startRecoveryPoll();
               if (ws.kOsiaDebugPlaceholder) {
                 debugPrint(
@@ -539,8 +551,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _documentProgressSub = _wsService.documentProgressStream.listen(
       _onDocumentProgress,
     );
-    _autonomousSub = _wsService.autonomousStream.listen((_) {
-      if (mounted) setState(() {});
+    _autonomousSub = _wsService.autonomousStream.listen((progress) {
+      if (mounted) setState(() => _legacyRun = progress);
     });
 
     // AI-hierarchy state arrives on its own config channel (kept off the
@@ -601,6 +613,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _connError = null;
       _wsService.sendGetModels();
       _wsService.sendGetConfig();
+      _wsService.sendGetAutonomousStatus();
     } else {
       // Fresh connection (relaunch or a handed-over socket that dropped during
       // navigation).
@@ -650,30 +663,75 @@ class _ChatScreenState extends State<ChatScreen> {
         :final conversationId,
         :final clientRequestId,
         :final turnId,
+        :final runId,
+        :final providerId,
+        :final modelId,
+        :final effectiveReasoning,
         :final messageId,
       ):
-        if (_wsService.lanDirectV1 &&
-            !_isFrameForCurrentTurn(
-              conversationId: conversationId,
-              clientRequestId: clientRequestId,
-            )) {
-          break;
+        if (_wsService.lanDirectV1 || _wsService.webRtcDirectV1) {
+          if (!_isFrameForCurrentTurn(
+                conversationId: conversationId,
+                clientRequestId: clientRequestId,
+                turnId: turnId,
+                runId: runId,
+                providerId: providerId,
+                modelId: modelId,
+                requireExact: true,
+              ) ||
+              !_bindActiveTurn(
+                conversationId: conversationId,
+                requestId: clientRequestId,
+                turnId: turnId,
+                runId: runId,
+                providerId: providerId,
+                modelId: modelId,
+                effectiveReasoning: effectiveReasoning,
+                requireExactMetadata: true,
+              )) {
+            break;
+          }
         }
         // The STT transcript of the user's voice turn — proof the server
         // received the request and is working. Stand the watchdog down.
         _cancelFirstTokenTimer();
         if (content.isNotEmpty) {
-          _addEntry(
-            _ChatEntry(
-              content: content,
-              isUser: true,
-              isTranscript: true,
-              conversationId: conversationId,
-              clientRequestId: clientRequestId,
-              turnId: turnId,
-              messageId: messageId,
-            ),
-          );
+          final existingIndex = _entries.indexWhere((entry) {
+            if (!entry.isUser) return false;
+            if (messageId.isNotEmpty && entry.messageId == messageId) {
+              return true;
+            }
+            return conversationId.isNotEmpty &&
+                clientRequestId.isNotEmpty &&
+                turnId.isNotEmpty &&
+                entry.conversationId == conversationId &&
+                entry.clientRequestId == clientRequestId &&
+                entry.turnId == turnId;
+          });
+          if (existingIndex >= 0) {
+            setState(() {
+              _entries[existingIndex] = _entries[existingIndex].copyWith(
+                content: content,
+                isTranscript: true,
+                conversationId: conversationId,
+                clientRequestId: clientRequestId,
+                turnId: turnId,
+                messageId: messageId,
+              );
+            });
+          } else {
+            _addEntry(
+              _ChatEntry(
+                content: content,
+                isUser: true,
+                isTranscript: true,
+                conversationId: conversationId,
+                clientRequestId: clientRequestId,
+                turnId: turnId,
+                messageId: messageId,
+              ),
+            );
+          }
           // Feature 1: retain the voice transcript (the user's "message" for a
           // voice turn) so a switch-back / reconnect re-fetch re-injects it
           // above the reply instead of dropping it.
@@ -695,6 +753,7 @@ class _ChatScreenState extends State<ChatScreen> {
         :final source,
         :final conversationId,
         :final clientRequestId,
+        :final turnId,
       ):
         if (conversationId.isNotEmpty || clientRequestId.isNotEmpty) {
           // A reset/new-chat tombstones the exact request it abandoned. Late
@@ -709,6 +768,7 @@ class _ChatScreenState extends State<ChatScreen> {
           if (!_isFrameForCurrentTurn(
             conversationId: conversationId,
             clientRequestId: source == 'speak' ? '' : clientRequestId,
+            turnId: source == 'speak' ? '' : turnId,
           )) {
             break;
           }
@@ -746,12 +806,71 @@ class _ChatScreenState extends State<ChatScreen> {
         :final conversationId,
         :final clientRequestId,
         :final turnId,
+        :final runId,
+        :final providerId,
+        :final modelId,
+        :final effectiveReasoning,
+        :final preAcceptRejection,
       ):
+        if (preAcceptRejection) {
+          final projection = _activeTurn;
+          final exactPendingRequest =
+              projection != null &&
+              projection.requestId == clientRequestId &&
+              projection.turnId.isEmpty &&
+              projection.runId.isEmpty &&
+              (projection.conversationId.isEmpty ||
+                  conversationId.isEmpty ||
+                  projection.conversationId == conversationId);
+          if (!exactPendingRequest) break;
+          _cancelFirstTokenTimer();
+          if (conversationId.isNotEmpty) {
+            _wsService.clearPending(conversationId);
+            _wsService.clearConversationBusy(conversationId);
+          }
+          _pendingTurn = null;
+          _clearActiveTurnProjection();
+          setState(() {
+            _awaitingResponse = false;
+            _thinking = false;
+            _noResponse = false;
+            _chatDocumentProgress = null;
+          });
+          break;
+        }
         final terminal = content == 'done' || content == 'error';
+        if (clientRequestId.isNotEmpty &&
+            !_adoptActiveTurnIfNeeded(
+              conversationId: conversationId,
+              requestId: clientRequestId,
+              turnId: turnId,
+              runId: runId,
+              providerId: providerId,
+              modelId: modelId,
+              effectiveReasoning: effectiveReasoning,
+            )) {
+          break;
+        }
         if (!_isFrameForCurrentTurn(
           conversationId: conversationId,
           clientRequestId: clientRequestId,
+          turnId: turnId,
+          runId: runId,
+          providerId: providerId,
+          modelId: modelId,
+          requireExact: true,
           terminal: terminal,
+        )) {
+          break;
+        }
+        if (!_bindActiveTurn(
+          conversationId: conversationId,
+          requestId: clientRequestId,
+          turnId: turnId,
+          runId: runId,
+          providerId: providerId,
+          modelId: modelId,
+          effectiveReasoning: effectiveReasoning,
         )) {
           break;
         }
@@ -796,6 +915,10 @@ class _ChatScreenState extends State<ChatScreen> {
         :final clientRequestId,
         :final turnId,
         :final status,
+        :final runId,
+        :final providerId,
+        :final modelId,
+        :final effectiveReasoning,
       ):
         final terminal = const <String>{
           'done',
@@ -804,20 +927,76 @@ class _ChatScreenState extends State<ChatScreen> {
           'canceled',
           'rejected',
         }.contains(status);
+        if (!_adoptActiveTurnIfNeeded(
+          conversationId: conversationId,
+          requestId: clientRequestId,
+          turnId: turnId,
+          runId: runId,
+          providerId: providerId,
+          modelId: modelId,
+          effectiveReasoning: effectiveReasoning,
+        )) {
+          break;
+        }
         if (!_isFrameForCurrentTurn(
           conversationId: conversationId,
           clientRequestId: clientRequestId,
+          turnId: turnId,
+          runId: runId,
+          providerId: providerId,
+          modelId: modelId,
+          requireExact: true,
           terminal: terminal,
         )) {
           break;
         }
+        if (!_bindActiveTurn(
+          conversationId: conversationId,
+          requestId: clientRequestId,
+          turnId: turnId,
+          runId: runId,
+          providerId: providerId,
+          modelId: modelId,
+          effectiveReasoning: effectiveReasoning,
+        )) {
+          break;
+        }
         if (terminal) {
+          final cancelled = const <String>{
+            'cancelled',
+            'canceled',
+          }.contains(status);
+          final projection = _activeTurn;
+          if (projection != null) projection.terminal = true;
           _cancelFirstTokenTimer();
+          if (cancelled) {
+            if (_submittedAttachmentRequestId == clientRequestId) {
+              unawaited(_completeSubmittedAttachments(clientRequestId));
+            }
+            _pendingTurn = null;
+            _clearActiveTurnProjection();
+          }
           setState(() {
             _awaitingResponse = false;
             _thinking = false;
             _noResponse = false;
             _chatDocumentProgress = null;
+          });
+          break;
+        }
+        final cancellationCommittedLocally =
+            _activeTurn?.cancellationRequested == true ||
+            _wsService.isConversationCancellationRequested(
+              conversationId,
+              clientRequestId: clientRequestId,
+            );
+        if (cancellationCommittedLocally) {
+          setState(() {
+            _awaitingResponse = false;
+            _thinking = false;
+            _noResponse = false;
+            _chatDocumentProgress = null;
+            _liveExecutionTrace = null;
           });
           break;
         }
@@ -877,6 +1056,7 @@ class _ChatScreenState extends State<ChatScreen> {
         );
         final activeWasDeleted = activeId != null && active == null;
         if (activeWasDeleted) {
+          _denyAllMcpConfirmRequests();
           _canonicalHistory.forget(activeId);
           _cancelPendingConvLoad();
           _cancelFirstTokenTimer();
@@ -884,6 +1064,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _stopTypewriter();
           _optimisticUser.remove(activeId);
           _pendingTurn = null;
+          _clearActiveTurnProjection();
         }
         setState(() {
           _conversations = conversations;
@@ -935,6 +1116,9 @@ class _ChatScreenState extends State<ChatScreen> {
         // no-id optimistic user message under it so it is retained / reconciled
         // like any other (its first chunk also carries this id).
         final adoptedId = id;
+        if (adoptedId != null && adoptedId.isNotEmpty) {
+          _bindActiveTurn(conversationId: adoptedId);
+        }
         if (_optimisticUserNoId != null &&
             adoptedId != null &&
             adoptedId.isNotEmpty) {
@@ -991,6 +1175,24 @@ class _ChatScreenState extends State<ChatScreen> {
         // no-blank guard below as if the finished reply had landed.
         final historyHasReply =
             messages.isNotEmpty && messages.last.role == 'assistant';
+        final completedHistoryMessage = historyHasReply ? messages.last : null;
+        final completedHistoryTurn =
+            completedHistoryMessage != null &&
+                effectiveConvId != null &&
+                effectiveConvId.isNotEmpty
+            ? ws.ChatTurnIdentity(
+                conversationId:
+                    completedHistoryMessage.conversationId.isNotEmpty
+                    ? completedHistoryMessage.conversationId
+                    : effectiveConvId,
+                requestId: completedHistoryMessage.clientRequestId,
+                turnId: completedHistoryMessage.turnId,
+                runId: completedHistoryMessage.runId,
+                providerId: completedHistoryMessage.providerId,
+                modelId: completedHistoryMessage.modelId,
+                effectiveReasoning: completedHistoryMessage.effectiveReasoning,
+              )
+            : null;
         // WOR-75 (no-blank): a STALE, reply-less history can still arrive for a
         // conversation whose reply we ALREADY hold in the stream buffer — e.g. a
         // retry-driven or in-flight load_conversation that the server answered
@@ -1049,6 +1251,15 @@ class _ChatScreenState extends State<ChatScreen> {
         // Feature 2: this view is being rebuilt from persisted history — drop any
         // in-flight typewriter reveal so it can't keep writing into a stale slot.
         _stopTypewriter();
+        if (historyCompletesTurn && effectiveConvId != null) {
+          _clearActiveTurnProjection();
+        } else if (effectiveConvId != null && effectiveConvId.isNotEmpty) {
+          _recoverActiveTurnProjection(effectiveConvId);
+        }
+        final recoveredTurn = _activeTurn;
+        final recoveredActivity =
+            recoveredTurn != null &&
+            _wsService.isRequestAccepted(recoveredTurn.requestId);
         if (ws.kOsiaDebugPlaceholder) {
           debugPrint(
             '[OSIA WOR-75] conversation_history applied for '
@@ -1068,19 +1279,37 @@ class _ChatScreenState extends State<ChatScreen> {
                   clientRequestId: m.clientRequestId,
                   turnId: m.turnId,
                   messageId: m.messageId,
-                  executionTrace: m.executionTrace,
+                  runId: m.runId,
+                  providerId: m.providerId,
+                  modelId: m.modelId,
+                  effectiveReasoning: m.effectiveReasoning,
+                  executionTrace: executionTraceForExactIdentity(
+                    m.executionTrace,
+                    conversationId: m.conversationId.isNotEmpty
+                        ? m.conversationId
+                        : (effectiveConvId ?? ''),
+                    requestId: m.clientRequestId,
+                    turnId: m.turnId,
+                    runId: m.runId,
+                    providerId: m.providerId,
+                    modelId: m.modelId,
+                    effectiveReasoning: m.effectiveReasoning,
+                  ),
                 ),
               ),
             );
-          if (messages.any((message) => message.executionTrace != null)) {
+          final liveTraceKey = _liveExecutionTrace?.key;
+          if (liveTraceKey != null &&
+              _entries.any(
+                (entry) => entry.executionTrace?.key == liveTraceKey,
+              )) {
             _liveExecutionTrace = null;
           }
           _thinking = false;
           _noResponse = false;
           // Feature 2: persisted history is shown in full — reset the reveal
           // counters (a re-attached live bubble below sets them to fully shown).
-          _typeTarget = '';
-          _typeRevealed = 0;
+          _resetTypeTarget();
           if (id != null && id.isNotEmpty) _activeConversationId = id;
           // Feature 1: reconcile the optimistic user message against the
           // authoritative history. If the history already contains this turn's
@@ -1145,7 +1374,13 @@ class _ChatScreenState extends State<ChatScreen> {
             // the turn is over and no recovery poll should linger (e.g. a
             // disconnect ate the terminal `done`, or it was untagged).
             _wsService.clearPending(convId);
-            _wsService.clearConversationBusy(convId);
+            _wsService.clearConversationBusy(
+              convId,
+              fromHistory: true,
+              completedHistoryTurn: completedHistoryTurn,
+              completedHistoryMessageId:
+                  completedHistoryMessage?.messageId ?? '',
+            );
           }
           final liveText = convId != null
               ? _wsService.bufferedText(convId)
@@ -1158,12 +1393,23 @@ class _ChatScreenState extends State<ChatScreen> {
           if (streaming && liveText.isNotEmpty && !lastIsThisReply) {
             // In-flight reply not yet in persisted history — show it.
             _entries.add(
-              _ChatEntry(content: liveText, isUser: false, isStreaming: true),
+              _ChatEntry(
+                content: liveText,
+                isUser: false,
+                isStreaming: true,
+                conversationId: recoveredTurn?.conversationId ?? convId,
+                clientRequestId: recoveredTurn?.requestId ?? '',
+                turnId: recoveredTurn?.turnId ?? '',
+                runId: recoveredTurn?.runId ?? '',
+                providerId: recoveredTurn?.providerId ?? '',
+                modelId: recoveredTurn?.modelId ?? '',
+                effectiveReasoning: recoveredTurn?.effectiveReasoning ?? '',
+                executionTrace: _liveExecutionTrace,
+              ),
             );
             _streamingIndex = _entries.length - 1;
             // Feature 2: already on screen in full — reveal continues from here.
-            _typeTarget = liveText;
-            _typeRevealed = liveText.length;
+            _setTypeTarget(liveText, fullyRevealed: true);
           } else if (streaming && lastIsThisReply) {
             // Reply already shown via persisted history but the turn hasn't
             // ended — mark that entry streaming so the terminal `done`
@@ -1171,22 +1417,36 @@ class _ChatScreenState extends State<ChatScreen> {
             // without a duplicate bubble.
             _entries[_entries.length - 1] = _entries.last.copyWith(
               isStreaming: true,
+              conversationId: recoveredTurn?.conversationId ?? convId,
+              clientRequestId: recoveredTurn?.requestId ?? '',
+              turnId: recoveredTurn?.turnId ?? '',
+              runId: recoveredTurn?.runId ?? '',
+              providerId: recoveredTurn?.providerId ?? '',
+              modelId: recoveredTurn?.modelId ?? '',
+              effectiveReasoning: recoveredTurn?.effectiveReasoning ?? '',
+              executionTrace: _liveExecutionTrace,
             );
             _streamingIndex = _entries.length - 1;
-            _typeTarget = liveText;
-            _typeRevealed = liveText.length;
+            _setTypeTarget(liveText, fullyRevealed: true);
           } else {
             _streamingIndex = null;
           }
-          // Polish: a hydrated conversation whose turn is still pending but
-          // whose reply hasn't started rendering — no live streaming bubble was
-          // re-attached above AND the persisted history doesn't yet end with the
-          // assistant reply — shows the SAME pre-stream thinking indicator as the
-          // initial send (returning mid-think looks identical to just having
-          // sent). Mid-stream (a streaming bubble) or finished (historyHasReply)
+          if (_streamingIndex != null && _liveExecutionTrace != null) {
+            _liveExecutionTrace = null;
+          }
+          // Polish: a hydrated conversation whose turn is authoritatively
+          // accepted and still pending, but whose reply hasn't started rendering
+          // — no live streaming bubble was re-attached above AND the persisted
+          // history doesn't yet end with the assistant reply — shows the SAME
+          // pre-stream thinking indicator as the active-work state. Mid-stream
+          // (a streaming bubble) or finished
+          // (historyHasReply)
           // keeps it off, so there's never a double indicator or dots over a
           // reply. Dismissed by the first chunk / done like the live-send dots.
-          if (wasPending && _streamingIndex == null && !historyHasReply) {
+          if (wasPending &&
+              recoveredActivity &&
+              _streamingIndex == null &&
+              !historyHasReply) {
             _thinking = true;
           }
         });
@@ -1260,18 +1520,66 @@ class _ChatScreenState extends State<ChatScreen> {
   void _onConversationBusy(ws.ConversationBusyEvent event) {
     if (!mounted) return;
     if (event.conversationId != _activeConversationId) return;
+    if (!_adoptActiveTurnIfNeeded(
+      conversationId: event.conversationId,
+      requestId: event.clientRequestId,
+      turnId: event.turnId,
+      runId: event.runId,
+      providerId: event.providerId,
+      modelId: event.modelId,
+      effectiveReasoning: event.effectiveReasoning,
+    )) {
+      return;
+    }
     if (!_isFrameForCurrentTurn(
       conversationId: event.conversationId,
       clientRequestId: event.clientRequestId,
+      turnId: event.turnId,
+      runId: event.runId,
+      providerId: event.providerId,
+      modelId: event.modelId,
+      requireExact: true,
       terminal: !event.busy,
     )) {
       return;
+    }
+    if (!_bindActiveTurn(
+      conversationId: event.conversationId,
+      requestId: event.clientRequestId,
+      turnId: event.turnId,
+      runId: event.runId,
+      providerId: event.providerId,
+      modelId: event.modelId,
+      effectiveReasoning: event.effectiveReasoning,
+    )) {
+      return;
+    }
+    final projection = _activeTurn;
+    final cancellationWasRequested = projection?.cancellationRequested == true;
+    final releaseCancelledOwnership =
+        !event.busy && cancellationWasRequested && projection != null;
+    var cancellationRejected = false;
+    if (projection != null) {
+      final serviceRequested = _wsService.isConversationCancellationRequested(
+        event.conversationId,
+        clientRequestId: projection.requestId,
+      );
+      // A terminal busy=false projection follows both normal completion and
+      // cancellation. Preserve the user's Stop authority through that boundary;
+      // only a typed rejection (live busy=true with no pending cancel) releases
+      // the frozen display buffer.
+      cancellationRejected =
+          cancellationWasRequested && event.busy && !serviceRequested;
+      if (serviceRequested || event.busy) {
+        projection.cancellationRequested = serviceRequested;
+      }
     }
     final waitingTurn = _activeConversationWaiting;
     final rejected = event.busy && event.message.isNotEmpty && !waitingTurn;
     if (rejected) {
       _cancelFirstTokenTimer();
       _pendingTurn = null;
+      _clearActiveTurnProjection();
     } else if (event.busy && waitingTurn) {
       _cancelFirstTokenTimer();
     } else if (event.busy) {
@@ -1300,6 +1608,33 @@ class _ChatScreenState extends State<ChatScreen> {
         _noResponse = false;
       }
     });
+    if (releaseCancelledOwnership) {
+      if (_submittedAttachmentRequestId == projection.requestId) {
+        unawaited(_completeSubmittedAttachments(projection.requestId));
+      }
+      _pendingTurn = null;
+      _clearActiveTurnProjection();
+    }
+    if (cancellationRejected &&
+        projection != null &&
+        _activeTurn?.generation == projection.generation &&
+        _wsService.bufferedText(event.conversationId).isNotEmpty) {
+      final idx = _streamingIndex;
+      _onConvStream(
+        ws.ConvStreamEvent(
+          event.conversationId,
+          clientRequestId: event.clientRequestId,
+          turnId: event.turnId,
+          messageId: idx != null && idx >= 0 && idx < _entries.length
+              ? _entries[idx].messageId
+              : '',
+          runId: event.runId,
+          providerId: event.providerId,
+          modelId: event.modelId,
+          effectiveReasoning: event.effectiveReasoning,
+        ),
+      );
+    }
     if (event.busy && event.message.isNotEmpty) {
       ScaffoldMessenger.of(
         context,
@@ -1328,6 +1663,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } else {
       _optimisticUserNoId = null;
     }
+    _clearActiveTurnProjection();
     setState(() {
       if (_entries.isNotEmpty && _entries.last.isUser) {
         _entries.removeLast();
@@ -1382,9 +1718,153 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _beginActiveTurnProjection({
+    required String requestId,
+    required String conversationId,
+  }) {
+    if (_terminalDrainPending) _completeTerminalDrain();
+    _stopTypewriter();
+    final previousStreaming = _streamingIndex;
+    if (previousStreaming != null &&
+        previousStreaming >= 0 &&
+        previousStreaming < _entries.length) {
+      if (mounted) {
+        setState(() {
+          _entries[previousStreaming] = _entries[previousStreaming].copyWith(
+            isStreaming: false,
+            executionTrace: _liveExecutionTrace,
+          );
+        });
+      }
+      _streamingIndex = null;
+    }
+    _resetTypeTarget();
+    _liveExecutionTrace = null;
+    _turnGeneration++;
+    _activeTurn = _ActiveTurnProjection(
+      generation: _turnGeneration,
+      conversationId: conversationId,
+      requestId: requestId,
+      providerId: _selectedProvider ?? '',
+      modelId: _selectedModel ?? '',
+      // Local model selection is intent, not server-authoritative run
+      // identity.  Require the full canonical route only after a durable
+      // acceptance/event binds a runId; legacy correlated servers remain
+      // usable until then.
+      canonicalRequired: false,
+    );
+  }
+
+  void _recoverActiveTurnProjection(String conversationId) {
+    final identity = _wsService.activeTurnIdentity(conversationId);
+    if (identity == null) {
+      _activeTurn = null;
+      return;
+    }
+    _turnGeneration++;
+    _activeTurn = _ActiveTurnProjection.fromIdentity(
+      generation: _turnGeneration,
+      identity: identity,
+      cancellationRequested: _wsService.isConversationCancellationRequested(
+        conversationId,
+        clientRequestId: identity.requestId,
+      ),
+    );
+    _liveExecutionTrace = executionTraceForExactIdentity(
+      _wsService.executionTraceForConversation(conversationId),
+      conversationId: identity.conversationId,
+      requestId: identity.requestId,
+      turnId: identity.turnId,
+      runId: identity.runId,
+      providerId: identity.providerId,
+      modelId: identity.modelId,
+      effectiveReasoning: identity.effectiveReasoning,
+    );
+  }
+
+  void _clearActiveTurnProjection() {
+    _stopTypewriter();
+    _resetTypeTarget();
+    _turnGeneration++;
+    _activeTurn = null;
+    _terminalDrainPending = false;
+    _terminalDrainDeadline = null;
+    _terminalDrainTrace = null;
+    _terminalDrainGeneration = null;
+    _liveExecutionTrace = null;
+  }
+
+  bool _adoptActiveTurnIfNeeded({
+    required String conversationId,
+    required String requestId,
+    String turnId = '',
+    String runId = '',
+    String providerId = '',
+    String modelId = '',
+    String effectiveReasoning = '',
+  }) {
+    final existing = _activeTurn;
+    if (existing != null) {
+      if (existing.requestId == requestId) return true;
+      if (!existing.terminal || _activeChatWork) return false;
+      _clearActiveTurnProjection();
+    }
+    final activeConversation = _activeConversationId ?? '';
+    if (requestId.isEmpty ||
+        (conversationId.isNotEmpty &&
+            activeConversation.isNotEmpty &&
+            conversationId != activeConversation)) {
+      return false;
+    }
+    _turnGeneration++;
+    _activeTurn = _ActiveTurnProjection(
+      generation: _turnGeneration,
+      conversationId: conversationId.isNotEmpty
+          ? conversationId
+          : activeConversation,
+      requestId: requestId,
+      turnId: turnId,
+      runId: runId,
+      providerId: providerId,
+      modelId: modelId,
+      effectiveReasoning: effectiveReasoning,
+      canonicalRequired: runId.isNotEmpty,
+    );
+    return true;
+  }
+
+  bool _bindActiveTurn({
+    String conversationId = '',
+    String requestId = '',
+    String turnId = '',
+    String runId = '',
+    String providerId = '',
+    String modelId = '',
+    String effectiveReasoning = '',
+    bool requireExactMetadata = false,
+  }) {
+    final projection = _activeTurn;
+    if (projection == null) return false;
+    return projection.bind(
+      conversationId: conversationId,
+      requestId: requestId,
+      turnId: turnId,
+      runId: runId,
+      providerId: providerId,
+      modelId: modelId,
+      effectiveReasoning: effectiveReasoning,
+      requireExactMetadata: requireExactMetadata,
+    );
+  }
+
   bool _isFrameForCurrentTurn({
     required String conversationId,
     required String clientRequestId,
+    String turnId = '',
+    String runId = '',
+    String providerId = '',
+    String modelId = '',
+    bool requireExact = false,
     bool terminal = false,
   }) {
     final active = _activeConversationId ?? '';
@@ -1397,8 +1877,32 @@ class _ChatScreenState extends State<ChatScreen> {
       debugPrint('[OSIA Chat] ignored uncorrelated terminal frame');
       return false;
     }
+    final projection = _activeTurn;
+    if (requireExact &&
+        projection?.requiresCanonicalIdentity == true &&
+        (conversationId.isEmpty ||
+            clientRequestId.isEmpty ||
+            turnId.isEmpty ||
+            runId.isEmpty ||
+            providerId.isEmpty ||
+            modelId.isEmpty)) {
+      debugPrint('[OSIA Chat] ignored incomplete canonical turn frame');
+      return false;
+    }
+    if (projection != null &&
+        !projection.matches(
+          conversationId: conversationId,
+          requestId: clientRequestId,
+          turnId: turnId,
+          runId: runId,
+          terminal: terminal,
+        )) {
+      debugPrint('[OSIA Chat] ignored stale frame for a non-current request');
+      return false;
+    }
     final pending = _pendingTurn;
-    if (pending != null &&
+    if (projection == null &&
+        pending != null &&
         clientRequestId.isNotEmpty &&
         clientRequestId != pending.clientRequestId) {
       debugPrint('[OSIA Chat] ignored stale frame for a non-current request');
@@ -1418,10 +1922,37 @@ class _ChatScreenState extends State<ChatScreen> {
         'forActive=${event.conversationId == _activeConversationId}',
       );
     }
+    if (!_adoptActiveTurnIfNeeded(
+      conversationId: event.conversationId,
+      requestId: event.clientRequestId,
+      turnId: event.turnId,
+      runId: event.runId,
+      providerId: event.providerId,
+      modelId: event.modelId,
+      effectiveReasoning: event.effectiveReasoning,
+    )) {
+      return;
+    }
     if (!_isFrameForCurrentTurn(
       conversationId: event.conversationId,
       clientRequestId: event.clientRequestId,
+      turnId: event.turnId,
+      runId: event.runId,
+      providerId: event.providerId,
+      modelId: event.modelId,
+      requireExact: true,
       terminal: event.done || event.error,
+    )) {
+      return;
+    }
+    if (!_bindActiveTurn(
+      conversationId: event.conversationId,
+      requestId: event.clientRequestId,
+      turnId: event.turnId,
+      runId: event.runId,
+      providerId: event.providerId,
+      modelId: event.modelId,
+      effectiveReasoning: event.effectiveReasoning,
     )) {
       return;
     }
@@ -1448,31 +1979,43 @@ class _ChatScreenState extends State<ChatScreen> {
         conversationId: event.conversationId,
         clientRequestId: event.clientRequestId,
         turnId: event.turnId,
+        runId: event.runId,
+        providerId: event.providerId,
+        modelId: event.modelId,
+        effectiveReasoning: event.effectiveReasoning,
       );
-      // Feature 2: the turn ended — stop the reveal and FLUSH any buffered text
-      // not yet shown so the finalized bubble is always complete (no missing
-      // tail), regardless of how far the typewriter had got.
-      _stopTypewriter();
       setState(() {
         _awaitingResponse = false;
         _thinking = false;
         _noResponse = false;
-        final idx = _streamingIndex;
-        if (idx != null) {
-          final full = _typeTarget.isNotEmpty
-              ? _typeTarget
-              : _entries[idx].content;
-          _entries[idx] = _entries[idx].copyWith(
-            content: full,
-            isStreaming: false,
-            executionTrace: liveTrace,
-          );
-          if (liveTrace != null) _liveExecutionTrace = null;
-          _streamingIndex = null;
-        }
       });
-      _typeTarget = '';
-      _typeRevealed = 0;
+      final idx = _streamingIndex;
+      final projection = _activeTurn;
+      final freezeAtStop = projection?.cancellationRequested == true;
+      if (idx != null) {
+        if (_typeTarget.isEmpty) {
+          _setTypeTarget(_entries[idx].content, fullyRevealed: true);
+        }
+        _terminalDrainPending = true;
+        _terminalDrainDeadline = DateTime.now().add(
+          const Duration(milliseconds: 700),
+        );
+        _terminalDrainTrace = liveTrace;
+        _terminalDrainGeneration = projection?.generation;
+        if (freezeAtStop ||
+            event.error ||
+            Motion.reduced(context) ||
+            _typeRevealed >= _typeGraphemeCount) {
+          _completeTerminalDrain(revealFull: !freezeAtStop);
+        } else {
+          _ensureTypewriter();
+        }
+      } else if (projection != null) {
+        projection.terminal = true;
+      }
+      if (freezeAtStop && event.conversationId.isNotEmpty) {
+        _wsService.clearConvBuffer(event.conversationId);
+      }
       // WOR-75: a reply that produced NO streamed text — i.e. no live bubble and
       // an empty per-conversation buffer — leaves nothing on screen on `done`.
       // This is the Live API / voice-to-voice path (audio-only reply, no
@@ -1484,6 +2027,7 @@ class _ChatScreenState extends State<ChatScreen> {
       // (= event id for a tagged terminal; the only turn we watch for untagged).
       final displayed = _activeConversationId;
       if (event.done &&
+          !freezeAtStop &&
           !hadBubble &&
           displayed != null &&
           displayed.isNotEmpty &&
@@ -1492,6 +2036,11 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       return;
     }
+
+    // Stop freezes the exact visible turn immediately. Frames already queued
+    // for that same run remain in the service buffer but do not advance the UI;
+    // a typed rejection clears the flag through the busy/control projection.
+    if (_activeTurn?.cancellationRequested == true) return;
 
     // Any content frame for the active turn is a sign of life. A chunk or full
     // response means the turn has moved past accepted-working into streaming,
@@ -1512,6 +2061,10 @@ class _ChatScreenState extends State<ChatScreen> {
       conversationId: event.conversationId,
       clientRequestId: event.clientRequestId,
       turnId: event.turnId,
+      runId: event.runId,
+      providerId: event.providerId,
+      modelId: event.modelId,
+      effectiveReasoning: event.effectiveReasoning,
     );
     setState(() {
       _thinking = false;
@@ -1520,18 +2073,19 @@ class _ChatScreenState extends State<ChatScreen> {
       if (idx != null) {
         // Existing streaming bubble — extend the reveal target. Under reduced
         // motion show it all at once; otherwise the timer below catches up.
-        _typeTarget = text;
+        _setTypeTarget(text, fullyRevealed: reduced);
         _entries[idx] = _entries[idx].copyWith(
           content: reduced ? text : null,
           conversationId: event.conversationId,
           clientRequestId: event.clientRequestId,
           turnId: event.turnId,
           messageId: event.messageId,
+          runId: event.runId,
+          providerId: event.providerId,
+          modelId: event.modelId,
+          effectiveReasoning: event.effectiveReasoning,
           executionTrace: liveTrace,
         );
-        if (reduced) {
-          _typeRevealed = text.length;
-        }
       } else if (_entries.isNotEmpty &&
           !_entries.last.isUser &&
           _entries.last.content == text) {
@@ -1544,11 +2098,14 @@ class _ChatScreenState extends State<ChatScreen> {
           clientRequestId: event.clientRequestId,
           turnId: event.turnId,
           messageId: event.messageId,
+          runId: event.runId,
+          providerId: event.providerId,
+          modelId: event.modelId,
+          effectiveReasoning: event.effectiveReasoning,
           executionTrace: liveTrace,
         );
         _streamingIndex = _entries.length - 1;
-        _typeTarget = text;
-        _typeRevealed = text.length;
+        _setTypeTarget(text, fullyRevealed: true);
       } else {
         // New streaming bubble. Reduced motion shows the full text immediately;
         // otherwise it starts empty and the typewriter reveals toward the target.
@@ -1561,12 +2118,15 @@ class _ChatScreenState extends State<ChatScreen> {
             clientRequestId: event.clientRequestId,
             turnId: event.turnId,
             messageId: event.messageId,
+            runId: event.runId,
+            providerId: event.providerId,
+            modelId: event.modelId,
+            effectiveReasoning: event.effectiveReasoning,
             executionTrace: liveTrace,
           ),
         );
         _streamingIndex = _entries.length - 1;
-        _typeTarget = text;
-        _typeRevealed = reduced ? text.length : 0;
+        _setTypeTarget(text, fullyRevealed: reduced, preserveRevealed: false);
       }
       if (liveTrace != null) _liveExecutionTrace = null;
     });
@@ -1588,11 +2148,49 @@ class _ChatScreenState extends State<ChatScreen> {
   /// gate on reduced motion (which shows the full text without a timer).
   void _ensureTypewriter() {
     if (_typewriterTimer != null) return;
-    if (_typeRevealed >= _typeTarget.length) return;
+    if (_typeRevealed >= _typeGraphemeCount) return;
     _typewriterTimer = Timer.periodic(
       _typewriterTick,
       (_) => _onTypewriterTick(),
     );
+  }
+
+  int get _typeGraphemeCount => _typeBoundaries.length - 1;
+
+  String get _shownTypeTarget => _typeTarget.substring(
+    0,
+    _typeBoundaries[_typeRevealed > _typeGraphemeCount
+        ? _typeGraphemeCount
+        : _typeRevealed],
+  );
+
+  void _setTypeTarget(
+    String text, {
+    bool fullyRevealed = false,
+    bool preserveRevealed = true,
+  }) {
+    final previousShown = _typeTarget.isEmpty ? '' : _shownTypeTarget;
+    final boundaries = <int>[0];
+    var offset = 0;
+    for (final grapheme in text.characters) {
+      offset += grapheme.length;
+      boundaries.add(offset);
+    }
+    _typeTarget = text;
+    _typeBoundaries = boundaries;
+    if (fullyRevealed) {
+      _typeRevealed = _typeGraphemeCount;
+    } else if (!preserveRevealed || !text.startsWith(previousShown)) {
+      _typeRevealed = 0;
+    } else if (_typeRevealed > _typeGraphemeCount) {
+      _typeRevealed = _typeGraphemeCount;
+    }
+  }
+
+  void _resetTypeTarget() {
+    _typeTarget = '';
+    _typeBoundaries = const <int>[0];
+    _typeRevealed = 0;
   }
 
   /// One reveal step: advance the shown prefix of [_typeTarget] toward the full
@@ -1605,20 +2203,35 @@ class _ChatScreenState extends State<ChatScreen> {
       _stopTypewriter();
       return;
     }
-    // Honor a runtime reduced-motion toggle: reveal the rest immediately.
-    if (Motion.reduced(context)) {
-      _typeRevealed = _typeTarget.length;
-      setState(() {
-        _entries[idx] = _entries[idx].copyWith(content: _typeTarget);
-      });
+    final drainGeneration = _terminalDrainGeneration;
+    if (_terminalDrainPending &&
+        (drainGeneration == null ||
+            drainGeneration != _activeTurn?.generation)) {
       _stopTypewriter();
       return;
     }
-    if (_typeRevealed >= _typeTarget.length) {
-      _stopTypewriter(); // caught up — the next token re-arms the timer.
+    // Honor a runtime reduced-motion toggle: reveal the rest immediately.
+    if (Motion.reduced(context)) {
+      _typeRevealed = _typeGraphemeCount;
+      setState(() {
+        _entries[idx] = _entries[idx].copyWith(content: _typeTarget);
+      });
+      if (_terminalDrainPending) {
+        _completeTerminalDrain();
+      } else {
+        _stopTypewriter();
+      }
       return;
     }
-    final remaining = _typeTarget.length - _typeRevealed;
+    if (_typeRevealed >= _typeGraphemeCount) {
+      if (_terminalDrainPending) {
+        _completeTerminalDrain();
+      } else {
+        _stopTypewriter(); // caught up — the next token re-arms the timer.
+      }
+      return;
+    }
+    final remaining = _typeGraphemeCount - _typeRevealed;
     // Constant base pace, derived from the single tunable, plus gentle catch-up.
     final base =
         (_typewriterCharsPerSecond * _typewriterTick.inMilliseconds / 1000)
@@ -1626,9 +2239,18 @@ class _ChatScreenState extends State<ChatScreen> {
     var step = base < 1 ? 1 : base;
     final catchUp = (remaining * _typewriterCatchUpFactor).ceil();
     if (catchUp > step) step = catchUp;
+    final deadline = _terminalDrainDeadline;
+    if (_terminalDrainPending && deadline != null) {
+      final remainingMs = deadline.difference(DateTime.now()).inMilliseconds;
+      final ticksLeft = remainingMs <= _typewriterTick.inMilliseconds
+          ? 1
+          : (remainingMs / _typewriterTick.inMilliseconds).ceil();
+      final terminalStep = (remaining / ticksLeft).ceil();
+      if (terminalStep > step) step = terminalStep;
+    }
     if (step > remaining) step = remaining;
     _typeRevealed += step;
-    final shown = _typeTarget.substring(0, _typeRevealed);
+    final shown = _shownTypeTarget;
     setState(() {
       _entries[idx] = _entries[idx].copyWith(content: shown);
     });
@@ -1640,6 +2262,37 @@ class _ChatScreenState extends State<ChatScreen> {
         _scrollCtrl.jumpTo(pos.maxScrollExtent);
       }
     }
+    if (_terminalDrainPending && _typeRevealed >= _typeGraphemeCount) {
+      _completeTerminalDrain();
+    }
+  }
+
+  void _completeTerminalDrain({bool revealFull = true}) {
+    final idx = _streamingIndex;
+    final trace = _terminalDrainTrace;
+    _stopTypewriter();
+    if (mounted && idx != null && idx >= 0 && idx < _entries.length) {
+      final content = revealFull ? _typeTarget : _entries[idx].content;
+      setState(() {
+        _entries[idx] = _entries[idx].copyWith(
+          content: content,
+          isStreaming: false,
+          executionTrace: trace,
+        );
+        _streamingIndex = null;
+        if (trace != null) _liveExecutionTrace = null;
+      });
+    }
+    final projection = _activeTurn;
+    if (projection != null &&
+        projection.generation == _terminalDrainGeneration) {
+      projection.terminal = true;
+    }
+    _terminalDrainPending = false;
+    _terminalDrainDeadline = null;
+    _terminalDrainTrace = null;
+    _terminalDrainGeneration = null;
+    _resetTypeTarget();
   }
 
   /// Stop the typewriter reveal timer. Idempotent.
@@ -1693,7 +2346,10 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    if (conv.id != _activeConversationId) _stopQueuedAudio();
+    if (conv.id != _activeConversationId) {
+      _denyAllMcpConfirmRequests();
+      _stopQueuedAudio();
+    }
     if (conv.id != _activeConversationId && _pendingAttachments.isNotEmpty) {
       unawaited(_clearPendingAttachments());
     }
@@ -1744,6 +2400,18 @@ class _ChatScreenState extends State<ChatScreen> {
     // lands. When the buffer DOES hold content (the WOR-53 background stream kept
     // accumulating) we hydrate from it immediately in the setState below.
     final pending = _wsService.isPending(conv.id);
+    if (pending) {
+      _recoverActiveTurnProjection(conv.id);
+    } else {
+      _clearActiveTurnProjection();
+    }
+    final recoveredTurn = _activeTurn;
+    final recoveredActivity =
+        recoveredTurn != null &&
+        _wsService.isRequestAccepted(recoveredTurn.requestId);
+    final recoveredTrace = pending
+        ? _wsService.executionTraceForConversation(conv.id)
+        : null;
     if (ws.kOsiaDebugPlaceholder) {
       debugPrint(
         '[OSIA WOR-75] _loadConversation: target="${conv.id}" '
@@ -1753,14 +2421,13 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _entries.clear();
       _chatDocumentProgress = null;
-      _liveExecutionTrace = null;
+      _liveExecutionTrace = recoveredTrace;
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
       // Feature 2: reset the reveal counters for the new view (the seed below
       // marks any hydrated text as fully shown so it isn't re-animated).
-      _typeTarget = '';
-      _typeRevealed = 0;
+      _resetTypeTarget();
       _activeConversationId = conv.id;
       _activeConversationTitle = conv.title;
       // Feature 1: seed this conversation's optimistic user message (the
@@ -1785,23 +2452,34 @@ class _ChatScreenState extends State<ChatScreen> {
       if (buffered.isNotEmpty) {
         final streaming = _wsService.isStreaming(conv.id);
         _entries.add(
-          _ChatEntry(content: buffered, isUser: false, isStreaming: streaming),
+          _ChatEntry(
+            content: buffered,
+            isUser: false,
+            isStreaming: streaming,
+            conversationId: recoveredTurn?.conversationId ?? conv.id,
+            clientRequestId: recoveredTurn?.requestId ?? '',
+            turnId: recoveredTurn?.turnId ?? '',
+            runId: recoveredTurn?.runId ?? '',
+            providerId: recoveredTurn?.providerId ?? '',
+            modelId: recoveredTurn?.modelId ?? '',
+            effectiveReasoning: recoveredTurn?.effectiveReasoning ?? '',
+            executionTrace: recoveredTrace,
+          ),
         );
+        if (recoveredTrace != null) _liveExecutionTrace = null;
         _streamingIndex = streaming ? _entries.length - 1 : null;
         // Feature 2: the buffered text is already complete on screen — mark it
         // fully revealed so the typewriter only animates NEW chunks from here.
-        _typeTarget = buffered;
-        _typeRevealed = buffered.length;
+        _setTypeTarget(buffered, fullyRevealed: true);
       }
-      // Polish: returning to a pending conversation whose reply hasn't started
-      // rendering yet (no chunks buffered, so no streaming bubble was seeded
-      // above) shows the SAME pre-stream thinking indicator as the initial
-      // send — user bubble + thinking dots, identical to having just sent the
-      // message. When the buffer DID hold content a streaming bubble is on
+      // Polish: returning to an authoritatively accepted pending conversation
+      // whose reply hasn't started rendering yet (no chunks buffered, so no
+      // streaming bubble was seeded above) shows the SAME pre-stream thinking
+      // indicator as the initial run. When the buffer DID hold content a bubble is on
       // screen instead, so this stays off and the reply (typewriter) renders,
       // not the dots. Dismissed by the first chunk / done exactly like the
       // live-send indicator (see [_onConvStream]).
-      if (pending && buffered.isEmpty) {
+      if (pending && recoveredActivity && buffered.isEmpty) {
         _thinking = true;
       }
     });
@@ -1871,6 +2549,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
+    _denyAllMcpConfirmRequests();
     _abandonQueuedAudio();
     if (_pendingAttachments.isNotEmpty) {
       unawaited(_clearPendingAttachments());
@@ -1881,6 +2560,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _stopRecoveryPoll();
     _stopTypewriter(); // Feature 2: no stale reveal into the cleared view.
     _pendingTurn = null;
+    _clearActiveTurnProjection();
     _clearSlashDraft();
     // WOR-53: drop the buffer of the conversation we're leaving so the buffer
     // map can't grow unbounded (the new conversation starts fresh; other
@@ -1906,8 +2586,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
-      _typeTarget = '';
-      _typeRevealed = 0;
+      _resetTypeTarget();
       _activeConversationId = null;
       _activeConversationTitle = null;
     });
@@ -1945,6 +2624,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// clearing those methods perform.
   void _onNewChat() {
     if (!mounted) return;
+    _denyAllMcpConfirmRequests();
     _abandonQueuedAudio();
     _clearAttachmentsWhenIdle = _attachmentBusy;
     _attachmentCancellation?.cancel();
@@ -1956,6 +2636,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _stopRecoveryPoll();
     _stopTypewriter(); // Feature 2: no stale reveal into the cleared view.
     _pendingTurn = null;
+    _clearActiveTurnProjection();
     _clearSlashDraft();
     // WOR-53: drop the buffer of the conversation we're leaving so the buffer
     // map can't grow unbounded (same hygiene as [_newConversation]).
@@ -1977,8 +2658,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _thinking = false;
       _noResponse = false;
       _streamingIndex = null;
-      _typeTarget = '';
-      _typeRevealed = 0;
+      _resetTypeTarget();
       _activeConversationId = null;
       _activeConversationTitle = null;
     });
@@ -2031,6 +2711,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _stopRecoveryPoll();
       _stopTypewriter(); // Feature 2: no stale reveal into the emptied view.
       _pendingTurn = null;
+      _clearActiveTurnProjection();
     }
     setState(() {
       _conversations = _conversations.where((c) => c.id != conv.id).toList();
@@ -2040,8 +2721,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _thinking = false;
         _noResponse = false;
         _streamingIndex = null;
-        _typeTarget = '';
-        _typeRevealed = 0;
+        _resetTypeTarget();
         _activeConversationId = null;
         _activeConversationTitle = null;
       }
@@ -2695,11 +3375,35 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool get _activeWork => _activeChatWork;
 
+  bool get _showLegacyRun {
+    final progress = _legacyRun;
+    final runId = progress?.runId ?? '';
+    if (progress == null || runId.isEmpty || runId == 'idle') return false;
+    if (progress.legacyCompatibility == false) return false;
+    return progress.event != 'idle';
+  }
+
+  void _resumeLegacyRun() {
+    final progress = _legacyRun;
+    if (!_showLegacyRun || progress == null) return;
+    final sent = _wsService.requestLegacyAutonomousResume(progress);
+    if (sent && mounted) setState(() {});
+  }
+
+  void _stopLegacyRun() {
+    final progress = _legacyRun;
+    if (!_showLegacyRun || progress == null) return;
+    final sent = _wsService.requestLegacyAutonomousCancellation(progress);
+    if (sent && mounted) setState(() {});
+  }
+
   bool get _stopRequested {
+    final requestId =
+        _activeTurn?.requestId ?? _pendingTurn?.clientRequestId ?? '';
     return _activeChatWork &&
         _wsService.isConversationCancellationRequested(
           _activeConversationId ?? '',
-          clientRequestId: _pendingTurn?.clientRequestId ?? '',
+          clientRequestId: requestId,
         );
   }
 
@@ -2750,7 +3454,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// while a streaming assistant bubble already holds some text. Mirrors the
   /// requested `_isThinking && _streamingMessage.isNotEmpty` — here the
   /// "streaming message" is the entry at [_streamingIndex]. Drives the inline
-  /// [InlineThinkingDots]; distinct from the full pre-stream [ThinkingIndicator].
+  /// [InlineThinkingDots]; distinct from the compact pre-stream disclosure.
   bool get _isThinkingMidStream {
     final idx = _streamingIndex;
     return _thinking &&
@@ -2760,7 +3464,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _entries[idx].content.isNotEmpty;
   }
 
-  /// Whether the standalone pre-stream [ThinkingIndicator] occupies the
+  /// Whether the standalone pre-stream [ThinkingDisclosure] occupies the
   /// trailing list slot: thinking, but not yet streaming (a mid-stream pause
   /// is shown inline on the bubble via [InlineThinkingDots] instead). When this
   /// is false and [_noResponse] is true, that slot holds the retry tile
@@ -3580,6 +4284,10 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     _stopQueuedAudio();
+    _beginActiveTurnProjection(
+      requestId: requestId,
+      conversationId: sendingConv ?? '',
+    );
     final displayContent = hasFiles
         ? (text.isEmpty ? '📎 $names' : '📎 $names\n$text')
         : text;
@@ -3602,7 +4310,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _chatDocumentProgress = null;
       _liveExecutionTrace = null;
       _awaitingResponse = true;
-      _thinking = true;
+      _thinking = false;
       _noResponse = false;
     });
     _stopRecoveryPoll();
@@ -3612,35 +4320,102 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _stopActiveWork() {
     if (!_activeChatWork) return;
+    final projection = _activeTurn;
+    final requestId =
+        projection?.requestId ?? _pendingTurn?.clientRequestId ?? '';
     final sent = _wsService.requestChatCancellation(
-      conversationId: _activeConversationId ?? '',
-      clientRequestId: _pendingTurn?.clientRequestId ?? '',
+      conversationId: projection?.conversationId.isNotEmpty == true
+          ? projection!.conversationId
+          : (_activeConversationId ?? ''),
+      clientRequestId: requestId,
     );
-    if (sent && mounted) setState(() {});
+    if (sent && mounted) {
+      if (projection != null) projection.cancellationRequested = true;
+      _stopTypewriter();
+      final idx = _streamingIndex;
+      if (idx != null && idx >= 0 && idx < _entries.length) {
+        _setTypeTarget(_entries[idx].content, fullyRevealed: true);
+      }
+      for (final request in List<ws.McpConfirmRequest>.of(_mcpConfirmQueue)) {
+        if (request.requestId == requestId ||
+            (request.requestId.isEmpty && projection?.runId.isEmpty == true)) {
+          _answerMcpConfirm(request, false);
+        }
+      }
+      setState(() {
+        _awaitingResponse = false;
+        _thinking = false;
+        _noResponse = false;
+        _chatDocumentProgress = null;
+        _liveExecutionTrace = null;
+      });
+    }
   }
 
   void _onExecutionTrace(ExecutionTraceSnapshot snapshot) {
     if (!mounted) return;
     final key = snapshot.key;
-    final activeConversation = _activeConversationId;
-    if (activeConversation != null &&
-        activeConversation.isNotEmpty &&
-        key.conversationId != activeConversation) {
+    final projection = _activeTurn;
+    if (_wsService.isConversationCancellationRequested(
+          key.conversationId,
+          clientRequestId: key.requestId,
+        ) ||
+        (projection?.cancellationRequested == true &&
+            projection?.conversationId == key.conversationId &&
+            projection?.requestId == key.requestId &&
+            projection?.turnId == key.turnId &&
+            projection?.runId == key.runId)) {
+      if (_liveExecutionTrace != null) {
+        setState(() => _liveExecutionTrace = null);
+      }
       return;
     }
-    final pendingRequest = _pendingTurn?.clientRequestId ?? '';
+    if (!_adoptActiveTurnIfNeeded(
+          conversationId: key.conversationId,
+          requestId: key.requestId,
+          turnId: key.turnId,
+          runId: key.runId,
+          providerId: key.providerId,
+          modelId: key.modelId,
+          effectiveReasoning: key.effectiveReasoning,
+        ) ||
+        !_isFrameForCurrentTurn(
+          conversationId: key.conversationId,
+          clientRequestId: key.requestId,
+          turnId: key.turnId,
+          runId: key.runId,
+          providerId: key.providerId,
+          modelId: key.modelId,
+          requireExact: true,
+          terminal: false,
+        ) ||
+        !_bindActiveTurn(
+          conversationId: key.conversationId,
+          requestId: key.requestId,
+          turnId: key.turnId,
+          runId: key.runId,
+          providerId: key.providerId,
+          modelId: key.modelId,
+          effectiveReasoning: key.effectiveReasoning,
+        )) {
+      return;
+    }
     final matchingEntry = _entries.lastIndexWhere(
       (entry) =>
           !entry.isUser &&
           !entry.isSystem &&
-          entry.clientRequestId == key.requestId &&
-          entry.turnId == key.turnId,
+          executionTraceForExactIdentity(
+                snapshot,
+                conversationId: entry.conversationId,
+                requestId: entry.clientRequestId,
+                turnId: entry.turnId,
+                runId: entry.runId,
+                providerId: entry.providerId,
+                modelId: entry.modelId,
+                effectiveReasoning: entry.effectiveReasoning,
+              ) !=
+              null,
     );
-    if (pendingRequest.isNotEmpty &&
-        pendingRequest != key.requestId &&
-        matchingEntry < 0) {
-      return;
-    }
     setState(() {
       if (matchingEntry >= 0) {
         _entries[matchingEntry] = _entries[matchingEntry].copyWith(
@@ -3658,15 +4433,21 @@ class _ChatScreenState extends State<ChatScreen> {
     required String conversationId,
     required String clientRequestId,
     required String turnId,
+    required String runId,
+    required String providerId,
+    required String modelId,
+    required String effectiveReasoning,
   }) {
-    final snapshot = _liveExecutionTrace;
-    if (snapshot == null ||
-        snapshot.key.conversationId != conversationId ||
-        snapshot.key.requestId != clientRequestId ||
-        snapshot.key.turnId != turnId) {
-      return null;
-    }
-    return snapshot;
+    return executionTraceForExactIdentity(
+      _liveExecutionTrace,
+      conversationId: conversationId,
+      requestId: clientRequestId,
+      turnId: turnId,
+      runId: runId,
+      providerId: providerId,
+      modelId: modelId,
+      effectiveReasoning: effectiveReasoning,
+    );
   }
 
   /// Arm (or re-arm) the no-response watchdog. Fires [_onFirstTokenTimeout]
@@ -3702,7 +4483,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _acceptedTurnTimer = null;
         _turnPhase = _TurnPhase.transferring;
         setState(() {
-          _thinking = true;
+          _thinking = false;
           _noResponse = false;
           _relayTurnError = null;
         });
@@ -3923,9 +4704,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// The watchdog elapsed with TOTAL silence from the server — not a single
   /// turn-progress frame (status / tool-status / audio / transcript / response)
-  /// arrived before the active watchdog deadline. Replace the thinking dots with
-  /// the inline
-  /// "no response" + Réessayer tile — but only if the turn is still genuinely
+  /// arrived before the active watchdog deadline. Show the inline "no response"
+  /// + Réessayer tile — but only if the turn is still genuinely
   /// waiting over a healthy socket. A dropped connection is left to the
   /// connection banner (don't show a misleading "no response" error when it's
   /// actually a disconnect).
@@ -3986,8 +4766,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Re-send the last turn verbatim after a no-response timeout (the
   /// "Réessayer" button). The user's original message bubble stays — we only
-  /// replay the wire payload (file first, then prompt), then re-show thinking
-  /// and re-arm the watchdog. Mirrors [_sendText]'s send sequence.
+  /// replay the wire payload (file first, then prompt), then wait for a real
+  /// server activity signal and re-arm the watchdog. Mirrors [_sendText].
   void _retryLastTurn() {
     _wsService.setClientLocale(widget.languageController.code);
     final turn = _pendingTurn;
@@ -4038,7 +4818,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     setState(() {
       _awaitingResponse = true;
-      _thinking = true;
+      _thinking = false;
       _noResponse = false;
     });
     // WOR-75/WOR-53/WOR-62: user engaged LIVE on this conversation — stand any
@@ -4130,6 +4910,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (base64Wav != null && base64Wav.isNotEmpty) {
         _wsService.setClientLocale(widget.languageController.code);
         final voiceConv = _activeConversationId;
+        final voiceRequestId = ws.WebSocketService.newClientRequestId();
         if (_activeConversationBusy) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -4142,6 +4923,7 @@ class _ChatScreenState extends State<ChatScreen> {
         if (!_wsService.sendAudio(
           base64Wav,
           conversationId: voiceConv,
+          clientRequestId: voiceRequestId,
           ttsEnabled: _autoTts,
         )) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -4153,7 +4935,15 @@ class _ChatScreenState extends State<ChatScreen> {
           return;
         }
         _stopQueuedAudio();
+        _beginActiveTurnProjection(
+          requestId: voiceRequestId,
+          conversationId: voiceConv ?? '',
+        );
+        _pendingTurn = null;
         _awaitingResponse = true;
+        _thinking = false;
+        _noResponse = false;
+        _chatDocumentProgress = null;
         // WOR-75/WOR-53/WOR-62: mark the displayed conversation's turn in flight
         // (see [_sendText]).
         if (voiceConv != null && voiceConv.isNotEmpty) {
@@ -4420,27 +5210,30 @@ class _ChatScreenState extends State<ChatScreen> {
   //
   // The server sends `mcp_confirm_request` when a *write* MCP tool is about to
   // run on a mobile-initiated turn, and BLOCKS the agent until we answer with
-  // sendMcpConfirmResponse(id, approved). On timeout(120s)/disconnect it denies.
-  // Requests are serialized through a queue (tool calls are sequential per turn,
-  // but a queue makes any overlap safe): one modal dialog at a time, and EXACTLY
-  // ONE response per request — Approve → true; Decline / back / tap-outside →
-  // false. The dialog is shown on the root navigator (showDialog's default), so
-  // it appears above whatever screen is on top (chat, settings, providers…).
+  // sendMcpConfirmResponse(id, approved). Timeout/final teardown denies; a
+  // transient reconnect may reproject the same device-bound request. Requests
+  // are serialized as inline Chat projections. Exactly one verdict is sent per
+  // id; reconnect reprojection reuses the remembered answer.
 
-  /// Confirmation requests awaiting a dialog, drained one at a time.
+  /// Confirmation requests awaiting an inline answer.
   final List<ws.McpConfirmRequest> _mcpConfirmQueue = [];
 
   /// IDs currently visible/queued and recently answered. Reprojection of the
-  /// same canonical request must never create a second dialog.
+  /// same canonical request must never create a second prompt.
   final Set<String> _mcpConfirmPendingIds = <String>{};
   final Map<String, bool> _mcpConfirmAnswered = <String, bool>{};
   final List<String> _mcpConfirmAnsweredOrder = <String>[];
+  bool _permissionAppForeground = true;
+  bool _permissionRouteCovered = false;
 
-  /// Whether a confirmation dialog is currently on screen — serializes the
-  /// queue so two requests can never race the same dialog.
-  bool _mcpConfirmActive = false;
+  bool get _inlinePermissionSurfaceVisible =>
+      _permissionAppForeground && !_permissionRouteCovered;
 
   void _onMcpConfirmRequest(ws.McpConfirmRequest req) {
+    if (!mounted) {
+      _wsService.sendMcpConfirmResponse(req.id, false);
+      return;
+    }
     final priorAnswer = _mcpConfirmAnswered[req.id];
     if (priorAnswer != null) {
       // The server response is idempotent. Re-send the exact prior verdict so
@@ -4448,9 +5241,75 @@ class _ChatScreenState extends State<ChatScreen> {
       _wsService.sendMcpConfirmResponse(req.id, priorAnswer);
       return;
     }
+    if (!_inlinePermissionSurfaceVisible) {
+      _rememberMcpConfirmAnswer(req.id, false);
+      _wsService.sendMcpConfirmResponse(req.id, false);
+      return;
+    }
+    if (req.isPcOnlyColossalDeletion) {
+      // This reinforced frame is informational and structurally incapable of
+      // granting authority. It intentionally has no Chat-turn correlation;
+      // showing its sanitized counts is safe while every response remains a
+      // denial and the destructive review stays exclusively on the PC.
+      if (!_mcpConfirmPendingIds.add(req.id)) return;
+      setState(() => _mcpConfirmQueue.add(req));
+      _scrollToBottomAnimated();
+      return;
+    }
+    final hasCorrelation =
+        req.conversationId.isNotEmpty ||
+        req.requestId.isNotEmpty ||
+        req.turnId.isNotEmpty ||
+        req.runId.isNotEmpty ||
+        req.providerId.isNotEmpty ||
+        req.modelId.isNotEmpty ||
+        req.effectiveReasoning.isNotEmpty;
+    final exactCorrelation =
+        req.conversationId.isNotEmpty &&
+        req.requestId.isNotEmpty &&
+        req.turnId.isNotEmpty &&
+        req.runId.isNotEmpty &&
+        req.providerId.isNotEmpty &&
+        req.modelId.isNotEmpty;
+    final correlated = hasCorrelation
+        ? exactCorrelation &&
+              _activeChatWork &&
+              _adoptActiveTurnIfNeeded(
+                conversationId: req.conversationId,
+                requestId: req.requestId,
+                turnId: req.turnId,
+                runId: req.runId,
+                providerId: req.providerId,
+                modelId: req.modelId,
+                effectiveReasoning: req.effectiveReasoning,
+              ) &&
+              _isFrameForCurrentTurn(
+                conversationId: req.conversationId,
+                clientRequestId: req.requestId,
+                turnId: req.turnId,
+                runId: req.runId,
+              ) &&
+              _bindActiveTurn(
+                conversationId: req.conversationId,
+                requestId: req.requestId,
+                turnId: req.turnId,
+                runId: req.runId,
+                providerId: req.providerId,
+                modelId: req.modelId,
+                effectiveReasoning: req.effectiveReasoning,
+                requireExactMetadata: true,
+              )
+        : _activeTurn != null &&
+              !_activeTurn!.requiresCanonicalIdentity &&
+              _activeChatWork;
+    if (!correlated) {
+      _rememberMcpConfirmAnswer(req.id, false);
+      _wsService.sendMcpConfirmResponse(req.id, false);
+      return;
+    }
     if (!_mcpConfirmPendingIds.add(req.id)) return;
-    _mcpConfirmQueue.add(req);
-    _drainMcpConfirmQueue();
+    setState(() => _mcpConfirmQueue.add(req));
+    _scrollToBottomAnimated();
   }
 
   void _rememberMcpConfirmAnswer(String id, bool approved) {
@@ -4462,40 +5321,44 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _drainMcpConfirmQueue() async {
-    if (_mcpConfirmActive || _mcpConfirmQueue.isEmpty || !mounted) return;
-    _mcpConfirmActive = true;
-    final req = _mcpConfirmQueue.removeAt(0);
-    // Capture the service NOW: a modal barrier blocks settings/reconnect from
-    // swapping it while the dialog is up, but pinning it is clearest.
-    final svc = _wsService;
-
-    // showDialog completes EXACTLY ONCE: `true` (Approve), `false` (Decline),
-    // or `null` (back button / tap-outside). Decline is the safe default, so
-    // any non-approve outcome — including a dismissal — sends approved:false.
-    // Because the await resolves once, the response is sent exactly once.
-    final approved = await showDialog<bool>(
-      context: context,
-      barrierDismissible: true, // tap-outside → decline (safe default)
-      builder: (ctx) => McpConfirmDialog(request: req),
-    );
-    // Send the verdict for THIS request's id. Safe even if we've since
-    // disconnected — sendMcpConfirmResponse no-ops on a dead socket, and the
-    // server already denied on its own timeout.
-    final verdict = approved == true;
+  void _answerMcpConfirm(ws.McpConfirmRequest req, bool approved) {
+    if (!_mcpConfirmPendingIds.contains(req.id)) return;
     _mcpConfirmPendingIds.remove(req.id);
-    _rememberMcpConfirmAnswer(req.id, verdict);
-    svc.sendMcpConfirmResponse(req.id, verdict);
+    _rememberMcpConfirmAnswer(req.id, approved);
+    _wsService.sendMcpConfirmResponse(req.id, approved);
+    if (mounted) {
+      setState(() => _mcpConfirmQueue.removeWhere((item) => item.id == req.id));
+    }
+  }
 
-    _mcpConfirmActive = false;
-    // Drain the next queued request (if any).
-    if (mounted) _drainMcpConfirmQueue();
+  void _denyAllMcpConfirmRequests() {
+    if (_mcpConfirmQueue.isEmpty) return;
+    final pending = List<ws.McpConfirmRequest>.of(_mcpConfirmQueue);
+    for (final request in pending) {
+      _mcpConfirmPendingIds.remove(request.id);
+      _rememberMcpConfirmAnswer(request.id, false);
+      _wsService.sendMcpConfirmResponse(request.id, false);
+    }
+    if (mounted) {
+      setState(_mcpConfirmQueue.clear);
+    } else {
+      _mcpConfirmQueue.clear();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final visible = state == AppLifecycleState.resumed;
+    _permissionAppForeground = visible;
+    if (!visible) _denyAllMcpConfirmRequests();
   }
 
   /// Settings is pushed directly (not via a named route) so it can borrow
   /// the live WebSocket service for server-backed actions. Route navigation
   /// must not disturb that app-level connection or Chat's live subscriptions.
   Future<void> _openSettings() async {
+    _permissionRouteCovered = true;
+    _denyAllMcpConfirmRequests();
     await Navigator.of(context).push(
       slideFadeRoute(
         SettingsScreen(
@@ -4507,6 +5370,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
+    _permissionRouteCovered = false;
     if (!mounted) return;
 
     // Auto-TTS is a Chat-local preference that Settings can change. Refresh it
@@ -4533,6 +5397,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _attachmentCancellation?.cancel();
     for (final file in List<PreparedAttachment>.of(_pendingAttachments)) {
       unawaited(file.delete());
@@ -4591,6 +5456,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final double bottomSafe = MediaQuery.of(context).padding.bottom;
     final double inputBarReserve = _inputBarHeight > 0 ? _inputBarHeight : 112;
     final double listBottomPadding = bottomSafe + 10 + inputBarReserve + 16;
+    final bool showStatusTrailer =
+        _liveExecutionTrace != null || _showThinkingTrailer || _noResponse;
 
     return Scaffold(
       key: _scaffoldKey,
@@ -4629,13 +5496,6 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.all_inclusive_rounded),
-            onPressed: () => Navigator.of(
-              context,
-            ).push(slideFadeRoute(AutonomousScreen(wsService: _wsService))),
-            tooltip: strings.autonomousTitle,
-          ),
-          IconButton(
             icon: const Icon(Icons.settings_rounded),
             onPressed: _openSettings,
             tooltip: strings.settingsTooltip,
@@ -4656,12 +5516,27 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           Column(
             children: [
+              if (_showLegacyRun)
+                _LegacyRunProjection(
+                  progress: _legacyRun!,
+                  canResume:
+                      !_activeChatWork &&
+                      _wsService.canRequestLegacyAutonomousResume(_legacyRun!),
+                  canStop: _wsService.canRequestLegacyAutonomousCancellation(
+                    _legacyRun!,
+                  ),
+                  stopRequested: _wsService
+                      .isLegacyAutonomousCancellationRequested(_legacyRun!),
+                  onResume: _resumeLegacyRun,
+                  onStop: _stopLegacyRun,
+                ),
               Expanded(
                 child:
                     _entries.isEmpty &&
                         !_thinking &&
                         !_noResponse &&
-                        _liveExecutionTrace == null
+                        _liveExecutionTrace == null &&
+                        _mcpConfirmQueue.isEmpty
                     ? _buildEmptyState(palette, strings)
                     : ListView.builder(
                         controller: _scrollCtrl,
@@ -4681,11 +5556,8 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         itemCount:
                             _entries.length +
-                            ((_liveExecutionTrace != null ||
-                                    _showThinkingTrailer ||
-                                    _noResponse)
-                                ? 1
-                                : 0),
+                            (showStatusTrailer ? 1 : 0) +
+                            _mcpConfirmQueue.length,
                         itemBuilder: (context, index) {
                           // Trailing slot: the pre-stream thinking indicator,
                           // or — after a 12s no-first-token timeout — the
@@ -4695,20 +5567,37 @@ class _ChatScreenState extends State<ChatScreen> {
                           // mid-stream pause is shown inline via
                           // [InlineThinkingDots] on that bubble instead, so the
                           // standalone indicator is skipped to avoid two.
-                          if (index == _entries.length) {
+                          if (showStatusTrailer && index == _entries.length) {
                             final trace = _liveExecutionTrace;
                             if (trace != null) {
                               return ExecutionTraceBlock(
                                 key: ValueKey(
                                   'trace_${trace.key.conversationId}_'
-                                  '${trace.key.requestId}_${trace.key.turnId}',
+                                  '${trace.key.requestId}_${trace.key.turnId}_'
+                                  '${trace.key.runId}',
                                 ),
                                 snapshot: trace,
+                                collapsed: true,
+                                active: !trace.terminal && _activeChatWork,
                               );
                             }
                             return _showThinkingTrailer
-                                ? const ThinkingIndicator()
+                                ? const ThinkingDisclosure()
                                 : _buildNoResponseTile(palette, strings);
+                          }
+                          if (index >= _entries.length) {
+                            final permissionIndex =
+                                index -
+                                _entries.length -
+                                (showStatusTrailer ? 1 : 0);
+                            final request = _mcpConfirmQueue[permissionIndex];
+                            return _McpPermissionProjection(
+                              key: ValueKey('permission_${request.id}'),
+                              request: request,
+                              onApprove: () => _answerMcpConfirm(request, true),
+                              onDecline: () =>
+                                  _answerMcpConfirm(request, false),
+                            );
                           }
                           final entry = _entries[index];
                           final isAssistant = !entry.isUser && !entry.isSystem;
@@ -4719,11 +5608,12 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ExecutionTraceBlock(
                                   key: ValueKey(
                                     'trace_${trace.key.conversationId}_'
-                                    '${trace.key.requestId}_${trace.key.turnId}',
+                                    '${trace.key.requestId}_${trace.key.turnId}_'
+                                    '${trace.key.runId}',
                                   ),
                                   snapshot: trace,
-                                  collapsed:
-                                      trace.terminal && !entry.isStreaming,
+                                  collapsed: true,
+                                  active: entry.isStreaming && !trace.terminal,
                                 ),
                               ChatBubble(
                                 // Stable key per slot so the bubble (and its
@@ -5364,6 +6254,204 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
+class _McpPermissionProjection extends StatelessWidget {
+  const _McpPermissionProjection({
+    super.key,
+    required this.request,
+    required this.onApprove,
+    required this.onDecline,
+  });
+
+  final ws.McpConfirmRequest request;
+  final VoidCallback onApprove;
+  final VoidCallback onDecline;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final pcOnly = request.isPcOnlyColossalDeletion;
+    final detail = pcOnly
+        ? strings.colossalDeletionSafeCounts(
+            request.filesCount,
+            request.foldersCount,
+            request.totalBytes,
+            request.rootCount,
+          )
+        : request.summary.trim();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: palette.surface.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: palette.accent.withValues(alpha: 0.24)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.shield_outlined, size: 18, color: palette.accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  pcOnly
+                      ? strings.colossalDeletionPcReviewTitle
+                      : strings.mcpConfirmTitle(request.server, request.tool),
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          Text(
+            pcOnly
+                ? strings.colossalDeletionPcReviewBody
+                : strings.mcpConfirmWriteWarning,
+            style: TextStyle(
+              color: palette.textMuted,
+              fontSize: 13,
+              height: 1.35,
+            ),
+          ),
+          if (detail.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            SelectionArea(
+              child: Text(
+                detail,
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontSize: 12.5,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: onDecline,
+                child: Text(
+                  pcOnly
+                      ? strings.colossalDeletionClose
+                      : strings.mcpConfirmDecline,
+                ),
+              ),
+              if (request.canApprove) ...[
+                const SizedBox(width: 6),
+                FilledButton(
+                  onPressed: onApprove,
+                  child: Text(strings.mcpConfirmApprove),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Compact compatibility projection for a run that was created by an older
+/// client. It exposes only resume/stop and safe progress/final text; there is
+/// deliberately no objective editor, plan builder, model picker, or start path.
+class _LegacyRunProjection extends StatelessWidget {
+  const _LegacyRunProjection({
+    required this.progress,
+    required this.canResume,
+    required this.canStop,
+    required this.stopRequested,
+    required this.onResume,
+    required this.onStop,
+  });
+
+  final ws.AutonomousProgressMessage progress;
+  final bool canResume;
+  final bool canStop;
+  final bool stopRequested;
+  final VoidCallback onResume;
+  final VoidCallback onStop;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    final finalAnswer = progress.finalAnswer?.trim() ?? '';
+    final detail = progress.terminal == true && finalAnswer.isNotEmpty
+        ? finalAnswer
+        : strings.legacyRunActive;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 2),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: palette.surface.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: palette.border.withValues(alpha: 0.55)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.history_rounded, size: 18, color: palette.textMuted),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  strings.legacyRunTitle,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                SelectionArea(
+                  child: Text(
+                    detail,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textMuted,
+                      fontSize: 12.5,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (canResume)
+            TextButton(
+              onPressed: onResume,
+              child: Text(strings.legacyRunResume),
+            ),
+          if (canStop)
+            IconButton(
+              onPressed: stopRequested ? null : onStop,
+              icon: stopRequested
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 1.6),
+                    )
+                  : const Icon(Icons.stop_circle_outlined),
+              tooltip: strings.legacyRunStop,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 /// A single entry in the chat history.
 class _ChatEntry {
   final String content;
@@ -5375,6 +6463,10 @@ class _ChatEntry {
   final String clientRequestId;
   final String turnId;
   final String messageId;
+  final String runId;
+  final String providerId;
+  final String modelId;
+  final String effectiveReasoning;
   final ExecutionTraceSnapshot? executionTrace;
 
   const _ChatEntry({
@@ -5387,28 +6479,41 @@ class _ChatEntry {
     this.clientRequestId = '',
     this.turnId = '',
     this.messageId = '',
+    this.runId = '',
+    this.providerId = '',
+    this.modelId = '',
+    this.effectiveReasoning = '',
     this.executionTrace,
   });
 
   _ChatEntry copyWith({
     String? content,
+    bool? isTranscript,
     bool? isStreaming,
     String? conversationId,
     String? clientRequestId,
     String? turnId,
     String? messageId,
+    String? runId,
+    String? providerId,
+    String? modelId,
+    String? effectiveReasoning,
     ExecutionTraceSnapshot? executionTrace,
   }) {
     return _ChatEntry(
       content: content ?? this.content,
       isUser: isUser,
-      isTranscript: isTranscript,
+      isTranscript: isTranscript ?? this.isTranscript,
       isStreaming: isStreaming ?? this.isStreaming,
       isSystem: isSystem,
       conversationId: conversationId ?? this.conversationId,
       clientRequestId: clientRequestId ?? this.clientRequestId,
       turnId: turnId ?? this.turnId,
       messageId: messageId ?? this.messageId,
+      runId: runId ?? this.runId,
+      providerId: providerId ?? this.providerId,
+      modelId: modelId ?? this.modelId,
+      effectiveReasoning: effectiveReasoning ?? this.effectiveReasoning,
       executionTrace: executionTrace ?? this.executionTrace,
     );
   }
@@ -5435,6 +6540,151 @@ class _PendingTurn {
            : freezeSlashDirectiveMap(turnDirectives);
 }
 
+/// The one turn allowed to mutate the visible Chat projection. Core identity
+/// is monotonic: empty fields may be bound by an accepted/recovered frame, but
+/// a non-empty conversation/request/turn/run can never be replaced by a later
+/// frame. Provider/model/reasoning are server-authoritative display metadata.
+class _ActiveTurnProjection {
+  final int generation;
+  String conversationId;
+  final String requestId;
+  String turnId;
+  String runId;
+  String providerId;
+  String modelId;
+  String effectiveReasoning;
+  bool cancellationRequested;
+  bool terminal = false;
+  bool metadataAuthoritative;
+  final bool canonicalRequired;
+
+  bool get requiresCanonicalIdentity => canonicalRequired || runId.isNotEmpty;
+
+  _ActiveTurnProjection({
+    required this.generation,
+    required this.conversationId,
+    required this.requestId,
+    this.turnId = '',
+    this.runId = '',
+    this.providerId = '',
+    this.modelId = '',
+    this.effectiveReasoning = '',
+    this.cancellationRequested = false,
+    this.metadataAuthoritative = false,
+    this.canonicalRequired = false,
+  });
+
+  factory _ActiveTurnProjection.fromIdentity({
+    required int generation,
+    required ws.ChatTurnIdentity identity,
+    bool cancellationRequested = false,
+  }) => _ActiveTurnProjection(
+    generation: generation,
+    conversationId: identity.conversationId,
+    requestId: identity.requestId,
+    turnId: identity.turnId,
+    runId: identity.runId,
+    providerId: identity.providerId,
+    modelId: identity.modelId,
+    effectiveReasoning: identity.effectiveReasoning,
+    cancellationRequested: cancellationRequested,
+    metadataAuthoritative: true,
+    canonicalRequired: identity.runId.isNotEmpty,
+  );
+
+  bool bind({
+    String conversationId = '',
+    String requestId = '',
+    String turnId = '',
+    String runId = '',
+    String providerId = '',
+    String modelId = '',
+    String effectiveReasoning = '',
+    bool requireExactMetadata = false,
+  }) {
+    if ((this.conversationId.isNotEmpty &&
+            conversationId.isNotEmpty &&
+            this.conversationId != conversationId) ||
+        (requestId.isNotEmpty && this.requestId != requestId) ||
+        (this.turnId.isNotEmpty &&
+            turnId.isNotEmpty &&
+            this.turnId != turnId) ||
+        (this.runId.isNotEmpty && runId.isNotEmpty && this.runId != runId) ||
+        (metadataAuthoritative &&
+            requireExactMetadata &&
+            (this.providerId != providerId ||
+                this.modelId != modelId ||
+                this.effectiveReasoning != effectiveReasoning)) ||
+        (metadataAuthoritative &&
+            !requireExactMetadata &&
+            ((this.providerId.isNotEmpty &&
+                    providerId.isNotEmpty &&
+                    this.providerId != providerId) ||
+                (this.modelId.isNotEmpty &&
+                    modelId.isNotEmpty &&
+                    this.modelId != modelId) ||
+                (this.effectiveReasoning.isNotEmpty &&
+                    effectiveReasoning.isNotEmpty &&
+                    this.effectiveReasoning != effectiveReasoning)))) {
+      return false;
+    }
+    if (this.conversationId.isEmpty && conversationId.isNotEmpty) {
+      this.conversationId = conversationId;
+    }
+    if (this.turnId.isEmpty && turnId.isNotEmpty) this.turnId = turnId;
+    if (this.runId.isEmpty && runId.isNotEmpty) this.runId = runId;
+    if (requireExactMetadata) {
+      this.providerId = providerId;
+      this.modelId = modelId;
+      this.effectiveReasoning = effectiveReasoning;
+      metadataAuthoritative = true;
+    } else {
+      if (providerId.isNotEmpty) this.providerId = providerId;
+      if (modelId.isNotEmpty) this.modelId = modelId;
+      if (effectiveReasoning.isNotEmpty) {
+        this.effectiveReasoning = effectiveReasoning;
+      }
+      if (providerId.isNotEmpty ||
+          modelId.isNotEmpty ||
+          effectiveReasoning.isNotEmpty) {
+        metadataAuthoritative = true;
+      }
+    }
+    return true;
+  }
+
+  bool matches({
+    required String conversationId,
+    required String requestId,
+    required String turnId,
+    required String runId,
+    required bool terminal,
+  }) {
+    if (this.conversationId.isNotEmpty &&
+        conversationId.isNotEmpty &&
+        this.conversationId != conversationId) {
+      return false;
+    }
+    if (requestId.isNotEmpty && requestId != this.requestId) return false;
+    if (this.turnId.isNotEmpty && turnId.isNotEmpty && turnId != this.turnId) {
+      return false;
+    }
+    if (this.runId.isNotEmpty && runId.isNotEmpty && runId != this.runId) {
+      return false;
+    }
+    // Once the canonical identity is known, an uncorrelated terminal can no
+    // longer finalize it. Legacy non-terminal progress remains compatible.
+    if (terminal &&
+        (requestId.isEmpty ||
+            (this.turnId.isNotEmpty && turnId.isEmpty) ||
+            (this.runId.isNotEmpty &&
+                (runId.isEmpty || conversationId.isEmpty)))) {
+      return false;
+    }
+    return true;
+  }
+}
+
 /// Carries a live, already-authenticated [ws.WebSocketService] from the
 /// connection screen to the chat screen, together with the server frames the
 /// connection screen buffered during token validation (the initial
@@ -5453,7 +6703,7 @@ class ChatHandoff {
 /// when OSIA pauses to think mid-stream (see
 /// [_ChatScreenState._isThinkingMidStream]). Each dot is a 6px accent circle
 /// that fades and scales on a staggered loop. Deliberately distinct from the
-/// full [ThinkingIndicator] shown before streaming begins.
+/// compact [ThinkingDisclosure] shown before streaming begins.
 class InlineThinkingDots extends StatefulWidget {
   const InlineThinkingDots({super.key});
 

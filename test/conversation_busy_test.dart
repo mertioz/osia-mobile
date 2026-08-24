@@ -12,6 +12,11 @@ Map<String, dynamic> _canonicalFrame(Map<String, Object?> frame) {
   final requestId =
       frame['client_request_id']?.toString() ?? 'req-$conversationId';
   final turnId = frame['turn_id']?.toString() ?? 'turn-$conversationId';
+  final runId = frame['run_id']?.toString() ?? 'run-$conversationId';
+  final providerId = frame['provider_id']?.toString() ?? 'provider-test';
+  final modelId = frame['model_id']?.toString() ?? 'model-test';
+  final effectiveReasoning =
+      frame['effective_reasoning']?.toString() ?? 'medium';
   final eventId = type == 'cron_notification'
       ? frame['id']?.toString() ?? ''
       : 'event-$sequence';
@@ -26,6 +31,10 @@ Map<String, dynamic> _canonicalFrame(Map<String, Object?> frame) {
     'request_id': requestId,
     'client_request_id': requestId,
     'turn_id': turnId,
+    'run_id': runId,
+    'provider_id': providerId,
+    'model_id': modelId,
+    'effective_reasoning': effectiveReasoning,
     'message_id': type == 'cron_notification' ? eventId : 'message-$sequence',
     'event_id': eventId,
     'event_type': type,

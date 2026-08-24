@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:osia_mobile/services/execution_trace.dart';
 import 'package:osia_mobile/services/websocket_service.dart' as ws;
 
 Map<String, dynamic> _turnFrame(
@@ -7,6 +8,7 @@ Map<String, dynamic> _turnFrame(
   String conversationId = 'conv-231',
   String requestId = 'request-231',
   String turnId = 'turn-231',
+  String runId = 'run-231',
   String status = '',
   bool terminal = false,
   bool recovered = false,
@@ -17,6 +19,10 @@ Map<String, dynamic> _turnFrame(
   'request_id': requestId,
   'client_request_id': requestId,
   'turn_id': turnId,
+  'run_id': runId,
+  'provider_id': 'provider-test',
+  'model_id': 'model-test',
+  'effective_reasoning': 'medium',
   'message_id': type == 'turn_accepted' ? 'user-231' : 'assistant-231',
   'event_id': 'event-231-$sequence',
   'event_type': type,
@@ -26,6 +32,38 @@ Map<String, dynamic> _turnFrame(
   if (recovered) 'recovered': true,
   if (toolAttemptId.isNotEmpty) 'tool_attempt_id': toolAttemptId,
 };
+
+Map<String, dynamic> _traceFrame(int sequence, {bool terminal = false}) {
+  final event = <String, dynamic>{
+    'schema_version': executionTraceSchemaVersion,
+    'event_id': 'trace-event-231-$sequence',
+    'conversation_id': 'conv-231',
+    'request_id': 'request-231',
+    'turn_id': 'turn-231',
+    'run_id': 'run-231',
+    'provider_id': 'provider-test',
+    'model_id': 'model-test',
+    'effective_reasoning': 'medium',
+    'sequence': sequence,
+    'revision': 1,
+    'kind': terminal ? 'terminal' : 'public_reasoning_summary',
+    'display': <String, Object?>{
+      'key': terminal
+          ? 'execution.terminal.cancelled'
+          : 'execution.reasoning.summary',
+      'args': <String, Object?>{},
+    },
+    if (!terminal) 'summary': 'Late public reasoning summary.',
+    'timestamp': '2026-08-24T12:00:00Z',
+    'terminal': terminal,
+    'redaction_class': executionTraceRedactionClass,
+  };
+  return <String, dynamic>{
+    'type': 'execution_trace',
+    ...event,
+    'snapshot': <Object?>[event],
+  };
+}
 
 void main() {
   test(
@@ -80,6 +118,7 @@ void main() {
         'request_id': 'request-231',
         'client_request_id': 'request-231',
         'turn_id': 'turn-231',
+        'run_id': 'run-231',
       });
       expect(controls.single.containsKey('content'), isFalse);
       expect(
@@ -313,7 +352,8 @@ void main() {
       'reason_code': 'target_mismatch',
       'conversation_id': 'conv-231',
       'request_id': 'request-231',
-      'turn_id': 'turn-stale',
+      'turn_id': 'turn-231',
+      'run_id': 'run-231',
     });
 
     expect(
@@ -335,4 +375,144 @@ void main() {
       hasLength(2),
     );
   });
+
+  test(
+    'cancelled turn retains sanitized evidence but projects no late trace or text',
+    () async {
+      final sent = <Map<String, dynamic>>[];
+      final service = ws.WebSocketService(
+        ip: '127.0.0.1',
+        token: 'token',
+        autoReconnect: false,
+        sendFrameForTest: (frame) {
+          sent.add(frame);
+          return true;
+        },
+      );
+      addTearDown(service.dispose);
+      final traces = <ExecutionTraceSnapshot>[];
+      final streams = <ws.ConvStreamEvent>[];
+      final traceSub = service.executionTraceStream.listen(traces.add);
+      final streamSub = service.convStreamStream.listen(streams.add);
+      addTearDown(traceSub.cancel);
+      addTearDown(streamSub.cancel);
+
+      expect(
+        service.sendText(
+          'safe read-only task',
+          conversationId: 'conv-231',
+          clientRequestId: 'request-231',
+        ),
+        isTrue,
+      );
+      service.handleIncomingFrameForTest(_turnFrame('turn_accepted', 1));
+      expect(
+        service.requestChatCancellation(
+          conversationId: 'conv-231',
+          clientRequestId: 'request-231',
+        ),
+        isTrue,
+      );
+
+      service.handleIncomingFrameForTest(_traceFrame(1));
+      service.handleIncomingFrameForTest(<String, dynamic>{
+        ..._turnFrame('response_chunk', 2),
+        'content': 'LATE_CHUNK_MUST_NOT_RENDER',
+      });
+      service.handleIncomingFrameForTest(<String, dynamic>{
+        ..._turnFrame('response', 3),
+        'content': 'LATE_FINAL_MUST_NOT_RENDER',
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(traces, isEmpty);
+      expect(streams.where((event) => event.delta?.isNotEmpty == true), isEmpty);
+      expect(service.bufferedText('conv-231'), isEmpty);
+      expect(
+        service.executionTraceForConversation('conv-231'),
+        isNotNull,
+        reason: 'sanitized evidence remains retained but non-projectable',
+      );
+
+      service.handleIncomingFrameForTest(
+        _turnFrame(
+          'turn_status',
+          4,
+          status: 'cancelled',
+          terminal: true,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(service.isConversationBusy('conv-231'), isFalse);
+      expect(service.isConversationWorkActive('conv-231'), isFalse);
+      expect(service.isConversationWaiting('conv-231'), isFalse);
+      expect(service.isPending('conv-231'), isFalse);
+      expect(service.activeTurnIdentity('conv-231'), isNull);
+      expect(
+        service.isConversationCancellationRequested(
+          'conv-231',
+          clientRequestId: 'request-231',
+        ),
+        isFalse,
+      );
+
+      expect(
+        service.sendText(
+          'new unaffected turn',
+          conversationId: 'conv-231',
+          clientRequestId: 'request-232',
+        ),
+        isTrue,
+      );
+      service.handleIncomingFrameForTest(
+        _turnFrame(
+          'turn_accepted',
+          5,
+          requestId: 'request-232',
+          turnId: 'turn-232',
+          runId: 'run-232',
+        ),
+      );
+      final nextIdentity = service.activeTurnIdentity('conv-231');
+      expect(nextIdentity?.requestId, 'request-232');
+      expect(nextIdentity?.turnId, 'turn-232');
+      expect(nextIdentity?.runId, 'run-232');
+      service.handleIncomingFrameForTest(<String, dynamic>{
+        ..._turnFrame(
+          'response_chunk',
+          6,
+          requestId: 'request-232',
+          turnId: 'turn-232',
+          runId: 'run-232',
+        ),
+        'content': 'NEW_TURN_VISIBLE',
+      });
+      service.handleIncomingFrameForTest(_traceFrame(7));
+      service.handleIncomingFrameForTest(
+        _turnFrame(
+          'turn_status',
+          8,
+          status: 'cancelled_proven',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(service.bufferedText('conv-231'), 'NEW_TURN_VISIBLE');
+      expect(service.activeTurnIdentity('conv-231')?.requestId, 'request-232');
+      expect(service.isConversationWaiting('conv-231'), isFalse);
+      expect(
+        service.requestChatCancellation(
+          conversationId: 'conv-231',
+          clientRequestId: 'request-232',
+        ),
+        isTrue,
+      );
+      final controls = sent
+          .where((frame) => frame['type'] == 'cancel_active_work')
+          .toList();
+      expect(controls, hasLength(2));
+      expect(controls.last['request_id'], 'request-232');
+      expect(controls.last['turn_id'], 'turn-232');
+      expect(controls.last['run_id'], 'run-232');
+    },
+  );
 }

@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../l10n.dart';
 import '../motion.dart';
 import '../theme.dart';
@@ -111,13 +113,15 @@ class _ChatBubbleState extends State<ChatBubble>
                   width: 0.5,
                 ),
               ),
-              child: Text(
-                widget.text,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: palette.textMuted.withValues(alpha: 0.85),
-                  fontWeight: FontWeight.w400,
+              child: SelectionArea(
+                child: Text(
+                  widget.text,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: palette.textMuted.withValues(alpha: 0.85),
+                    fontWeight: FontWeight.w400,
+                  ),
                 ),
               ),
             ),
@@ -137,27 +141,14 @@ class _ChatBubbleState extends State<ChatBubble>
       height: 1.45,
     );
 
-    final Widget content = widget.isStreaming
-        ? Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(text: widget.text),
-                WidgetSpan(
-                  alignment: PlaceholderAlignment.middle,
-                  child: _BlinkingCursor(color: palette.accent),
-                ),
-                // Inline mid-stream indicator (e.g. the mini thinking dots),
-                // sitting just after the cursor at the end of the text flow.
-                if (widget.inlineTrailing != null)
-                  WidgetSpan(
-                    alignment: PlaceholderAlignment.middle,
-                    child: widget.inlineTrailing!,
-                  ),
-              ],
-            ),
-            style: textStyle,
-          )
-        : Text(widget.text, style: textStyle);
+    final Widget content = _SafeMarkdownText(
+      text: widget.text,
+      style: textStyle,
+      accent: palette.accent,
+      codeBackground: palette.surfaceElevated,
+      isStreaming: widget.isStreaming,
+      inlineTrailing: widget.inlineTrailing,
+    );
 
     final bubble = widget.isUser
         ? _userBubble(palette, content)
@@ -247,6 +238,177 @@ class _ChatBubbleState extends State<ChatBubble>
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Conservative Markdown renderer for message text. It recognizes only fully
+/// closed code fences, inline code, bold text, and safe HTTP(S) links. Partial
+/// streaming delimiters remain literal until their closing delimiter arrives,
+/// so no text disappears or jumps into an unsafe widget tree mid-stream.
+class _SafeMarkdownText extends StatefulWidget {
+  const _SafeMarkdownText({
+    required this.text,
+    required this.style,
+    required this.accent,
+    required this.codeBackground,
+    required this.isStreaming,
+    this.inlineTrailing,
+  });
+
+  final String text;
+  final TextStyle style;
+  final Color accent;
+  final Color codeBackground;
+  final bool isStreaming;
+  final Widget? inlineTrailing;
+
+  @override
+  State<_SafeMarkdownText> createState() => _SafeMarkdownTextState();
+}
+
+class _SafeMarkdownTextState extends State<_SafeMarkdownText> {
+  final List<TapGestureRecognizer> _linkRecognizers =
+      <TapGestureRecognizer>[];
+
+  static final RegExp _fencedCode = RegExp(
+    r'```[^\n]*\n(.*?)```',
+    dotAll: true,
+  );
+  static final RegExp _inlineMarkdown = RegExp(
+    r'(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\(https?://[^\s)]+\))',
+    caseSensitive: false,
+  );
+  static final RegExp _safeLink = RegExp(
+    r'^\[([^\]\n]+)\]\((https?://[^\s)]+)\)$',
+    caseSensitive: false,
+  );
+
+  @override
+  void dispose() {
+    _disposeRecognizers();
+    super.dispose();
+  }
+
+  void _disposeRecognizers() {
+    for (final recognizer in _linkRecognizers) {
+      recognizer.dispose();
+    }
+    _linkRecognizers.clear();
+  }
+
+  Future<void> _openLink(String raw) async {
+    final uri = Uri.tryParse(raw);
+    final scheme = uri?.scheme.toLowerCase() ?? '';
+    if (uri == null || (scheme != 'http' && scheme != 'https')) return;
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } on Object {
+      // Keep link-launch failures local to the message surface.
+    }
+  }
+
+  List<InlineSpan> _inlineSpans(String source) {
+    if (source.contains('```')) return <InlineSpan>[TextSpan(text: source)];
+    final spans = <InlineSpan>[];
+    var cursor = 0;
+    for (final match in _inlineMarkdown.allMatches(source)) {
+      if (match.start > cursor) {
+        spans.add(TextSpan(text: source.substring(cursor, match.start)));
+      }
+      final token = match.group(0)!;
+      if (token.startsWith('**') && token.endsWith('**')) {
+        spans.add(
+          TextSpan(
+            text: token.substring(2, token.length - 2),
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        );
+      } else if (token.startsWith('`') && token.endsWith('`')) {
+        spans.add(
+          TextSpan(
+            text: token.substring(1, token.length - 1),
+            style: TextStyle(
+              fontFamily: 'monospace',
+              backgroundColor: widget.codeBackground,
+            ),
+          ),
+        );
+      } else {
+        final link = _safeLink.firstMatch(token);
+        if (link == null) {
+          spans.add(TextSpan(text: token));
+        } else {
+          final url = link.group(2)!;
+          final recognizer = TapGestureRecognizer()..onTap = () => _openLink(url);
+          _linkRecognizers.add(recognizer);
+          spans.add(
+            TextSpan(
+              text: link.group(1),
+              style: TextStyle(
+                color: widget.accent,
+                decoration: TextDecoration.underline,
+                decorationColor: widget.accent,
+              ),
+              recognizer: recognizer,
+            ),
+          );
+        }
+      }
+      cursor = match.end;
+    }
+    if (cursor < source.length) {
+      spans.add(TextSpan(text: source.substring(cursor)));
+    }
+    return spans;
+  }
+
+  List<InlineSpan> _markdownSpans() {
+    final spans = <InlineSpan>[];
+    var cursor = 0;
+    for (final match in _fencedCode.allMatches(widget.text)) {
+      if (match.start > cursor) {
+        spans.addAll(_inlineSpans(widget.text.substring(cursor, match.start)));
+      }
+      spans.add(
+        TextSpan(
+          text: match.group(1),
+          style: TextStyle(
+            fontFamily: 'monospace',
+            backgroundColor: widget.codeBackground,
+            height: 1.35,
+          ),
+        ),
+      );
+      cursor = match.end;
+    }
+    if (cursor < widget.text.length) {
+      spans.addAll(_inlineSpans(widget.text.substring(cursor)));
+    }
+    if (widget.isStreaming) {
+      spans.add(
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: _BlinkingCursor(color: widget.accent),
+        ),
+      );
+      if (widget.inlineTrailing != null) {
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: widget.inlineTrailing!,
+          ),
+        );
+      }
+    }
+    return spans;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _disposeRecognizers();
+    return SelectionArea(
+      child: Text.rich(TextSpan(children: _markdownSpans()), style: widget.style),
     );
   }
 }

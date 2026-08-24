@@ -51,8 +51,9 @@ class _FakeAutonomousWebSocketService extends ws.WebSocketService {
   void sendGetModels() {}
 
   @override
-  void sendAutonomousResume() {
+  bool requestLegacyAutonomousResume(ws.AutonomousProgressMessage progress) {
     resumeCalls += 1;
+    return true;
   }
 
   void emit(ws.AutonomousProgressMessage message) => _autonomous.add(message);

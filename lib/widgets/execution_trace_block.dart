@@ -102,10 +102,15 @@ String formatExecutionTraceSummary(
   final permissions = <_TracePermissionFact>[];
   final continuationSequences = <int>[];
   final genericResults = <({int sequence, String displayKey})>[];
+  final publicSummaries = <String>[];
   String terminalKey = '';
 
   for (final event in ordered) {
     switch (event.kind) {
+      case ExecutionTraceKind.reasoningSummary:
+        if (event.publicSummary.isNotEmpty) {
+          publicSummaries.add(event.publicSummary);
+        }
       case ExecutionTraceKind.action:
         if (event.display.key != 'execution.action.preparing') {
           actions.add(
@@ -148,6 +153,13 @@ String formatExecutionTraceSummary(
         break;
     }
     if (event.terminal) break;
+  }
+
+  // A provider-designated public summary is the canonical explanation when it
+  // exists. Activity prose is strictly the fallback, never filler appended to
+  // an authorized provider summary.
+  if (publicSummaries.isNotEmpty) {
+    return publicSummaries.toSet().join('\n\n');
   }
 
   final attachedPermissions = <_TracePermissionFact>{};
@@ -345,38 +357,40 @@ String formatExecutionTraceSummary(
     index++;
   }
 
+  String activitySummary;
   if (sentences.isEmpty) {
-    return strings.executionTraceNaturalText(switch (terminalKey) {
+    activitySummary = strings.executionTraceNaturalText(switch (terminalKey) {
       'execution.terminal.blocked' => 'blocked_request',
       'execution.terminal.cancelled' => 'cancelled_request',
       'execution.terminal.safety_block' => 'safety_block',
       'execution.terminal.success' => 'simple_request',
-      _ => ordered.isEmpty ? '' : 'in_progress',
+      _ => '',
     });
-  }
-
-  final prose = <String>[];
-  for (
-    var sentenceIndex = 0;
-    sentenceIndex < sentences.length;
-    sentenceIndex++
-  ) {
-    final sentence = sentences[sentenceIndex];
-    if (sentence.kind == _NarrativeKind.completedAction &&
-        sentenceIndex + 1 < sentences.length &&
-        sentences[sentenceIndex + 1].kind == _NarrativeKind.blocker) {
-      prose.add(
-        strings.executionTraceJoinWithBlocker(
-          sentence.text,
-          sentences[sentenceIndex + 1].text,
-        ),
-      );
-      sentenceIndex++;
-    } else {
-      prose.add(sentence.text);
+  } else {
+    final prose = <String>[];
+    for (
+      var sentenceIndex = 0;
+      sentenceIndex < sentences.length;
+      sentenceIndex++
+    ) {
+      final sentence = sentences[sentenceIndex];
+      if (sentence.kind == _NarrativeKind.completedAction &&
+          sentenceIndex + 1 < sentences.length &&
+          sentences[sentenceIndex + 1].kind == _NarrativeKind.blocker) {
+        prose.add(
+          strings.executionTraceJoinWithBlocker(
+            sentence.text,
+            sentences[sentenceIndex + 1].text,
+          ),
+        );
+        sentenceIndex++;
+      } else {
+        prose.add(sentence.text);
+      }
     }
+    activitySummary = prose.join(' ');
   }
-  return prose.join(' ');
+  return activitySummary;
 }
 
 _TraceActionFact? _matchingAction(
@@ -443,10 +457,12 @@ class ExecutionTraceBlock extends StatefulWidget {
     super.key,
     required this.snapshot,
     this.collapsed = false,
+    this.active = false,
   });
 
   final ExecutionTraceSnapshot snapshot;
   final bool collapsed;
+  final bool active;
 
   @override
   State<ExecutionTraceBlock> createState() => _ExecutionTraceBlockState();
@@ -478,13 +494,15 @@ class _ExecutionTraceBlockState extends State<ExecutionTraceBlock> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Semantics(
-            button: true,
+            button: summary.isNotEmpty,
             expanded: _expanded,
             excludeSemantics: true,
             label: strings.executionTraceTitle,
             child: InkWell(
               key: const ValueKey('execution_trace_toggle'),
-              onTap: () => setState(() => _expanded = !_expanded),
+              onTap: summary.isEmpty
+                  ? null
+                  : () => setState(() => _expanded = !_expanded),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Row(
@@ -512,6 +530,17 @@ class _ExecutionTraceBlockState extends State<ExecutionTraceBlock> {
                         size: 17,
                       ),
                     ),
+                    if (widget.active) ...[
+                      const SizedBox(width: 4),
+                      SizedBox(
+                        width: 10,
+                        height: 10,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.4,
+                          color: palette.accent.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -524,17 +553,64 @@ class _ExecutionTraceBlockState extends State<ExecutionTraceBlock> {
             child: _expanded && summary.isNotEmpty
                 ? Padding(
                     padding: const EdgeInsets.only(top: 2, bottom: 4),
-                    child: Text(
-                      summary,
-                      key: const ValueKey('execution_trace_summary'),
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 13,
-                        height: 1.38,
+                    child: SelectionArea(
+                      child: Text(
+                        summary,
+                        key: const ValueKey('execution_trace_summary'),
+                        style: TextStyle(
+                          color:
+                              Color.lerp(
+                                palette.textMuted,
+                                palette.accent,
+                                0.14,
+                              ) ??
+                              palette.textMuted,
+                          fontSize: 13,
+                          height: 1.38,
+                        ),
                       ),
                     ),
                   )
                 : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Compact truthful placeholder shown before the first displayable activity
+/// event. It deliberately contains no synthetic status prose.
+class ThinkingDisclosure extends StatelessWidget {
+  const ThinkingDisclosure({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            strings.executionTraceTitle,
+            style: TextStyle(
+              color: palette.textMuted,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(width: 2),
+          Icon(Icons.chevron_right_rounded, color: palette.textMuted, size: 17),
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 10,
+            height: 10,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.4,
+              color: palette.accent.withValues(alpha: 0.7),
+            ),
           ),
         ],
       ),

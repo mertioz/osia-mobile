@@ -665,8 +665,8 @@
             "fr": "Naviguer dans OSIA Mobile"
           },
           "subtitle": {
-            "en": "Advanced — scheduled tasks and PC health monitoring. Updates — versions, changes and update status. Legal — versions, privacy and legal information. The bottom navigation also opens Conversations, Models, Settings, OSIA personality/skills, and Autonomous mode. Features that are disabled or unavailable remain visibly unavailable; the guide does not activate them.",
-            "fr": "Avancé — tâches planifiées et surveillance du PC. Mises à jour — versions, changements et état des mises à jour. Légal — versions, confidentialité et informations légales. La navigation inférieure ouvre aussi Conversations, Modèles, Réglages, la personnalité/les compétences OSIA et le mode Autonome. Les fonctions désactivées ou indisponibles le restent ; le guide ne les active pas."
+            "en": "Advanced — scheduled tasks and PC health monitoring. Updates — versions, changes and update status. Legal — versions, privacy and legal information. The bottom navigation also opens Conversations, Models, Settings, and OSIA personality/skills. Longer work remains in Chat. Features that are disabled or unavailable remain visibly unavailable; the guide does not activate them.",
+            "fr": "Avancé — tâches planifiées et surveillance du PC. Mises à jour — versions, changements et état des mises à jour. Légal — versions, confidentialité et informations légales. La navigation inférieure ouvre aussi Conversations, Modèles, Réglages et la personnalité/les compétences OSIA. Les travaux plus longs restent dans le Chat. Les fonctions désactivées ou indisponibles le restent ; le guide ne les active pas."
           },
           "body_blocks": [],
           "callouts": [
@@ -705,8 +705,8 @@
               },
               "body_blocks": [
                 {
-                  "en": "Conversations manages chats; Autonomous follows longer PC tasks; Settings holds notifications and preferences; Memory shows local memories; Providers and system pages configure the PC; Connection handles pairing and recovery.",
-                  "fr": "Conversations gère les discussions ; Autonome suit les tâches PC longues ; Réglages contient notifications et préférences ; Mémoire affiche les souvenirs locaux ; Fournisseurs et les pages système configurent le PC ; Connexion gère association et récupération."
+                  "en": "Conversations handles both answers and longer PC work in one Chat surface; Settings holds notifications and preferences; Memory shows local memories; Providers and system pages configure the PC; Connection handles pairing and recovery.",
+                  "fr": "Conversations regroupe les réponses et les travaux PC plus longs dans une seule interface de discussion ; Réglages contient notifications et préférences ; Mémoire affiche les souvenirs locaux ; Fournisseurs et les pages système configurent le PC ; Connexion gère association et récupération."
                 }
               ],
               "callouts": [
@@ -1679,12 +1679,12 @@
           "track_id": "master-osia",
           "order": 15,
           "title": {
-            "en": "Set an autonomous scope",
-            "fr": "Définir le périmètre autonome"
+            "en": "Handle longer work in Chat",
+            "fr": "Gérer les travaux longs dans le Chat"
           },
           "subtitle": {
-            "en": "Autonomous mode is for a bounded multi-step mission, not a routine follow-up question. Describe the objective, choose its provider/model and monitor phases, tasks and confirmations. One machine-wide runner is allowed.",
-            "fr": "Le mode autonome sert à une mission bornée en plusieurs étapes, pas à une question de suivi ordinaire. Décrivez l’objectif, choisissez son fournisseur/modèle et surveillez phases, tâches et confirmations. Une seule mission globale peut tourner."
+            "en": "Describe the whole objective in a normal Chat message. The same conversation shows real provider-approved thinking summaries, tool progress and confirmations without opening a separate mode.",
+            "fr": "Décrivez tout l’objectif dans un message normal. La même conversation affiche les résumés de réflexion approuvés par le fournisseur, la progression des outils et les confirmations, sans mode séparé."
           },
           "body_blocks": [],
           "callouts": [
@@ -1695,8 +1695,8 @@
                 "fr": "En pratique"
               },
               "body": {
-                "en": "Use it to inspect a project, propose a plan and apply approved fixes; use normal chat to rephrase one paragraph.",
-                "fr": "Utilisez-le pour inspecter un projet, proposer un plan et appliquer des corrections approuvées ; utilisez le chat pour reformuler un paragraphe."
+                "en": "Ask Chat to inspect a project, propose a plan and apply approved fixes. Continue in the same conversation for follow-up questions.",
+                "fr": "Demandez au Chat d’inspecter un projet, de proposer un plan et d’appliquer les corrections approuvées. Poursuivez dans la même conversation pour les questions suivantes."
               }
             }
           ],
@@ -1704,8 +1704,8 @@
             "kind": "native",
             "key": "mastery.autonomous-scope",
             "alt": {
-              "en": "OSIA visual explaining set an autonomous scope.",
-              "fr": "Visuel OSIA expliquant définir le périmètre autonome."
+              "en": "OSIA visual explaining longer work in Chat.",
+              "fr": "Visuel OSIA expliquant les travaux longs dans le Chat."
             }
           },
           "action": {
@@ -1721,12 +1721,12 @@
           "track_id": "master-osia",
           "order": 16,
           "title": {
-            "en": "Pause, resume or abandon",
-            "fr": "Interrompre, reprendre ou abandonner"
+            "en": "Follow and stop active work",
+            "fr": "Suivre et arrêter le travail actif"
           },
           "subtitle": {
-            "en": "Interrupt pauses a resumable checkpoint; Abandon ends it and removes that checkpoint. Plans and retries are bounded, and external writes still follow confirmation policy.",
-            "fr": "Interrompre met en pause un point de reprise ; Abandonner termine la mission et le retire. Plans et tentatives sont bornés, et les écritures externes gardent leurs confirmations."
+            "en": "Thinking stays compact and factual, the progressive reply finishes smoothly, and Stop targets only the exact active run. Reconnect returns to that same conversation and run.",
+            "fr": "La réflexion reste compacte et factuelle, la réponse progressive se termine en douceur, et Arrêter cible uniquement l’exécution active exacte. La reconnexion revient à la même conversation et à la même exécution."
           },
           "body_blocks": [],
           "callouts": [
@@ -1746,8 +1746,8 @@
             "kind": "native",
             "key": "mastery.autonomous-lifecycle",
             "alt": {
-              "en": "OSIA visual explaining pause, resume or abandon.",
-              "fr": "Visuel OSIA expliquant interrompre, reprendre ou abandonner."
+              "en": "OSIA visual explaining how to follow and stop Chat work.",
+              "fr": "Visuel OSIA expliquant comment suivre et arrêter le travail du Chat."
             }
           },
           "action": {
@@ -2516,8 +2516,8 @@
           },
           "body_blocks": [
             {
-              "en": "PC notifications and Android local notifications are best effort and depend on system permissions. The Android foreground service can improve continuity but remains subject to Android power rules. Scheduled and autonomous work still needs OSIA running; after sleep or a network change, reopen the app and allow one clean reconnect.",
-              "fr": "Les notifications PC et Android sont fournies au mieux et dépendent des autorisations système. Le service Android au premier plan améliore la continuité mais reste soumis aux règles d’énergie. Les tâches ont toujours besoin d’OSIA actif ; après veille ou changement réseau, rouvrez l’app et laissez une reconnexion propre."
+              "en": "PC notifications and Android local notifications are best effort and depend on system permissions. The Android foreground service can improve continuity but remains subject to Android power rules. Scheduled and long-running Chat work still needs OSIA running; after sleep or a network change, reopen the app and allow one clean reconnect.",
+              "fr": "Les notifications PC et Android sont fournies au mieux et dépendent des autorisations système. Le service Android au premier plan améliore la continuité mais reste soumis aux règles d’énergie. Les tâches planifiées et les travaux longs du Chat ont toujours besoin d’OSIA actif ; après veille ou changement réseau, rouvrez l’app et laissez une reconnexion propre."
             }
           ],
           "callouts": [
@@ -4027,8 +4027,8 @@
           },
           "body_blocks": [
             {
-              "en": "Metadata identifies provider, reasoning support, vision and tool compatibility. Manual selection is global unless a feature such as autonomous or voice exposes its own selector; conversations do not invent an independent model override. Heavy/Medium hierarchy handles classified tasks, while an unknown image capability fails closed instead of guessing.",
-              "fr": "Les métadonnées indiquent fournisseur, raisonnement, vision et outils. La sélection manuelle est globale sauf lorsqu’une fonction comme Autonome ou Voix possède son propre sélecteur ; les conversations n’inventent pas de remplacement. La hiérarchie Lourde/Moyenne gère les tâches classées et une capacité image inconnue échoue fermée."
+              "en": "Metadata identifies provider, reasoning support, vision and tool compatibility. Chat preserves the effective provider, model and reasoning level on the exact active run. Heavy/Medium hierarchy handles classified tasks, while an unknown image capability fails closed instead of guessing.",
+              "fr": "Les métadonnées indiquent fournisseur, raisonnement, vision et outils. Le Chat conserve le fournisseur, le modèle et le niveau de raisonnement effectifs sur l’exécution active exacte. La hiérarchie Lourde/Moyenne gère les tâches classées et une capacité image inconnue échoue fermée."
             }
           ],
           "callouts": [
@@ -4130,17 +4130,17 @@
           "track_id": "osia-advanced",
           "order": 22,
           "title": {
-            "en": "Autonomous mode internals",
-            "fr": "Internes du mode autonome"
+            "en": "Unified Chat run internals",
+            "fr": "Internes des exécutions Chat unifiées"
           },
           "subtitle": {
-            "en": "Autonomous mode orchestrates a persisted, bounded mission above normal agent turns.",
-            "fr": "Le mode autonome orchestre une mission persistante et bornée au-dessus des tours normaux."
+            "en": "Every visible update belongs to one persisted conversation, request, turn and run identity.",
+            "fr": "Chaque mise à jour visible appartient à une identité persistée de conversation, requête, tour et exécution."
           },
           "body_blocks": [
             {
-              "en": "The planner creates at most five phases of five tasks, tasks have bounded attempts and the mission has bounded replans. One machine-wide runner writes a crash-safe checkpoint. Interrupt preserves an in-progress state for Resume; Abort marks it terminal and removes the checkpoint. Progress includes planning, task, salvage, failure and terminal events, while each underlying agent turn keeps loop/time protections.",
-              "fr": "Le planificateur crée au plus cinq phases de cinq tâches, avec tentatives et replanifications bornées. Un exécuteur global écrit un point de reprise sûr. Interrompre conserve l’état pour Reprendre ; Abandonner le rend final et retire le point. La progression couvre plan, tâche, récupération, échec et fin, chaque tour gardant ses protections."
+              "en": "Run-aware correlation rejects stale chunks and terminals. Provider-approved public summaries are bounded before display, Stop carries the exact active identity, and the grapheme-safe terminal drain reveals the accepted final text without splitting emoji or combining marks. Legacy durable checkpoints remain recoverable but cannot start new work.",
+              "fr": "La corrélation par exécution rejette les fragments et fins obsolètes. Les résumés publics approuvés par le fournisseur sont bornés avant affichage, Arrêter transporte l’identité active exacte, et la fin progressive respecte les graphèmes sans couper emoji ni signes combinés. Les anciens points de reprise restent récupérables mais ne peuvent pas lancer de nouveau travail."
             }
           ],
           "callouts": [
@@ -4151,8 +4151,8 @@
                 "fr": "En pratique"
               },
               "body": {
-                "en": "Crash after one task, resume, and verify completed work is rechecked rather than blindly repeated.",
-                "fr": "Interrompez après une tâche, reprenez et vérifiez que le travail est contrôlé plutôt que répété aveuglément."
+                "en": "Disconnect during a long answer, reconnect, and verify Chat resumes the same run without mixing an older terminal into it.",
+                "fr": "Déconnectez-vous pendant une réponse longue, reconnectez-vous, puis vérifiez que le Chat reprend la même exécution sans y mélanger une ancienne fin."
               }
             },
             {
@@ -4171,8 +4171,8 @@
             "kind": "native",
             "key": "advanced.autonomous",
             "alt": {
-              "en": "OSIA visual explaining autonomous mode internals.",
-              "fr": "Visuel OSIA expliquant internes du mode autonome."
+              "en": "OSIA visual explaining unified Chat run internals.",
+              "fr": "Visuel OSIA expliquant les exécutions Chat unifiées."
             }
           },
           "action": {
@@ -4363,8 +4363,8 @@
           },
           "body_blocks": [
             {
-              "en": "The installed profile uses the resolved user data directory; source mode may use a project config only when its settings file exists. Conversations, memory JSON with atomic backup, settings, ignored API-key and OAuth stores, autonomous checkpoint, cron jobs, LAN identity and guide progress remain PC-owned. Mobile stores pairing plus interface preferences. Migration validates IDs and corruption falls back safely without reopening first-run UI.",
-              "fr": "Le profil installé utilise le dossier utilisateur résolu ; le mode source peut utiliser config du projet si settings existe. Conversations, mémoire JSON atomique, réglages, magasins ignorés de clés/OAuth, point autonome, tâches, identité LAN et progression restent PC. Le mobile garde association et préférences. La migration valide les ID et la corruption retombe sûrement sans rouvrir le premier lancement."
+              "en": "The installed profile uses the resolved user data directory; source mode may use a project config only when its settings file exists. Conversations, memory JSON with atomic backup, settings, ignored API-key and OAuth stores, legacy durable-run checkpoints, cron jobs, LAN identity and guide progress remain PC-owned. Mobile stores pairing plus interface preferences. Migration validates IDs and corruption falls back safely without reopening first-run UI.",
+              "fr": "Le profil installé utilise le dossier utilisateur résolu ; le mode source peut utiliser config du projet si settings existe. Conversations, mémoire JSON atomique, réglages, magasins ignorés de clés/OAuth, anciens points de reprise durables, tâches, identité LAN et progression restent PC. Le mobile garde association et préférences. La migration valide les ID et la corruption retombe sûrement sans rouvrir le premier lancement."
             }
           ],
           "callouts": [

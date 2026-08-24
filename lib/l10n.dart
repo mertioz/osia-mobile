@@ -1720,6 +1720,10 @@ class OsiaStrings {
   String get activeTransportTitle => _wor254('transport.title');
   String get executionTraceTitle => _wor254('trace.title');
   String get thinkingLabel => _wor254('thinking');
+  String get legacyRunTitle => _wor254('legacy_run.title');
+  String get legacyRunActive => _wor254('legacy_run.active');
+  String get legacyRunResume => _wor254('legacy_run.resume');
+  String get legacyRunStop => _wor254('legacy_run.stop');
 
   String transportStateText(String state) => _wor254('transport.$state');
 
@@ -1870,6 +1874,11 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'transport.relayOsia': 'Relay OSIA',
     'trace.title': 'Thinking',
     'thinking': 'Thinking…',
+    'legacy_run.title': 'Previous durable run',
+    'legacy_run.active': 'Work from an earlier version is still available.',
+    'legacy_run.resume': 'Resume',
+    'legacy_run.stop': 'Stop',
+    'execution.reasoning.summary': 'Provider summary',
     'execution.goal.answer': 'Understanding the request',
     'execution.goal.complete_task': 'Preparing to complete the task',
     'execution.action.preparing': 'Preparing the next step',
@@ -1926,6 +1935,12 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'transport.relayOsia': 'Relais OSIA',
     'trace.title': 'Réflexion',
     'thinking': 'Réflexion…',
+    'legacy_run.title': 'Exécution durable précédente',
+    'legacy_run.active':
+        'Un travail créé avec une version antérieure reste disponible.',
+    'legacy_run.resume': 'Reprendre',
+    'legacy_run.stop': 'Arrêter',
+    'execution.reasoning.summary': 'Résumé du fournisseur',
     'execution.goal.answer': 'Compréhension de la demande',
     'execution.goal.complete_task': 'Préparation de la tâche',
     'execution.action.preparing': 'Préparation de l’étape suivante',
@@ -1986,6 +2001,11 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'transport.relayOsia': 'OSIA 中继',
     'trace.title': '思考过程',
     'thinking': '正在思考…',
+    'legacy_run.title': '先前的持久运行',
+    'legacy_run.active': '早期版本创建的工作仍可继续。',
+    'legacy_run.resume': '继续',
+    'legacy_run.stop': '停止',
+    'execution.reasoning.summary': '提供商摘要',
     'execution.goal.answer': '正在理解请求',
     'execution.goal.complete_task': '正在准备完成任务',
     'execution.action.preparing': '正在准备下一步',
@@ -2040,6 +2060,11 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'transport.relayOsia': 'OSIA リレー',
     'trace.title': '処理状況',
     'thinking': '考えています…',
+    'legacy_run.title': '以前の永続実行',
+    'legacy_run.active': '以前のバージョンで作成した作業を続行できます。',
+    'legacy_run.resume': '再開',
+    'legacy_run.stop': '停止',
+    'execution.reasoning.summary': 'プロバイダーの要約',
     'execution.goal.answer': '依頼を確認しています',
     'execution.goal.complete_task': 'タスク完了を準備しています',
     'execution.action.preparing': '次の手順を準備しています',
@@ -2094,6 +2119,12 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'transport.relayOsia': 'OSIA-Relay',
     'trace.title': 'Verarbeitung',
     'thinking': 'Denke nach…',
+    'legacy_run.title': 'Früherer dauerhafter Lauf',
+    'legacy_run.active':
+        'Arbeit aus einer früheren Version ist noch verfügbar.',
+    'legacy_run.resume': 'Fortsetzen',
+    'legacy_run.stop': 'Stoppen',
+    'execution.reasoning.summary': 'Anbieterzusammenfassung',
     'execution.goal.answer': 'Anfrage wird verstanden',
     'execution.goal.complete_task': 'Aufgabe wird vorbereitet',
     'execution.action.preparing': 'Nächster Schritt wird vorbereitet',
@@ -2162,6 +2193,12 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'transport.relayOsia': 'Relé OSIA',
     'trace.title': 'Proceso',
     'thinking': 'Pensando…',
+    'legacy_run.title': 'Ejecución duradera anterior',
+    'legacy_run.active':
+        'El trabajo de una versión anterior sigue disponible.',
+    'legacy_run.resume': 'Reanudar',
+    'legacy_run.stop': 'Detener',
+    'execution.reasoning.summary': 'Resumen del proveedor',
     'execution.goal.answer': 'Entendiendo la solicitud',
     'execution.goal.complete_task': 'Preparando la tarea',
     'execution.action.preparing': 'Preparando el siguiente paso',

@@ -19,7 +19,7 @@ void main() {
 
     expect(find.byKey(const Key('guide-screen')), findsOneWidget);
     expect(
-      find.byKey(const Key('guide-lesson-essential.what-is-mobile')),
+      find.byKey(const Key('guide-lesson-essential.osia-role')),
       findsOneWidget,
     );
 

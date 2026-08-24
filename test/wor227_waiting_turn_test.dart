@@ -11,6 +11,7 @@ import 'package:osia_mobile/services/storage_service.dart';
 import 'package:osia_mobile/services/transport_coordinator.dart';
 import 'package:osia_mobile/services/websocket_service.dart' as ws;
 import 'package:osia_mobile/theme.dart';
+import 'package:osia_mobile/widgets/execution_trace_block.dart';
 
 class _NoopBackgroundPlatform implements BackgroundConnectionPlatform {
   @override
@@ -152,6 +153,10 @@ Map<String, dynamic> _turnFrame(
   'request_id': 'request-recovered',
   'client_request_id': 'request-recovered',
   'turn_id': 'turn-recovered',
+  'run_id': 'run-recovered',
+  'provider_id': 'provider-test',
+  'model_id': 'model-test',
+  'effective_reasoning': 'medium',
   'message_id': type == 'turn_accepted'
       ? 'message-user-recovered'
       : 'message-assistant-recovered',
@@ -344,11 +349,22 @@ void main() {
       expect(service.normalTurns, isEmpty);
       expect(find.text('brouillon conservé'), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(ThinkingDisclosure), findsNothing);
 
-      service.emitStatus('done');
+      service.emitStatus('cancellation_requested');
+      await tester.pump();
+      expect(find.byType(ThinkingDisclosure), findsNothing);
+
+      service.emitStatus('cancelled');
       await tester.pump();
       expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
       expect(find.text('brouillon conservé'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pump();
+      expect(service.normalTurns, <String>['brouillon conservé']);
+      expect(service.cancellationControls, 1);
+      await tester.pump(const Duration(milliseconds: 100));
 
       await tester.pumpWidget(const SizedBox());
       await tester.pump();

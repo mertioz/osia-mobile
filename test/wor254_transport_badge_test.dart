@@ -371,7 +371,7 @@ void main() {
     );
     final prose = formatExecutionTraceSummary(osiaStringsEn, trace);
 
-    expect(prose, osiaStringsEn.executionTraceNaturalText('in_progress'));
+    expect(prose, isEmpty);
     expect(prose, isNot(contains('secret')));
     expect(prose, isNot(contains('provider')));
   });
@@ -418,7 +418,8 @@ void main() {
     final initial = snapshot(<Map<String, dynamic>>[action]);
     await tester.pumpWidget(host(ExecutionTraceBlock(snapshot: initial)));
     final initialProse = formatExecutionTraceSummary(osiaStringsEn, initial);
-    expect(find.text(initialProse), findsOneWidget);
+    expect(initialProse, isEmpty);
+    expect(find.byKey(const ValueKey('execution_trace_summary')), findsNothing);
 
     final updated = snapshot(<Map<String, dynamic>>[
       action,
@@ -527,7 +528,9 @@ void main() {
       for (final key in executionTraceDisplayKeys.keys) {
         expect(strings.executionTraceText(key), isNotEmpty);
         expect(strings.executionTraceText(key), isNot(key));
-        expect(strings.executionTraceSummaryClause(key), isNotEmpty);
+        if (key != 'execution.reasoning.summary') {
+          expect(strings.executionTraceSummaryClause(key), isNotEmpty);
+        }
       }
     }
   });

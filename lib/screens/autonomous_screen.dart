@@ -947,11 +947,18 @@ class _AutonomousScreenState extends State<AutonomousScreen> {
   }
 
   void _interrupt() {
-    widget.wsService.sendAutonomousInterrupt();
+    final latest = _latest;
+    if (latest != null) {
+      widget.wsService.requestLegacyAutonomousInterrupt(latest);
+    }
   }
 
   void _resume() {
-    widget.wsService.sendAutonomousResume();
+    final latest = _latest;
+    if (latest == null ||
+        !widget.wsService.requestLegacyAutonomousResume(latest)) {
+      return;
+    }
     // Optimistic flip to running so the UI responds before the server's running
     // frame lands. _latest is deliberately left intact — the progress card
     // keeps its snapshot and continues from where the run paused.
