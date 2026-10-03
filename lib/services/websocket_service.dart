@@ -445,11 +445,15 @@ class ConversationDeletedMessage extends OsiaMessage {
   final String id;
   final bool success;
   final String error;
+  final String operationId;
+  final int snapshotRevision;
 
   const ConversationDeletedMessage({
     required this.id,
     required this.success,
     this.error = '',
+    this.operationId = '',
+    this.snapshotRevision = 0,
   });
 }
 
@@ -4069,8 +4073,10 @@ class WebSocketService {
   }
 
   /// Ask the server to delete a conversation.
-  void sendDeleteConversation(String id) {
-    _send({'type': 'delete_conversation', 'id': id});
+  String sendDeleteConversation(String id, {String? operationId}) {
+    final op = _conversationFolderOperationId(operationId);
+    _send({'type': 'delete_conversation', 'id': id, 'operation_id': op});
+    return op;
   }
 
   void _clearConversationAfterDeletion(String id) {
@@ -7742,7 +7748,19 @@ class WebSocketService {
             _clearConversationAfterDeletion(id);
           }
           _emit(
-            ConversationDeletedMessage(id: id, success: success, error: error),
+            ConversationDeletedMessage(
+              id: id,
+              success: success,
+              error: error,
+              operationId: (json['operation_id'] ?? '').toString(),
+              snapshotRevision: switch (json['snapshot_revision']) {
+                final int value => value,
+                final num value => value.toInt(),
+                _ =>
+                  int.tryParse((json['snapshot_revision'] ?? '').toString()) ??
+                      0,
+              },
+            ),
           );
         case 'conversations_bulk_deleted':
           final rawDeleted = json['deleted_ids'];
@@ -7764,10 +7782,15 @@ class WebSocketService {
               success: success,
               error: (json['error'] ?? '').toString(),
               deletedIds: deletedIds,
-              revision: switch (json['revision']) {
+              revision: switch (json['snapshot_revision'] ?? json['revision']) {
                 final int value => value,
                 final num value => value.toInt(),
-                _ => int.tryParse((json['revision'] ?? '').toString()) ?? 0,
+                _ =>
+                  int.tryParse(
+                        (json['snapshot_revision'] ?? json['revision'] ?? '')
+                            .toString(),
+                      ) ??
+                      0,
               },
             ),
           );

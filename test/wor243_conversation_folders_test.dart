@@ -252,7 +252,7 @@ void main() {
   test('projects render before ungrouped conversations', () {
     final source = File('lib/screens/chat_screen.dart').readAsStringSync();
     final method = source.indexOf(
-      'List<Widget> _buildConversationDrawerItems(OsiaPalette palette)',
+      'List<_ConversationDrawerEntry> _buildConversationDrawerEntries()',
     );
     final projectRows = source.indexOf(
       'for (final folder in _conversationFolders) {',

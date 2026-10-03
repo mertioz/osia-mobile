@@ -293,6 +293,11 @@ void main() {
 
     final scrollView = find.byType(SingleChildScrollView);
     expect(scrollView, findsOneWidget);
+    final settingsScrollables = find.descendant(
+      of: find.byType(SettingsScreen),
+      matching: find.byType(Scrollable),
+    );
+    expect(settingsScrollables, findsOneWidget);
     final scrollable = find.descendant(
       of: scrollView,
       matching: find.byType(Scrollable),
@@ -300,16 +305,30 @@ void main() {
     final position = tester.state<ScrollableState>(scrollable.first).position;
     expect(position.maxScrollExtent, greaterThan(0));
     final appBar = find.byType(AppBar).first;
-    final appBarTop = tester.getTopLeft(appBar).dy;
+    final appBarRect = tester.getRect(appBar);
 
-    await tester.drag(
-      find.byKey(const Key('settings-sections')),
-      const Offset(0, -5000),
-    );
+    await tester.drag(scrollView, const Offset(0, -5000));
     await tester.pumpAndSettle();
 
-    expect(tester.getTopLeft(appBar).dy, appBarTop);
-    expect(position.pixels, lessThanOrEqualTo(position.maxScrollExtent));
+    expect(tester.getRect(appBar), appBarRect);
+    expect(position.pixels, position.maxScrollExtent);
+
+    final contentBottom = tester
+        .getBottomLeft(find.byKey(const Key('settings-sections')))
+        .dy;
+    final viewportBottom = tester.getBottomLeft(scrollView).dy;
+    expect(contentBottom, closeTo(viewportBottom - 32, 10));
+
+    for (var i = 0; i < 8; i++) {
+      await tester.drag(scrollView, const Offset(0, -1000));
+      await tester.pump();
+    }
+    expect(position.pixels, position.maxScrollExtent);
+    expect(tester.getRect(appBar), appBarRect);
+    expect(
+      tester.getBottomLeft(find.byKey(const Key('settings-sections'))).dy,
+      closeTo(viewportBottom - 32, 10),
+    );
   });
 
   testWidgets('shows notification toggle in the requested Settings order', (

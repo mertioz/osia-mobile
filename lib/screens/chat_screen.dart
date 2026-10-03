@@ -203,7 +203,11 @@ class _ChatScreenState extends State<ChatScreen> {
   _PendingConversationDeletion? _pendingBulkDeletion;
   final Map<String, _PendingConversationDeletion>
   _pendingConversationDeletions = <String, _PendingConversationDeletion>{};
-  final Set<String> _confirmedDeletedConversationIds = <String>{};
+  // Value-free, bounded diagnostics only. These entries never hide or veto a
+  // canonical row; they let a stale list frame be identified by operation and
+  // snapshot revision if the server ever tries to reintroduce a deleted ID.
+  final Map<String, _ConversationDeleteDiagnostic>
+  _conversationDeleteDiagnostics = <String, _ConversationDeleteDiagnostic>{};
   int _conversationSelectionEpoch = 0;
   String? _activeConversationId;
   String? _activeConversationTitle;
@@ -458,7 +462,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (state != ws.ConnectionState.connected) {
         _attachmentCancellation?.cancel();
         for (final deletion in _pendingConversationDeletions.values) {
-          deletion.disconnected = true;
+          deletion.awaitingCanonicalSnapshot = true;
         }
       }
       if (mounted) {
@@ -663,19 +667,34 @@ class _ChatScreenState extends State<ChatScreen> {
         :final id,
         :final success,
         :final error,
+        :final operationId,
+        :final snapshotRevision,
       ):
-        _resolveConversationDeletion(id, success: success, error: error);
+        debugPrint(
+          '[OSIA DeleteTrace] origin=${operationId.startsWith('desktop_') ? 'PC' : 'Mobile'} '
+          'phase=ack_received conversation_id=$id operation_id=$operationId '
+          'success=$success snapshot_revision=$snapshotRevision error=$error',
+        );
+        _resolveConversationDeletion(
+          id,
+          success: success,
+          error: error,
+          operationId: operationId,
+          snapshotRevision: snapshotRevision,
+        );
       case ws.ConversationsBulkDeletedMessage(
         :final operationId,
         :final success,
         :final error,
         :final deletedIds,
+        :final revision,
       ):
         _resolveBulkConversationDeletion(
           operationId,
           success: success,
           error: error,
           deletedIds: deletedIds,
+          revision: revision,
         );
       case ws.TranscriptMessage(
         :final content,
@@ -1047,7 +1066,15 @@ class _ChatScreenState extends State<ChatScreen> {
         :final snapshotRevision,
         :final operationId,
       ):
-        if (snapshotRevision < _conversationFolderSnapshotRevision) break;
+        final staleSnapshot =
+            snapshotRevision < _conversationFolderSnapshotRevision;
+        _logConversationListRefresh(
+          conversations,
+          operationId: operationId,
+          snapshotRevision: snapshotRevision,
+          stale: staleSnapshot,
+        );
+        if (staleSnapshot) break;
         _conversationFolderSnapshotRevision = snapshotRevision;
         final projectedConversations = _reconcileConversationSnapshot(
           conversations,
@@ -2728,7 +2755,11 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (!mounted || confirmed != true) return;
 
-    final snapshot = _captureConversationDeletion(<ws.Conversation>[conv]);
+    final operationId =
+        'mobile_delete_${ws.WebSocketService.newClientRequestId()}';
+    final snapshot = _captureConversationDeletion(<ws.Conversation>[
+      conv,
+    ], operationId: operationId);
     _pendingConversationDeletions[conv.id] = snapshot;
     final deletingActive = snapshot.wasActive;
     setState(() {
@@ -2744,7 +2775,19 @@ class _ChatScreenState extends State<ChatScreen> {
       _clearActiveTurnProjection();
       _stopQueuedAudio();
     }
-    _wsService.sendDeleteConversation(conv.id);
+    _recordConversationDeleteDiagnostic(
+      conv.id,
+      operationId: operationId,
+      origin: 'Mobile',
+      uiRemovedAt: snapshot.uiRemovedAt,
+      acknowledgementRevision: 0,
+    );
+    debugPrint(
+      '[OSIA DeleteTrace] origin=Mobile phase=ui_removed '
+      'conversation_id=${conv.id} operation_id=$operationId '
+      'ui_removed_at=${snapshot.uiRemovedAt.toIso8601String()}',
+    );
+    _wsService.sendDeleteConversation(conv.id, operationId: operationId);
     snapshot.timeout = Timer(
       const Duration(seconds: 8),
       () => unawaited(_reconcileConversationDeletionTimeout(conv.id)),
@@ -2764,11 +2807,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   _PendingConversationDeletion _captureConversationDeletion(
-    List<ws.Conversation> affected,
-  ) {
+    List<ws.Conversation> affected, {
+    String operationId = '',
+  }) {
     final activeId = _activeConversationId;
     final affectedIds = affected.map((item) => item.id).toSet();
     return _PendingConversationDeletion(
+      operationId: operationId,
+      uiRemovedAt: DateTime.now().toUtc(),
       originalConversations: List<ws.Conversation>.of(_conversations),
       affectedIds: affectedIds,
       wasActive: activeId != null && affectedIds.contains(activeId),
@@ -2878,18 +2924,58 @@ class _ChatScreenState extends State<ChatScreen> {
     String id, {
     required bool success,
     String error = '',
+    String operationId = '',
+    int snapshotRevision = 0,
   }) {
-    final deletion = _pendingConversationDeletions.remove(id);
-    if (deletion == null) return;
-    deletion.timeout?.cancel();
-    final alreadyAbsent = error == 'conversation_not_found';
-    if (success || alreadyAbsent) {
-      _confirmedDeletedConversationIds.add(id);
-      _canonicalHistory.forget(id);
-      _optimisticUser.remove(id);
-      _discardDeletedConversationDraft(deletion);
+    final deletion = _pendingConversationDeletions[id];
+    if (deletion != null &&
+        operationId.isNotEmpty &&
+        deletion.operationId.isNotEmpty &&
+        deletion.operationId != operationId) {
       return;
     }
+    final alreadyAbsent = error == 'conversation_not_found';
+    if (!success && alreadyAbsent) {
+      // A not-found failure only proves that the expected file path was
+      // missing. Wait for the canonical catalogue frame to prove the ID is
+      // absent; a mismatched path/list must restore the row as a real failure.
+      if (deletion != null) {
+        deletion.awaitingCanonicalSnapshot = true;
+        _advanceConversationSnapshotRevision(snapshotRevision);
+      }
+      return;
+    }
+    if (success) {
+      debugPrint(
+        '[OSIA DeleteTrace] origin=${deletion == null ? 'PC' : 'Mobile'} '
+        'phase=ack_reconciled conversation_id=$id '
+        'operation_id=$operationId success=$success '
+        'snapshot_revision=$snapshotRevision',
+      );
+      _pendingConversationDeletions.remove(id);
+      deletion?.timeout?.cancel();
+      _advanceConversationSnapshotRevision(snapshotRevision);
+      _recordConversationDeleteDiagnostic(
+        id,
+        operationId: operationId.isNotEmpty
+            ? operationId
+            : deletion?.operationId ?? '',
+        origin: deletion == null ? 'PC' : 'Mobile',
+        uiRemovedAt: deletion?.uiRemovedAt,
+        acknowledgementRevision: snapshotRevision,
+      );
+      _canonicalHistory.forget(id);
+      _optimisticUser.remove(id);
+      if (deletion == null) {
+        _applyCanonicalConversationDeletions(<String>{id});
+      } else {
+        _discardDeletedConversationDraft(deletion);
+      }
+      return;
+    }
+    if (deletion == null) return;
+    _pendingConversationDeletions.remove(id);
+    deletion.timeout?.cancel();
     _restoreConversationDeletion(deletion);
     _showConversationDeleteFailure(OsiaL10n.of(context));
   }
@@ -2899,24 +2985,41 @@ class _ChatScreenState extends State<ChatScreen> {
     required bool success,
     required String error,
     required List<String> deletedIds,
+    int revision = 0,
   }) {
-    if (operationId.isEmpty || operationId != _bulkDeleteOperationId) return;
     final deletion = _pendingBulkDeletion;
-    if (deletion == null) return;
+    final ownsOperation =
+        operationId.isNotEmpty &&
+        operationId == _bulkDeleteOperationId &&
+        deletion != null;
     if (success) {
-      final committedIds = deletedIds.isEmpty
+      final committedIds = deletedIds.isNotEmpty
+          ? deletedIds.toSet()
+          : ownsOperation
           ? deletion.affectedIds
-          : deletedIds.toSet();
-      _confirmedDeletedConversationIds.addAll(committedIds);
+          : <String>{};
+      _advanceConversationSnapshotRevision(revision);
       for (final id in committedIds) {
+        _recordConversationDeleteDiagnostic(
+          id,
+          operationId: operationId,
+          origin: ownsOperation ? 'Mobile' : 'PC',
+          uiRemovedAt: deletion?.uiRemovedAt,
+          acknowledgementRevision: revision,
+        );
         _canonicalHistory.forget(id);
         _optimisticUser.remove(id);
       }
-      _discardDeletedConversationDraft(deletion);
-    } else {
+      if (ownsOperation) {
+        _discardDeletedConversationDraft(deletion);
+      } else {
+        _applyCanonicalConversationDeletions(committedIds);
+      }
+    } else if (ownsOperation) {
       _restoreConversationDeletion(deletion);
       _showConversationDeleteFailure(OsiaL10n.of(context));
     }
+    if (!ownsOperation) return;
     setState(() {
       _pendingBulkDeletion = null;
       _bulkDeleteOperationId = null;
@@ -2928,7 +3031,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final deletion = _pendingConversationDeletions[id];
     if (deletion == null) return;
     if (_wsService.state != ws.ConnectionState.connected) {
-      deletion.disconnected = true;
+      deletion.awaitingCanonicalSnapshot = true;
       return;
     }
     try {
@@ -2939,17 +3042,104 @@ class _ChatScreenState extends State<ChatScreen> {
         id,
         success: !exists,
         error: exists ? 'canonical_snapshot_still_contains_conversation' : '',
+        operationId: deletion.operationId,
+        snapshotRevision: canonical.snapshotRevision,
       );
     } on Object {
       final pending = _pendingConversationDeletions[id];
-      if (pending != null) pending.disconnected = true;
+      if (pending != null) pending.awaitingCanonicalSnapshot = true;
     }
   }
 
   bool _isConversationDeletionPending(String id) =>
       _pendingConversationDeletions.containsKey(id) ||
-      _confirmedDeletedConversationIds.contains(id) ||
       (_pendingBulkDeletion?.affectedIds.contains(id) ?? false);
+
+  void _advanceConversationSnapshotRevision(int revision) {
+    if (revision > _conversationFolderSnapshotRevision) {
+      _conversationFolderSnapshotRevision = revision;
+    }
+  }
+
+  void _recordConversationDeleteDiagnostic(
+    String id, {
+    required String operationId,
+    required String origin,
+    DateTime? uiRemovedAt,
+    required int acknowledgementRevision,
+  }) {
+    if (id.isEmpty) return;
+    final previous = _conversationDeleteDiagnostics[id];
+    _conversationDeleteDiagnostics[id] = _ConversationDeleteDiagnostic(
+      operationId: operationId.isNotEmpty
+          ? operationId
+          : previous?.operationId ?? '',
+      origin: origin,
+      uiRemovedAt: uiRemovedAt ?? previous?.uiRemovedAt,
+      acknowledgementRevision: acknowledgementRevision > 0
+          ? acknowledgementRevision
+          : previous?.acknowledgementRevision ?? 0,
+    );
+    while (_conversationDeleteDiagnostics.length > 16) {
+      _conversationDeleteDiagnostics.remove(
+        _conversationDeleteDiagnostics.keys.first,
+      );
+    }
+  }
+
+  void _logConversationListRefresh(
+    List<ws.Conversation> conversations, {
+    required String operationId,
+    required int snapshotRevision,
+    required bool stale,
+  }) {
+    if (_conversationDeleteDiagnostics.isEmpty) return;
+    final ids = conversations.map((item) => item.id).toSet();
+    for (final entry in _conversationDeleteDiagnostics.entries) {
+      final diagnostic = entry.value;
+      debugPrint(
+        '[OSIA DeleteTrace] origin=${diagnostic.origin} phase=list_refresh '
+        'conversation_id=${entry.key} operation_id=${diagnostic.operationId} '
+        'ui_removed_at=${diagnostic.uiRemovedAt?.toUtc().toIso8601String() ?? 'unknown'} '
+        'ack_revision=${diagnostic.acknowledgementRevision} '
+        'source=pc_canonical snapshot_operation_id=$operationId '
+        'snapshot_revision=$snapshotRevision '
+        'conversation_present=${ids.contains(entry.key)} stale_snapshot=$stale',
+      );
+    }
+  }
+
+  void _applyCanonicalConversationDeletions(Set<String> deletedIds) {
+    if (deletedIds.isEmpty) return;
+    debugPrint(
+      '[OSIA DeleteTrace] phase=projection_delete '
+      'deleted_ids=${deletedIds.toList()} '
+      'before_ids=${_conversations.map((item) => item.id).toList()}',
+    );
+    final activeId = _activeConversationId;
+    final activeWasDeleted = activeId != null && deletedIds.contains(activeId);
+    if (activeWasDeleted) {
+      _canonicalHistory.forget(activeId);
+      _cancelPendingConvLoad();
+      _cancelFirstTokenTimer();
+      _stopRecoveryPoll();
+      _stopTypewriter();
+      _optimisticUser.remove(activeId);
+      _pendingTurn = null;
+      _clearActiveTurnProjection();
+      _stopQueuedAudio();
+    }
+    setState(() {
+      _conversations = _conversations
+          .where((conversation) => !deletedIds.contains(conversation.id))
+          .toList(growable: false);
+      if (activeWasDeleted) _clearDeletedActiveConversationProjection();
+    });
+    debugPrint(
+      '[OSIA DeleteTrace] phase=projection_delete_complete '
+      'remaining_ids=${_conversations.map((item) => item.id).toList()}',
+    );
+  }
 
   List<ws.Conversation> _reconcileConversationSnapshot(
     List<ws.Conversation> canonical, {
@@ -2957,12 +3147,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }) {
     final canonicalIds = canonical.map((item) => item.id).toSet();
     for (final entry in _pendingConversationDeletions.entries.toList()) {
-      if (!entry.value.disconnected) continue;
+      if (!entry.value.awaitingCanonicalSnapshot) continue;
       final exists = canonicalIds.contains(entry.key);
       _resolveConversationDeletion(
         entry.key,
         success: !exists,
         error: exists ? 'reconnect_snapshot_contains_conversation' : '',
+        operationId: entry.value.operationId,
+        snapshotRevision: _conversationFolderSnapshotRevision,
       );
     }
     final bulk = _pendingBulkDeletion;
@@ -2979,15 +3171,12 @@ class _ChatScreenState extends State<ChatScreen> {
           success: noneRemain,
           error: noneRemain ? '' : 'snapshot_contains_conversations',
           deletedIds: noneRemain ? bulk.affectedIds.toList() : const <String>[],
+          revision: _conversationFolderSnapshotRevision,
         );
       }
     }
-    _confirmedDeletedConversationIds.removeWhere(
-      (id) => !canonicalIds.contains(id),
-    );
     final hiddenIds = <String>{
       ..._pendingConversationDeletions.keys,
-      ..._confirmedDeletedConversationIds,
       ...?_pendingBulkDeletion?.affectedIds,
     };
     return canonical
@@ -3269,7 +3458,10 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     final operationId =
         'mobile_bulk_${ws.WebSocketService.newClientRequestId()}';
-    final snapshot = _captureConversationDeletion(ungrouped);
+    final snapshot = _captureConversationDeletion(
+      ungrouped,
+      operationId: operationId,
+    );
     _pendingBulkDeletion = snapshot;
     setState(() {
       _bulkDeleteOperationId = operationId;
@@ -3290,6 +3482,21 @@ class _ChatScreenState extends State<ChatScreen> {
       _clearActiveTurnProjection();
       _stopQueuedAudio();
     }
+    for (final conv in ungrouped) {
+      _recordConversationDeleteDiagnostic(
+        conv.id,
+        operationId: operationId,
+        origin: 'Mobile',
+        uiRemovedAt: snapshot.uiRemovedAt,
+        acknowledgementRevision: 0,
+      );
+    }
+    debugPrint(
+      '[OSIA DeleteTrace] origin=Mobile phase=ui_removed '
+      'operation_id=$operationId action=bulk '
+      'conversation_ids=${ungrouped.map((item) => item.id).toList()} '
+      'ui_removed_at=${snapshot.uiRemovedAt.toIso8601String()}',
+    );
     _wsService.sendBulkDeleteUngroupedConversations(
       expectedCount: ungrouped.length,
       operationId: operationId,
@@ -5956,13 +6163,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                       )
-                    : ListView(
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 8,
-                          horizontal: 8,
-                        ),
-                        children: _buildConversationDrawerItems(palette),
-                      ),
+                    : _buildConversationDrawerList(palette),
               ),
             ],
           ),
@@ -5971,79 +6172,128 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  List<Widget> _buildConversationDrawerItems(OsiaPalette palette) {
+  Widget _buildConversationDrawerList(OsiaPalette palette) {
+    final entries = _buildConversationDrawerEntries();
+    final indexByKey = <Key, int>{
+      for (var index = 0; index < entries.length; index++)
+        entries[index].key: index,
+    };
+    return ListView.builder(
+      key: const PageStorageKey<String>('conversation-drawer-list'),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+      itemCount: entries.length,
+      findChildIndexCallback: (key) => indexByKey[key],
+      itemBuilder: (context, index) =>
+          _buildConversationDrawerItem(entries[index], palette),
+    );
+  }
+
+  List<_ConversationDrawerEntry> _buildConversationDrawerEntries() {
     final strings = OsiaL10n.of(context);
-    final widgets = <Widget>[];
+    final entries = <_ConversationDrawerEntry>[];
     var staggerIndex = 0;
-    final ungrouped = _conversations
-        .where((conversation) => conversation.folderId == null)
-        .toList(growable: false);
+    final membersByFolder = <String, List<ws.Conversation>>{
+      for (final folder in _conversationFolders) folder.id: <ws.Conversation>[],
+    };
+    final ungrouped = <ws.Conversation>[];
+    for (final conversation in _conversations) {
+      final folderId = conversation.folderId;
+      if (folderId == null) {
+        ungrouped.add(conversation);
+      } else {
+        membersByFolder[folderId]?.add(conversation);
+      }
+    }
     if (_conversationFolders.isNotEmpty) {
-      widgets.add(
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
-          child: Text(
-            strings.projectsSection,
-            style: TextStyle(
-              color: palette.textMuted,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+      entries.add(
+        _ConversationDrawerEntry.section(
+          id: 'projects',
+          label: strings.projectsSection,
         ),
       );
     }
     for (final folder in _conversationFolders) {
-      final members = _conversations
-          .where((conversation) => conversation.folderId == folder.id)
-          .toList(growable: false);
-      widgets.add(
-        StaggeredAppear(
-          key: ValueKey('folder_${folder.id}'),
-          index: staggerIndex++,
-          child: _buildConversationFolderTile(folder, members.length, palette),
+      final members = membersByFolder[folder.id] ?? const <ws.Conversation>[];
+      entries.add(
+        _ConversationDrawerEntry.folder(
+          folder: folder,
+          count: members.length,
+          staggerIndex: staggerIndex++,
         ),
       );
       if (!folder.collapsed) {
         for (final conversation in members) {
-          widgets.add(
-            Padding(
-              padding: const EdgeInsets.only(left: 14),
-              child: StaggeredAppear(
-                key: ValueKey('stagger_${conversation.id}'),
-                index: staggerIndex++,
-                child: _buildConversationTile(conversation, palette),
-              ),
+          entries.add(
+            _ConversationDrawerEntry.conversation(
+              conversation: conversation,
+              staggerIndex: staggerIndex++,
+              indented: true,
             ),
           );
         }
       }
     }
     if (_conversationFolders.isNotEmpty && ungrouped.isNotEmpty) {
-      widgets.add(
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-          child: Text(
-            strings.outsideFolders,
-            style: TextStyle(
-              color: palette.textMuted,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+      entries.add(
+        _ConversationDrawerEntry.section(
+          id: 'ungrouped',
+          label: strings.outsideFolders,
         ),
       );
     }
     for (final conversation in ungrouped) {
-      widgets.add(
-        StaggeredAppear(
-          key: ValueKey('stagger_${conversation.id}'),
-          index: staggerIndex++,
-          child: _buildConversationTile(conversation, palette),
+      entries.add(
+        _ConversationDrawerEntry.conversation(
+          conversation: conversation,
+          staggerIndex: staggerIndex++,
+          indented: false,
         ),
       );
     }
-    return widgets;
+    return entries;
+  }
+
+  Widget _buildConversationDrawerItem(
+    _ConversationDrawerEntry entry,
+    OsiaPalette palette,
+  ) {
+    return switch (entry.kind) {
+      _ConversationDrawerEntryKind.section => Padding(
+        key: entry.key,
+        padding: EdgeInsets.fromLTRB(
+          12,
+          entry.id == 'projects' ? 6 : 12,
+          12,
+          4,
+        ),
+        child: Text(
+          entry.label!,
+          style: TextStyle(
+            color: palette.textMuted,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+      _ConversationDrawerEntryKind.folder => StaggeredAppear(
+        key: entry.key,
+        index: entry.staggerIndex,
+        child: _buildConversationFolderTile(
+          entry.folder!,
+          entry.count,
+          palette,
+        ),
+      ),
+      _ConversationDrawerEntryKind.conversation => Padding(
+        key: entry.key,
+        padding: EdgeInsets.only(left: entry.indented ? 14 : 0),
+        child: StaggeredAppear(
+          key: ValueKey<String>('stagger_${entry.conversation!.id}'),
+          index: entry.staggerIndex,
+          child: _buildConversationTile(entry.conversation!, palette),
+        ),
+      ),
+    };
   }
 
   Widget _buildConversationFolderTile(
@@ -6394,7 +6644,78 @@ class _BulkDeleteConfirmationDialogState
   }
 }
 
+class _ConversationDeleteDiagnostic {
+  final String operationId;
+  final String origin;
+  final DateTime? uiRemovedAt;
+  final int acknowledgementRevision;
+
+  const _ConversationDeleteDiagnostic({
+    required this.operationId,
+    required this.origin,
+    required this.uiRemovedAt,
+    required this.acknowledgementRevision,
+  });
+}
+
+enum _ConversationDrawerEntryKind { section, folder, conversation }
+
+class _ConversationDrawerEntry {
+  final _ConversationDrawerEntryKind kind;
+  final String id;
+  final String? label;
+  final ws.ConversationFolder? folder;
+  final ws.Conversation? conversation;
+  final int count;
+  final int staggerIndex;
+  final bool indented;
+
+  const _ConversationDrawerEntry.section({
+    required this.id,
+    required this.label,
+  }) : kind = _ConversationDrawerEntryKind.section,
+       folder = null,
+       conversation = null,
+       count = 0,
+       staggerIndex = 0,
+       indented = false;
+
+  _ConversationDrawerEntry.folder({
+    required ws.ConversationFolder folder,
+    required this.count,
+    required this.staggerIndex,
+  }) : kind = _ConversationDrawerEntryKind.folder,
+       id = folder.id,
+       label = null,
+       folder = folder,
+       conversation = null,
+       indented = false;
+
+  _ConversationDrawerEntry.conversation({
+    required ws.Conversation conversation,
+    required this.staggerIndex,
+    required this.indented,
+  }) : kind = _ConversationDrawerEntryKind.conversation,
+       id = conversation.id,
+       label = null,
+       folder = null,
+       conversation = conversation,
+       count = 0;
+
+  Key get key => switch (kind) {
+    _ConversationDrawerEntryKind.section => ValueKey<String>(
+      'drawer-section-$id',
+    ),
+    _ConversationDrawerEntryKind.folder => ValueKey<String>('folder_$id'),
+    _ConversationDrawerEntryKind.conversation => ValueKey<String>(
+      'drawer-conversation-$id',
+    ),
+  };
+}
+
 class _PendingConversationDeletion {
+  final String operationId;
+  final DateTime uiRemovedAt;
   final List<ws.Conversation> originalConversations;
   final Set<String> affectedIds;
   final bool wasActive;
@@ -6409,9 +6730,11 @@ class _PendingConversationDeletion {
   final bool wasPendingLoad;
   final int selectionEpoch;
   Timer? timeout;
-  bool disconnected = false;
+  bool awaitingCanonicalSnapshot = false;
 
   _PendingConversationDeletion({
+    required this.operationId,
+    required this.uiRemovedAt,
     required this.originalConversations,
     required this.affectedIds,
     required this.wasActive,

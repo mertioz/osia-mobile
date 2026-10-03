@@ -987,12 +987,12 @@ class OsiaStrings {
   };
 
   String get deleteAllConversations => switch (languageCode) {
-    'fr' => 'Supprimer toutes les conversations',
-    'zh' => '删除所有对话',
-    'ja' => 'すべての会話を削除',
-    'de' => 'Alle Unterhaltungen löschen',
-    'es' => 'Eliminar todas las conversaciones',
-    _ => 'Delete all conversations',
+    'fr' => 'Supprimer les conversations hors projets',
+    'zh' => '删除项目外的对话',
+    'ja' => 'プロジェクト外の会話を削除',
+    'de' => 'Unterhaltungen außerhalb von Projekten löschen',
+    'es' => 'Eliminar conversaciones fuera de proyectos',
+    _ => 'Delete conversations outside projects',
   };
 
   String get conversationDeleteFailed => switch (languageCode) {

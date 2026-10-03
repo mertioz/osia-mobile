@@ -117,6 +117,7 @@ class _StableWebSocketService extends ws.WebSocketService {
   final List<(String, String)> sentTurns = <(String, String)>[];
   final List<(String, Object?)> settingChanges = <(String, Object?)>[];
   final List<String> deleteRequests = <String>[];
+  final List<String> deleteOperationIds = <String>[];
   final List<(int, String)> bulkDeleteRequests = <(int, String)>[];
 
   @override
@@ -197,8 +198,11 @@ class _StableWebSocketService extends ws.WebSocketService {
   void sendLoadConversation(String id) {}
 
   @override
-  void sendDeleteConversation(String id) {
+  String sendDeleteConversation(String id, {String? operationId}) {
     deleteRequests.add(id);
+    final operation = operationId ?? 'fake-delete';
+    deleteOperationIds.add(operation);
+    return operation;
   }
 
   @override
@@ -406,6 +410,11 @@ Future<void> _openDrawer(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _openDrawerWithoutPointer(WidgetTester tester) async {
+  tester.state<ScaffoldState>(find.byType(Scaffold).first).openDrawer();
+  await tester.pumpAndSettle();
+}
+
 Future<void> _confirmSingleDelete(
   WidgetTester tester,
   String conversationId,
@@ -526,14 +535,19 @@ void main() {
     },
   );
 
-  testWidgets('single delete is optimistic, confirmed, and not resurrected', (
+  testWidgets('single delete revision rejects stale lists without a tombstone', (
     tester,
   ) async {
     final harness = await _pumpChat(tester);
-    await _openDrawer(tester);
+    _emitConversationList(harness.service, <(String, String)>[
+      ("conv-nav", "Navigation test"),
+    ], revision: 10);
+    await tester.pump();
+    await _openDrawerWithoutPointer(tester);
     await _confirmSingleDelete(tester, 'conv-nav');
 
     expect(harness.service.deleteRequests, <String>['conv-nav']);
+    final operationId = harness.service.deleteOperationIds.single;
     expect(find.byKey(const ValueKey('conv_conv-nav')), findsNothing);
     expect(find.text('No conversations yet'), findsOneWidget);
 
@@ -541,15 +555,147 @@ void main() {
       'type': 'conversation_deleted',
       'id': 'conv-nav',
       'success': true,
+      'operation_id': operationId,
+      'snapshot_revision': 11,
     });
+    await tester.pump();
+    _emitConversationList(
+      harness.service,
+      const <(String, String)>[],
+      revision: 11,
+    );
     await tester.pump();
     _emitConversationList(harness.service, <(String, String)>[
       ("conv-nav", "Navigation test"),
-    ], revision: 1);
+    ], revision: 10);
     await tester.pump();
 
     expect(find.byKey(const ValueKey('conv_conv-nav')), findsNothing);
     expect(find.text('OSIA'), findsOneWidget);
+
+    // A newer canonical state that contains the ID remains visible. The
+    // client orders snapshots; it does not hide a broken server with a tombstone.
+    _emitConversationList(harness.service, <(String, String)>[
+      ("conv-nav", "Navigation test"),
+    ], revision: 12);
+    await tester.pump();
+    await _openDrawerWithoutPointer(tester);
+    expect(find.byKey(const ValueKey('conv_conv-nav')), findsOneWidget);
+    await _disposeChatHarness(tester, harness);
+  });
+
+  testWidgets('conversation drawer lazily builds a long canonical list', (
+    tester,
+  ) async {
+    final harness = await _pumpChat(tester, reducedMotion: true);
+    const conversationCount = 120;
+    _emitConversationList(
+      harness.service,
+      List<(String, String)>.generate(
+        conversationCount,
+        (index) => ('conv-lazy-$index', 'Chat $index'),
+      ),
+      revision: 2,
+    );
+    await tester.pump();
+    await _openDrawerWithoutPointer(tester);
+
+    final drawerList = find.descendant(
+      of: find.byType(Drawer),
+      matching: find.byType(ListView),
+    );
+    expect(drawerList, findsOneWidget);
+    final list = tester.widget<ListView>(drawerList);
+    expect(list.childrenDelegate, isA<SliverChildBuilderDelegate>());
+    expect(list.semanticChildCount, conversationCount);
+
+    final scrollable = find.descendant(
+      of: drawerList,
+      matching: find.byType(Scrollable),
+    );
+    final position = tester.state<ScrollableState>(scrollable).position;
+    expect(position.maxScrollExtent, greaterThan(0));
+    expect(position.pixels, 0);
+    expect(find.byKey(const ValueKey('conv_conv-lazy-119')), findsNothing);
+
+    position.jumpTo(360);
+    await tester.pump();
+    final savedOffset = position.pixels;
+    expect(savedOffset, greaterThan(0));
+    _emitConversationList(
+      harness.service,
+      List<(String, String)>.generate(
+        conversationCount,
+        (index) => ('conv-lazy-$index', 'Updated chat $index'),
+      ),
+      revision: 3,
+    );
+    await tester.pump();
+    final refreshedPosition = tester
+        .state<ScrollableState>(scrollable)
+        .position;
+    expect(refreshedPosition.pixels, closeTo(savedOffset, 1));
+
+    await _disposeChatHarness(tester, harness);
+  });
+
+  testWidgets('Desktop-origin single delete updates the Mobile projection', (
+    tester,
+  ) async {
+    final harness = await _pumpChat(tester);
+    _emitConversationList(harness.service, <(String, String)>[
+      ("conv-nav", "Navigation test"),
+      ("conv-second", "Second chat"),
+    ], revision: 4);
+    await tester.pump();
+    await _openDrawerWithoutPointer(tester);
+
+    harness.service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'conversation_deleted',
+      'id': 'conv-second',
+      'success': true,
+      'operation_id': 'desktop_delete_case',
+      'snapshot_revision': 5,
+    });
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('conv_conv-second')), findsNothing);
+    expect(find.text('Navigation test'), findsWidgets);
+    await _disposeChatHarness(tester, harness);
+  });
+
+  testWidgets('Desktop-origin bulk delete updates the Mobile projection', (
+    tester,
+  ) async {
+    final harness = await _pumpChat(tester);
+    _emitConversationList(
+      harness.service,
+      <(String, String)>[
+        ("conv-nav", "Navigation test"),
+        ("conv-second", "Second chat"),
+        ("conv-project", "Project chat"),
+      ],
+      folders: <Map<String, dynamic>>[
+        <String, dynamic>{"id": "folder-1", "name": "Project", "order": 0},
+      ],
+      folderIds: const <String, String>{"conv-project": "folder-1"},
+      revision: 4,
+    );
+    await tester.pump();
+    await _openDrawerWithoutPointer(tester);
+
+    harness.service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'conversations_bulk_deleted',
+      'operation_id': 'desktop_bulk_case',
+      'success': true,
+      'deleted_ids': <String>['conv-nav', 'conv-second'],
+      'snapshot_revision': 5,
+    });
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('conv_conv-nav')), findsNothing);
+    expect(find.byKey(const ValueKey('conv_conv-second')), findsNothing);
+    expect(find.byKey(const ValueKey('conv_conv-project')), findsOneWidget);
     await _disposeChatHarness(tester, harness);
   });
 
@@ -586,6 +732,47 @@ void main() {
       tester.element(find.byType(ChatScreen)),
     ).clearSnackBars();
     await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
+    await _disposeChatHarness(tester, harness);
+  });
+
+  testWidgets('not-found ack waits for the canonical list before resolving', (
+    tester,
+  ) async {
+    final harness = await _pumpChat(tester);
+    _emitConversationList(harness.service, <(String, String)>[
+      ("conv-nav", "Navigation test"),
+    ], revision: 1);
+    await tester.pump();
+    await _openDrawer(tester);
+    await _confirmSingleDelete(tester, 'conv-nav');
+    expect(find.byKey(const ValueKey('conv_conv-nav')), findsNothing);
+
+    harness.service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'conversation_deleted',
+      'id': 'conv-nav',
+      'success': false,
+      'error': 'conversation_not_found',
+      'operation_id': harness.service.deleteOperationIds.single,
+      'snapshot_revision': 2,
+    });
+    await tester.pump();
+
+    // A later canonical catalogue proves that the row still exists, so the
+    // request is reported as failed instead of being masked as success.
+    _emitConversationList(harness.service, <(String, String)>[
+      ("conv-nav", "Navigation test"),
+    ], revision: 2);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('conv_conv-nav')), findsOneWidget);
+    expect(
+      find.text('The conversation could not be deleted. Please try again.'),
+      findsOneWidget,
+    );
+    ScaffoldMessenger.of(
+      tester.element(find.byType(ChatScreen)),
+    ).clearSnackBars();
     await tester.pumpAndSettle();
     await _disposeChatHarness(tester, harness);
   });
@@ -646,7 +833,7 @@ void main() {
     await _openDrawer(tester);
     await tester.tap(find.text('⋯'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete all conversations').first);
+    await tester.tap(find.text('Delete conversations outside projects').first);
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, 'DELETE 2');
     await tester.pump();
