@@ -320,6 +320,9 @@ void main() {
         'task': 'Legacy',
         'schedule': 'every 1 days',
         'next_run_at': '2026-07-08T12:00',
+        'authorization_status': 'authorized',
+        'authorization_bounds': <String, Object?>{'max_executions': 2},
+        'grant_refs': <String>['obsolete-grant'],
       },
       task: 'Legacy',
       schedule: 'every 1 days',
@@ -329,6 +332,9 @@ void main() {
     );
 
     expect(saved.containsKey('model'), isFalse);
+    expect(saved.containsKey('authorization_status'), isFalse);
+    expect(saved.containsKey('authorization_bounds'), isFalse);
+    expect(saved.containsKey('grant_refs'), isFalse);
     expect(saved['conversation_id'], isNull);
     expect(saved['next_run_at'], '2026-07-08T12:00');
   });

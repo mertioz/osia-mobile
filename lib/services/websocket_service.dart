@@ -440,6 +440,36 @@ class ConversationsMessage extends OsiaMessage {
   });
 }
 
+/// Canonical result for a single conversation deletion.
+class ConversationDeletedMessage extends OsiaMessage {
+  final String id;
+  final bool success;
+  final String error;
+
+  const ConversationDeletedMessage({
+    required this.id,
+    required this.success,
+    this.error = '',
+  });
+}
+
+/// Canonical result for deleting all ungrouped conversations.
+class ConversationsBulkDeletedMessage extends OsiaMessage {
+  final String operationId;
+  final bool success;
+  final String error;
+  final List<String> deletedIds;
+  final int revision;
+
+  const ConversationsBulkDeletedMessage({
+    required this.operationId,
+    required this.success,
+    this.error = '',
+    this.deletedIds = const <String>[],
+    this.revision = 0,
+  });
+}
+
 /// The currently active conversation on the server.
 class ActiveConversationMessage extends OsiaMessage {
   final String? id;
@@ -1032,11 +1062,10 @@ class ConfigData {
   /// display state and stable connector identities, never secrets or endpoints.
   final Map<String, dynamic> slashCommands;
 
-  /// Raw mirror of the PC's `settings.json` values, for pre-filling toggles
-  /// that have no dedicated typed field above (e.g. `time_format`,
-  /// `heartbeat_enabled`, `heartbeat_interval_seconds`). The server may nest
-  /// these under a `settings` key or inline them at the config top level — we
-  /// accept either. Values keep their JSON types (bool / int / String).
+  /// Safe mirror of PC settings needed by Mobile controls (e.g. `time_format`,
+  /// `heartbeat_enabled`, and `ui_theme`). Credential values are discarded
+  /// even if an older or misconfigured server includes them. The server may
+  /// nest settings under `settings` or inline them at the config top level.
   final Map<String, dynamic> settings;
 
   const ConfigData({
@@ -1078,11 +1107,28 @@ class ConfigData {
         : <ConfigSkill>[];
 
     Map<String, dynamic> readSettings(Map<String, dynamic> cfg) {
+      Map<String, dynamic> withoutSecrets(Map<String, dynamic> raw) {
+        final safe = Map<String, dynamic>.from(raw);
+        for (final key in const <String>{
+          'api_key_fallbacks',
+          'api_keys',
+          'mcp_tokens',
+          // Retired Personal Browser keys are ignored if an older PC still
+          // sends them in a configuration snapshot.
+          'personal_browser_enabled',
+          'personal_browser_preference',
+          'personal_browser_instance_hint',
+        }) {
+          safe.remove(key);
+        }
+        return safe;
+      }
+
       final nested = cfg['settings'];
-      if (nested is Map) return nested.cast<String, dynamic>();
+      if (nested is Map) return withoutSecrets(nested.cast<String, dynamic>());
       // Server inlines settings at the config top level — expose the whole
-      // snapshot so individual keys (time_format, heartbeat_*) stay reachable.
-      return Map<String, dynamic>.from(cfg);
+      // safe snapshot so individual keys (time_format, heartbeat_*) stay reachable.
+      return withoutSecrets(cfg);
     }
 
     final settings = readSettings(config);
@@ -1247,26 +1293,25 @@ class MemoryErrorMessage {
       );
 }
 
-/// Raw API keys per provider, sent by the PC in reply to
-/// `{"type":"get_api_keys"}` as `{"type":"api_keys","keys":{provider:key}}`.
-///
-/// Unlike `ConfigData.apiKeysSet` (booleans only), this carries the actual key
-/// strings so an editor can pre-fill its field. Delivered on
-/// [WebSocketService.apiKeysStream].
+/// Safe configured-status metadata in the legacy `api_keys` reply. The `keys`
+/// field remains empty for source compatibility; raw values are never retained
+/// by the Mobile client. Delivered on [WebSocketService.apiKeysStream].
 class ApiKeysMessage {
-  /// `{provider: key}` — the real keys currently stored on the PC.
+  /// Always empty. Retained so older widget code cannot receive credentials.
   final Map<String, String> keys;
-  const ApiKeysMessage(this.keys);
+  final Map<String, bool> keysSet;
+  const ApiKeysMessage(this.keys, {this.keysSet = const <String, bool>{}});
 
   factory ApiKeysMessage.fromJson(Map<String, dynamic> json) {
-    final out = <String, String>{};
-    final raw = json['keys'];
-    if (raw is Map) {
-      raw.forEach((k, v) {
-        if (v != null) out[k.toString()] = v.toString();
+    final keysSet = <String, bool>{};
+    final rawStatus = json['keys_set'];
+    if (rawStatus is Map) {
+      rawStatus.forEach((key, value) {
+        keysSet[key.toString()] = value == true;
       });
     }
-    return ApiKeysMessage(out);
+    // Deliberately ignore json['keys'], even if an old server sends secrets.
+    return ApiKeysMessage(const <String, String>{}, keysSet: keysSet);
   }
 }
 
@@ -1425,403 +1470,10 @@ class CronNotificationMessage {
   }
 }
 
-/// Sanitized scheduled-task authorization event from the PC authority.
-/// Instructions, normalized scopes, grant references, and tool arguments are
-/// deliberately not represented by this mobile model.
-class ScheduledTaskAuthorizationEvent {
-  final String eventType;
-  final bool ok;
-  final String code;
-  final String taskId;
-  final String authorizationStatus;
-  final Map<String, dynamic>? request;
+bool _hasExactStringKeys(Map<dynamic, dynamic> value, Set<String> expected) =>
+    value.length == expected.length &&
+    value.keys.every((key) => key is String && expected.contains(key));
 
-  const ScheduledTaskAuthorizationEvent({
-    required this.eventType,
-    required this.ok,
-    required this.code,
-    required this.taskId,
-    required this.authorizationStatus,
-    this.request,
-  });
-
-  factory ScheduledTaskAuthorizationEvent.fromJson(Map<String, dynamic> json) {
-    final type = (json['type'] ?? '').toString();
-    final rawTask = json['task'];
-    final task = rawTask is Map
-        ? rawTask.cast<String, dynamic>()
-        : const <String, dynamic>{};
-    Map<String, dynamic>? request;
-    if (type == 'scheduled_task_authorization_request') {
-      final rawCapabilities = json['capabilities'];
-      final capabilities = rawCapabilities is List
-          ? rawCapabilities.whereType<Map>().map((raw) {
-              final item = raw.cast<String, dynamic>();
-              return <String, dynamic>{
-                'id': (item['id'] ?? '').toString(),
-                'tool_category': (item['tool_category'] ?? '').toString(),
-                'effect_class': (item['effect_class'] ?? '').toString(),
-                'safe_category': (item['safe_category'] ?? '').toString(),
-              };
-            }).toList()
-          : <Map<String, dynamic>>[];
-      request = <String, dynamic>{
-        'protocol_version': json['protocol_version'],
-        'request_id': json['request_id'],
-        'task_id': json['task_id'],
-        'task_revision': json['task_revision'],
-        'definition_hash': json['definition_hash'],
-        'authorization_revision': json['authorization_revision'],
-        'policy_epoch': json['policy_epoch'],
-        'expiration': json['expiration'],
-        'request_expires_at': json['request_expires_at'],
-        'origin_ref': json['origin_ref'],
-        'capabilities': capabilities,
-        'max_executions': json['max_executions'],
-      };
-    }
-    return ScheduledTaskAuthorizationEvent(
-      eventType: type,
-      ok: json['ok'] == true,
-      code: (json['code'] ?? '').toString(),
-      taskId: (json['task_id'] ?? task['task_id'] ?? '').toString(),
-      authorizationStatus:
-          (json['authorization_status'] ?? task['authorization_status'] ?? '')
-              .toString(),
-      request: request,
-    );
-  }
-}
-
-enum AutonomousFailureStage {
-  planning('planning'),
-  taskExecution('task_execution'),
-  verification('verification'),
-  retry('retry'),
-  replan('replan'),
-  resume('resume'),
-  control('control'),
-  persistence('persistence'),
-  orchestrator('orchestrator'),
-  unknown('unknown');
-
-  const AutonomousFailureStage(this.wireValue);
-  final String wireValue;
-
-  static AutonomousFailureStage fromWire(String value) {
-    return AutonomousFailureStage.values.firstWhere(
-      (stage) => stage.wireValue == value,
-      orElse: () => AutonomousFailureStage.unknown,
-    );
-  }
-}
-
-enum AutonomousFailureCategory {
-  planningProviderFailure('planning_provider_failure'),
-  planningAuthenticationFailure('planning_authentication_failure'),
-  planningRateLimit('planning_rate_limit'),
-  planningTimeout('planning_timeout'),
-  invalidPlanningOutput('invalid_planning_output'),
-  taskExecutionFailure('task_execution_failure'),
-  taskTimeout('task_timeout'),
-  verificationError('verification_error'),
-  verificationNotCompleted('verification_not_completed'),
-  taskAttemptsExhausted('task_attempts_exhausted'),
-  replanFailure('replan_failure'),
-  replansExhausted('replans_exhausted'),
-  invalidResumeState('invalid_resume_state'),
-  interrupted('interrupted'),
-  aborted('aborted'),
-  orchestratorFailure('orchestrator_failure'),
-  checkpointFailure('checkpoint_failure'),
-  unknownFailure('unknown_failure');
-
-  const AutonomousFailureCategory(this.wireValue);
-  final String wireValue;
-
-  static AutonomousFailureCategory fromWire(String value) {
-    return AutonomousFailureCategory.values.firstWhere(
-      (category) => category.wireValue == value,
-      orElse: () => AutonomousFailureCategory.unknownFailure,
-    );
-  }
-}
-
-/// One `autonomous_progress` frame broadcast by the PC while an autonomous run
-/// is active (WOR-45 Phase 5). Like [ConfigData], [ApiKeysMessage],
-/// [HeartbeatDataMessage], [NewChatMessage] and [ConversationsListMessage],
-/// this is deliberately NOT part of the sealed [OsiaMessage] hierarchy:
-/// chat_screen.dart switches over OsiaMessage exhaustively with no `default`,
-/// so adding a sealed subtype would break its compile (and CLAUDE.md forbids
-/// touching that path). It rides its own [WebSocketService.autonomousStream]
-/// instead, exactly like config/api_keys/heartbeat/new_chat/conversations_list.
-///
-/// [event] is the lifecycle marker the UI keys off
-/// (e.g. `planning`, `phase`, `progress`, `done`, `failed`, `aborted`,
-/// `interrupted`, `idle`, `busy`). Every other field is optional and only
-/// present on the frames that carry it.
-class AutonomousProgressMessage {
-  final int? schemaVersion;
-  final String? eventId;
-  final int? sequence;
-  final String? serverId;
-  final String? sessionId;
-  final String? safeOperationPhase;
-  final String? safeSiteDisplay;
-  final String? safeProgressText;
-  final String? finalAnswer;
-  final Map<String, dynamic>? artifactSafeSummary;
-  final bool? terminal;
-
-  /// Lifecycle marker for this frame (planning / phase / progress / done /
-  /// failed / aborted / interrupted / idle / busy …).
-  final String? event;
-
-  /// Human-readable name of the current phase, when the run reports phases.
-  final String? phaseName;
-
-  /// Completed / total task counts for the live "X / Y" progress line.
-  final int? tasksDone;
-  final int? tasksTotal;
-
-  /// Free-form status line describing the active step.
-  final String? status;
-
-  /// The objective the run is working on, echoed back so a client that
-  /// reconnects mid-run can render it without local state.
-  final String? objective;
-
-  /// Server-side id of the run / current task, when provided.
-  final String? taskId;
-  final String? operationId;
-  final String? toolAttemptId;
-
-  /// Why the run ended or paused (carried on terminal / interrupt frames).
-  final String? reason;
-
-  /// WOR-173 additive, sanitized diagnostic metadata. Older servers omit it;
-  /// future enum values fail closed to `unknown` / `unknownFailure`.
-  final AutonomousFailureStage? stage;
-  final AutonomousFailureCategory? errorCategory;
-  final int? attempt;
-  final int? maxAttempts;
-  final int? replanCount;
-  final int? maxReplans;
-  final String? provider;
-  final String? model;
-  final bool? resumable;
-  final bool? checkpointPresent;
-  final String? reasonCode;
-  final String? runRef;
-  final String? diagnosticTimestamp;
-  final int? protocolVersion;
-  final String? runId;
-  final bool? legacyCompatibility;
-  final String? checkpointTaskId;
-  final int? planRevision;
-  final int? authorizationRevision;
-  final int? policyEpoch;
-  final String? runState;
-  final String? durableState;
-  final String? abandonState;
-  final String? abandonEffectState;
-  final String? authorizationStatus;
-  final String? authorizationSource;
-  final int? grantCount;
-  final List<Map<String, dynamic>> capabilitySummary;
-  final List<Map<String, dynamic>> planSummary;
-  final Map<String, dynamic>? authorizationRequest;
-  final Map<String, dynamic>? pendingScopeExtension;
-
-  const AutonomousProgressMessage({
-    this.schemaVersion,
-    this.eventId,
-    this.sequence,
-    this.serverId,
-    this.sessionId,
-    this.safeOperationPhase,
-    this.safeSiteDisplay,
-    this.safeProgressText,
-    this.finalAnswer,
-    this.artifactSafeSummary,
-    this.terminal,
-    this.event,
-    this.phaseName,
-    this.tasksDone,
-    this.tasksTotal,
-    this.status,
-    this.objective,
-    this.taskId,
-    this.operationId,
-    this.toolAttemptId,
-    this.reason,
-    this.stage,
-    this.errorCategory,
-    this.attempt,
-    this.maxAttempts,
-    this.replanCount,
-    this.maxReplans,
-    this.provider,
-    this.model,
-    this.resumable,
-    this.checkpointPresent,
-    this.reasonCode,
-    this.runRef,
-    this.diagnosticTimestamp,
-    this.protocolVersion,
-    this.runId,
-    this.legacyCompatibility,
-    this.checkpointTaskId,
-    this.planRevision,
-    this.authorizationRevision,
-    this.policyEpoch,
-    this.runState,
-    this.durableState,
-    this.abandonState,
-    this.abandonEffectState,
-    this.authorizationStatus,
-    this.authorizationSource,
-    this.grantCount,
-    this.capabilitySummary = const [],
-    this.planSummary = const [],
-    this.authorizationRequest,
-    this.pendingScopeExtension,
-  });
-
-  factory AutonomousProgressMessage.fromJson(Map<String, dynamic> json) {
-    // Read the first present alias as a non-empty string, or null when none of
-    // the aliases carry a value. (Tolerates snake_case / camelCase server keys.)
-    String? pickStr(List<String> keys) {
-      for (final k in keys) {
-        final v = json[k];
-        if (v != null) {
-          final s = v.toString();
-          if (s.isNotEmpty) return s;
-        }
-      }
-      return null;
-    }
-
-    // Read the first present alias as an int, accepting numbers or numeric
-    // strings; null when absent / unparseable.
-    int? pickInt(List<String> keys) {
-      for (final k in keys) {
-        final v = json[k];
-        if (v is num) return v.toInt();
-        if (v is String) {
-          final parsed = int.tryParse(v);
-          if (parsed != null) return parsed;
-        }
-      }
-      return null;
-    }
-
-    bool? pickBool(List<String> keys) {
-      for (final k in keys) {
-        final v = json[k];
-        if (v is bool) return v;
-        if (v is String) {
-          if (v.toLowerCase() == 'true') return true;
-          if (v.toLowerCase() == 'false') return false;
-        }
-      }
-      return null;
-    }
-
-    final stageCode = pickStr(['stage']);
-    final categoryCode = pickStr(['error_category', 'errorCategory']);
-    List<Map<String, dynamic>> pickMaps(String key) {
-      final value = json[key];
-      if (value is! List) return const [];
-      return value
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .toList(growable: false);
-    }
-
-    Map<String, dynamic>? pickMap(String key) {
-      final value = json[key];
-      return value is Map ? Map<String, dynamic>.from(value) : null;
-    }
-
-    return AutonomousProgressMessage(
-      schemaVersion: pickInt(['schema_version']),
-      eventId: pickStr(['event_id']),
-      sequence: pickInt(['sequence']),
-      serverId: pickStr(['server_id']),
-      sessionId: pickStr(['session_id']),
-      safeOperationPhase: pickStr(['safe_operation_phase']),
-      safeSiteDisplay: pickStr(['safe_site_display']),
-      safeProgressText: pickStr(['safe_progress_text']),
-      finalAnswer: pickStr(['final_answer']),
-      artifactSafeSummary: pickMap('artifact_safe_summary'),
-      terminal: pickBool(['terminal']),
-      event: pickStr(['event']),
-      phaseName: pickStr(['phase_name', 'phaseName', 'phase']),
-      tasksDone: pickInt(['tasks_done', 'tasksDone']),
-      tasksTotal: pickInt(['tasks_total', 'tasksTotal']),
-      status: pickStr(['status', 'message']),
-      objective: pickStr(['objective']),
-      taskId: pickStr(['task_id', 'taskId']),
-      operationId: pickStr(['operation_id', 'operationId']),
-      toolAttemptId: pickStr(['tool_attempt_id', 'toolAttemptId']),
-      reason: pickStr(['reason']),
-      stage: stageCode == null
-          ? null
-          : AutonomousFailureStage.fromWire(stageCode),
-      errorCategory: categoryCode == null
-          ? null
-          : AutonomousFailureCategory.fromWire(categoryCode),
-      attempt: pickInt(['attempt']),
-      maxAttempts: pickInt(['max_attempts', 'maxAttempts']),
-      replanCount: pickInt(['replan_count', 'replanCount']),
-      maxReplans: pickInt(['max_replans', 'maxReplans']),
-      provider: pickStr(['provider']),
-      model: pickStr(['model']),
-      resumable: pickBool(['resumable']),
-      checkpointPresent: pickBool(['checkpoint_present', 'checkpointPresent']),
-      reasonCode: pickStr(['reason_code', 'reasonCode']),
-      runRef: pickStr(['run_ref', 'runRef']),
-      diagnosticTimestamp: pickStr(['transition_at', 'diagnosticTimestamp']),
-      protocolVersion: pickInt(['protocol_version', 'protocolVersion']),
-      runId: pickStr(['run_id', 'runId']),
-      legacyCompatibility: pickBool([
-        'legacy_compatibility',
-        'legacyCompatibility',
-      ]),
-      checkpointTaskId: pickStr(['checkpoint_task_id', 'checkpointTaskId']),
-      planRevision: pickInt(['plan_revision', 'planRevision']),
-      authorizationRevision: pickInt([
-        'authorization_revision',
-        'authorizationRevision',
-      ]),
-      policyEpoch: pickInt(['policy_epoch', 'policyEpoch']),
-      runState: pickStr(['run_state', 'runState']),
-      durableState: pickStr(['durable_state', 'durableState']),
-      abandonState: pickStr(['abandon_state', 'abandonState']),
-      abandonEffectState: pickStr([
-        'abandon_effect_state',
-        'abandonEffectState',
-      ]),
-      authorizationStatus: pickStr([
-        'authorization_status',
-        'authorizationStatus',
-      ]),
-      authorizationSource: pickStr([
-        'authorization_source',
-        'authorizationSource',
-      ]),
-      grantCount: pickInt(['grant_count', 'grantCount']),
-      capabilitySummary: pickMaps('capability_summary'),
-      planSummary: pickMaps('plan_summary'),
-      authorizationRequest: pickMap('authorization_request'),
-      pendingScopeExtension: pickMap('pending_scope_extension'),
-    );
-  }
-}
-
-/// Sanitized document-processing state. The strict parser has no field for a
-/// source capability, artifact id, path, filename, content, query or parser.
 class DocumentProgressMessage {
   const DocumentProgressMessage({
     required this.eventId,
@@ -1953,7 +1605,7 @@ class DocumentProgressMessage {
         serverId.isEmpty ||
         sessionId.isEmpty ||
         sessionId.length > 128 ||
-        !const {'chat', 'autonomous'}.contains(scopeType) ||
+        scopeType != 'chat' ||
         !RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$').hasMatch(scopeId) ||
         planRevision < 0 ||
         sequence < 1 ||
@@ -2181,8 +1833,8 @@ bool _isSafeArtifactMetadata(Map<dynamic, dynamic> value) {
   return true;
 }
 
-/// One streamed-response event for a single conversation (WOR-53). Like
-/// [AutonomousProgressMessage] and the other standalone stream messages
+/// One streamed-response event for a single conversation (WOR-53). Like the
+/// other standalone stream messages
 /// (`ConfigData`, `ApiKeysMessage`, `HeartbeatDataMessage`, `NewChatMessage`,
 /// `ConversationsListMessage`), this is deliberately NOT part of the sealed
 /// [OsiaMessage] hierarchy: chat_screen.dart switches over OsiaMessage
@@ -2356,560 +2008,13 @@ class McpOauthUrl {
   });
 }
 
-/// A write-tool confirmation request (`mcp_confirm_request`, WOR-44 Phase 5).
-/// The server sends this to the originating client when a *write* MCP tool is
-/// about to run on a mobile-initiated turn, and BLOCKS the agent until the
-/// client replies with [WebSocketService.sendMcpConfirmResponse] carrying the
-/// SAME [id]. Timeout / final teardown / no-response denies; transient Mobile
-/// reconnects may reproject the same device-bound request.
-///
-/// Like [ConfigData], [McpStatusMessage] and the other standalone stream
-/// messages, this is deliberately NOT part of the sealed [OsiaMessage]
-/// hierarchy: chat_screen.dart switches over OsiaMessage exhaustively with no
-/// `default`, so adding a sealed subtype would break its compile (and CLAUDE.md
-/// forbids touching that path). It rides its own
-/// [WebSocketService.mcpConfirmStream], exactly like config/heartbeat/mcp_status.
-class McpConfirmRequest {
-  /// Correlation id — echoed back verbatim in the response so the server can
-  /// match the reply to the blocked tool call.
-  final String id;
-
-  /// MCP server (connector) the tool belongs to, for display.
-  final String server;
-
-  /// The write tool about to run, for display.
-  final String tool;
-
-  /// A human-readable, secret-free summary of the call — argument NAMES only,
-  /// never values. Coerced to a single line: the server may send a string, a
-  /// list of arg names, or a `{arg: …}` map.
-  final String summary;
-
-  /// Additive WOR-193 discriminator.  The only reinforced value understood by
-  /// mobile is PC-only and is never approvable here.
-  final String confirmationKind;
-  final bool canApprove;
-  final int filesCount;
-  final int foldersCount;
-  final int totalBytes;
-  final int rootCount;
-  final String safeReason;
-  final double? expiresAt;
-  final String conversationId;
-  final String requestId;
-  final String turnId;
-  final String runId;
-  final String providerId;
-  final String modelId;
-  final String effectiveReasoning;
-
-  bool get isPcOnlyColossalDeletion =>
-      confirmationKind == 'colossal_deletion_pc_only';
-
-  const McpConfirmRequest({
-    required this.id,
-    required this.server,
-    required this.tool,
-    required this.summary,
-    this.confirmationKind = 'ordinary',
-    this.canApprove = true,
-    this.filesCount = 0,
-    this.foldersCount = 0,
-    this.totalBytes = 0,
-    this.rootCount = 0,
-    this.safeReason = '',
-    this.expiresAt,
-    this.conversationId = '',
-    this.requestId = '',
-    this.turnId = '',
-    this.runId = '',
-    this.providerId = '',
-    this.modelId = '',
-    this.effectiveReasoning = '',
-  });
-
-  factory McpConfirmRequest.fromJson(Map<String, dynamic> json) {
-    String exactCorrelationField(String name, {String? legacyName}) {
-      final hasCanonical = json.containsKey(name);
-      final raw = hasCanonical
-          ? json[name]
-          : legacyName == null
-          ? null
-          : json[legacyName];
-      if (raw == null) return '';
-      // Preserve malformed presence as an unmatchable sentinel so the Chat
-      // projection fails closed instead of treating a coerced or erased field
-      // as a correlation-free legacy permission.
-      return raw is String ? raw : '!invalid!';
-    }
-
-    String coerceSummary(dynamic raw) {
-      if (raw is String) return raw;
-      if (raw is List) {
-        return raw
-            .map((e) => e.toString())
-            .where((s) => s.isNotEmpty)
-            .join(', ');
-      }
-      if (raw is Map) {
-        return raw.keys
-            .map((k) => k.toString())
-            .where((s) => s.isNotEmpty)
-            .join(', ');
-      }
-      return raw?.toString() ?? '';
-    }
-
-    int safeCount(dynamic raw) {
-      if (raw is! num || !raw.isFinite) return 0;
-      final value = raw.toInt();
-      return value < 0 ? 0 : value;
-    }
-
-    final kind = (json['confirmation_kind'] ?? 'ordinary').toString();
-    final pcOnly = kind == 'colossal_deletion_pc_only';
-    return McpConfirmRequest(
-      id: (json['id'] ?? '').toString(),
-      server: (json['server'] ?? '').toString(),
-      tool: (json['tool'] ?? '').toString(),
-      summary: coerceSummary(json['summary']),
-      confirmationKind: kind,
-      // A reinforced request is fail-closed regardless of a contradictory
-      // server field. Unknown kinds still honor an explicit non-approvable bit.
-      canApprove: pcOnly ? false : json['can_approve'] != false,
-      filesCount: safeCount(json['files_count']),
-      foldersCount: safeCount(json['folders_count']),
-      totalBytes: safeCount(json['total_bytes']),
-      rootCount: safeCount(json['root_count']),
-      safeReason: (json['safe_reason'] ?? '').toString(),
-      expiresAt: json['expires_at'] is num
-          ? (json['expires_at'] as num).toDouble()
-          : null,
-      conversationId: exactCorrelationField('conversation_id'),
-      requestId: exactCorrelationField(
-        'request_id',
-        legacyName: 'client_request_id',
-      ),
-      turnId: exactCorrelationField('turn_id'),
-      runId: exactCorrelationField('run_id'),
-      providerId: exactCorrelationField('provider_id', legacyName: 'provider'),
-      modelId: exactCorrelationField('model_id', legacyName: 'model'),
-      effectiveReasoning: exactCorrelationField('effective_reasoning'),
-    );
-  }
-}
-
 // ── WebSocket service ─────────────────────────────────────────────────────
 
-const int permissionSnapshotSchemaVersion = 1;
-const Set<String> permissionCategoryKeys = <String>{
-  'files_modify',
-  'files_delete',
-  'commands',
-  'browser_account',
-  'connectors',
-  'send_publish_submit',
-  'purchases_payments',
-  'autonomous_actions',
-  'scheduled_actions',
-};
-
-bool _hasExactStringKeys(Map<Object?, Object?> value, Set<String> keys) =>
-    value.length == keys.length && value.keys.every(keys.contains);
-
-bool _isPermissionOpaqueId(Object? value) =>
-    value is String &&
-    RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$').hasMatch(value);
-
-String _newPermissionDeviceId() =>
-    'permission-device-${WebSocketService.newClientRequestId()}';
-
-enum PermissionRevocationOperation {
-  revokeTemporaryPermission('revoke_temporary_permission'),
-  revokeAutonomousRun('revoke_autonomous_run'),
-  revokeScheduledTask('revoke_scheduled_task'),
-  revokeAllDelegatedAuthority('revoke_all_delegated_authority'),
-  disableFullAccess('disable_full_access');
-
-  const PermissionRevocationOperation(this.wireValue);
-  final String wireValue;
-}
-
-class PermissionTemporaryItem {
-  const PermissionTemporaryItem({
-    required this.actionLabel,
-    required this.context,
-    required this.expiresAt,
-    required this.remainingUses,
-    required this.mobileItemId,
-    required this.revocable,
-  });
-
-  final String actionLabel;
-  final String context;
-  final double? expiresAt;
-  final int? remainingUses;
-  final String mobileItemId;
-  final bool revocable;
-}
-
-class PermissionHistoryEvent {
-  const PermissionHistoryEvent({
-    required this.timestamp,
-    required this.event,
-    required this.context,
-  });
-
-  final double timestamp;
-  final String event;
-  final String context;
-}
-
-class PermissionPendingRequestState {
-  const PermissionPendingRequestState({
-    required this.requestId,
-    required this.status,
-  });
-
-  final String requestId;
-  final String status;
-}
-
-class PermissionSnapshot {
-  const PermissionSnapshot({
-    required this.snapshotId,
-    required this.serverId,
-    required this.sessionId,
-    required this.policyEpoch,
-    required this.sequence,
-    required this.generatedAt,
-    required this.preset,
-    required this.categories,
-    required this.fullAccessActive,
-    required this.protectedStoreAvailable,
-    required this.temporaryPermissions,
-    required this.history,
-    required this.pendingRequests,
-  });
-
-  final String snapshotId;
-  final String serverId;
-  final String sessionId;
-  final int policyEpoch;
-  final int sequence;
-  final double generatedAt;
-  final String preset;
-  final Map<String, bool> categories;
-  final bool fullAccessActive;
-  final bool protectedStoreAvailable;
-  final List<PermissionTemporaryItem> temporaryPermissions;
-  final List<PermissionHistoryEvent> history;
-  final List<PermissionPendingRequestState> pendingRequests;
-
-  static PermissionSnapshot? tryParse(Map<String, dynamic> json) {
-    const topKeys = <String>{
-      'type',
-      'schema_version',
-      'snapshot_id',
-      'server_id',
-      'session_id',
-      'policy_epoch',
-      'sequence',
-      'generated_at',
-      'preset',
-      'categories',
-      'full_access_active',
-      'protected_store',
-      'temporary_permissions',
-      'history',
-      'pending_requests',
-    };
-    if (!_hasExactStringKeys(json, topKeys) ||
-        json['type'] != 'permission_snapshot' ||
-        json['schema_version'] != permissionSnapshotSchemaVersion ||
-        !_isPermissionOpaqueId(json['snapshot_id']) ||
-        !_isPermissionOpaqueId(json['server_id']) ||
-        !_isPermissionOpaqueId(json['session_id'])) {
-      return null;
-    }
-    final epoch = json['policy_epoch'];
-    final sequence = json['sequence'];
-    final generatedAt = json['generated_at'];
-    final preset = json['preset'];
-    final protectedStore = json['protected_store'];
-    if (epoch is! int ||
-        epoch < 0 ||
-        sequence is! int ||
-        sequence < 1 ||
-        generatedAt is! num ||
-        !generatedAt.toDouble().isFinite ||
-        generatedAt < 0 ||
-        !const <String>{
-          'default_access',
-          'full_access',
-          'mixed',
-        }.contains(preset) ||
-        !const <String>{'available', 'unavailable'}.contains(protectedStore) ||
-        json['full_access_active'] is! bool) {
-      return null;
-    }
-    final rawCategories = json['categories'];
-    if (rawCategories is! Map ||
-        !_hasExactStringKeys(rawCategories, permissionCategoryKeys) ||
-        rawCategories.values.any((value) => value is! bool)) {
-      return null;
-    }
-    final categories = <String, bool>{
-      for (final key in permissionCategoryKeys) key: rawCategories[key] as bool,
-    };
-
-    final rawPermissions = json['temporary_permissions'];
-    if (rawPermissions is! List) return null;
-    final permissions = <PermissionTemporaryItem>[];
-    const permissionKeys = <String>{
-      'action_label',
-      'context',
-      'expires_at',
-      'remaining_uses',
-      'mobile_item_id',
-      'revocable',
-    };
-    for (final raw in rawPermissions) {
-      if (raw is! Map || !_hasExactStringKeys(raw, permissionKeys)) return null;
-      final actionLabel = raw['action_label'];
-      final context = raw['context'];
-      final expiresAt = raw['expires_at'];
-      final remainingUses = raw['remaining_uses'];
-      if (!_isPermissionOpaqueId(actionLabel) ||
-          !const <String>{
-            'chat',
-            'autonomous',
-            'scheduled',
-          }.contains(context) ||
-          !_isPermissionOpaqueId(raw['mobile_item_id']) ||
-          raw['revocable'] is! bool ||
-          (expiresAt != null &&
-              (expiresAt is! num || !expiresAt.toDouble().isFinite)) ||
-          (remainingUses != null &&
-              (remainingUses is! int || remainingUses < 0))) {
-        return null;
-      }
-      permissions.add(
-        PermissionTemporaryItem(
-          actionLabel: actionLabel as String,
-          context: context as String,
-          expiresAt: expiresAt == null ? null : (expiresAt as num).toDouble(),
-          remainingUses: remainingUses as int?,
-          mobileItemId: raw['mobile_item_id'] as String,
-          revocable: raw['revocable'] as bool,
-        ),
-      );
-    }
-
-    final rawHistory = json['history'];
-    if (rawHistory is! List) return null;
-    final history = <PermissionHistoryEvent>[];
-    const historyKeys = <String>{'timestamp', 'event', 'context'};
-    for (final raw in rawHistory) {
-      if (raw is! Map || !_hasExactStringKeys(raw, historyKeys)) return null;
-      final timestamp = raw['timestamp'];
-      if (timestamp is! num ||
-          !timestamp.toDouble().isFinite ||
-          !_isPermissionOpaqueId(raw['event']) ||
-          raw['context'] is! String ||
-          !const <String>{
-            '',
-            'chat',
-            'autonomous',
-            'scheduled',
-          }.contains(raw['context'])) {
-        return null;
-      }
-      history.add(
-        PermissionHistoryEvent(
-          timestamp: timestamp.toDouble(),
-          event: raw['event'] as String,
-          context: raw['context'] as String,
-        ),
-      );
-    }
-
-    final rawPending = json['pending_requests'];
-    if (rawPending is! List) return null;
-    final pending = <PermissionPendingRequestState>[];
-    const pendingKeys = <String>{'request_id', 'status'};
-    for (final raw in rawPending) {
-      if (raw is! Map ||
-          !_hasExactStringKeys(raw, pendingKeys) ||
-          !_isPermissionOpaqueId(raw['request_id']) ||
-          !const <String>{
-            'pending',
-            'applied',
-            'idempotent',
-            'rejected',
-            'unknown',
-          }.contains(raw['status'])) {
-        return null;
-      }
-      pending.add(
-        PermissionPendingRequestState(
-          requestId: raw['request_id'] as String,
-          status: raw['status'] as String,
-        ),
-      );
-    }
-
-    return PermissionSnapshot(
-      snapshotId: json['snapshot_id'] as String,
-      serverId: json['server_id'] as String,
-      sessionId: json['session_id'] as String,
-      policyEpoch: epoch,
-      sequence: sequence,
-      generatedAt: generatedAt.toDouble(),
-      preset: preset as String,
-      categories: Map<String, bool>.unmodifiable(categories),
-      fullAccessActive: json['full_access_active'] as bool,
-      protectedStoreAvailable: protectedStore == 'available',
-      temporaryPermissions: List<PermissionTemporaryItem>.unmodifiable(
-        permissions,
-      ),
-      history: List<PermissionHistoryEvent>.unmodifiable(history),
-      pendingRequests: List<PermissionPendingRequestState>.unmodifiable(
-        pending,
-      ),
-    );
-  }
-}
-
-class PermissionRevocationAck {
-  const PermissionRevocationAck({
-    required this.requestId,
-    required this.serverId,
-    required this.sessionId,
-    required this.basePolicyEpoch,
-    required this.baseSnapshotSequence,
-    required this.status,
-    required this.reason,
-    required this.policyEpoch,
-  });
-
-  final String requestId;
-  final String serverId;
-  final String sessionId;
-  final int basePolicyEpoch;
-  final int baseSnapshotSequence;
-  final String status;
-  final String reason;
-  final int policyEpoch;
-
-  bool get succeeded => status == 'applied' || status == 'idempotent';
-
-  static PermissionRevocationAck? tryParse(Map<String, dynamic> json) {
-    const keys = <String>{
-      'type',
-      'schema_version',
-      'request_id',
-      'server_id',
-      'session_id',
-      'base_policy_epoch',
-      'base_snapshot_sequence',
-      'status',
-      'reason',
-      'policy_epoch',
-    };
-    if (!_hasExactStringKeys(json, keys) ||
-        json['type'] != 'permission_revocation_ack' ||
-        json['schema_version'] != permissionSnapshotSchemaVersion ||
-        !_isPermissionOpaqueId(json['request_id']) ||
-        !_isPermissionOpaqueId(json['server_id']) ||
-        !_isPermissionOpaqueId(json['session_id']) ||
-        !_isPermissionOpaqueId(json['reason']) ||
-        !const <String>{
-          'applied',
-          'idempotent',
-          'rejected',
-        }.contains(json['status'])) {
-      return null;
-    }
-    final baseEpoch = json['base_policy_epoch'];
-    final baseSequence = json['base_snapshot_sequence'];
-    final epoch = json['policy_epoch'];
-    if (baseEpoch is! int ||
-        baseEpoch < 0 ||
-        baseSequence is! int ||
-        baseSequence < 1 ||
-        epoch is! int ||
-        epoch < 0) {
-      return null;
-    }
-    return PermissionRevocationAck(
-      requestId: json['request_id'] as String,
-      serverId: json['server_id'] as String,
-      sessionId: json['session_id'] as String,
-      basePolicyEpoch: baseEpoch,
-      baseSnapshotSequence: baseSequence,
-      status: json['status'] as String,
-      reason: json['reason'] as String,
-      policyEpoch: epoch,
-    );
-  }
-}
-
-class _PendingPermissionRevocation {
-  const _PendingPermissionRevocation({
-    required this.sessionId,
-    required this.policyEpoch,
-    required this.snapshotSequence,
-    required this.targetId,
-  });
-
-  final String sessionId;
-  final int policyEpoch;
-  final int snapshotSequence;
-  final String targetId;
-}
-
-/// Manages the WebSocket connection to the OSIA PC server.
-///
-/// Usage:
-/// ```dart
-/// final ws = WebSocketService(ip: '100.x.y.z', token: 'abc123');
-/// ws.messageStream.listen((msg) { ... });
-/// ws.connectionStream.listen((state) { ... });
-/// ws.connect();
-/// ws.sendText('Bonjour');
-/// ws.sendAudio(base64Wav);
-/// ```
 class WebSocketService {
   final String ip;
   final String token;
+  final String _mobileDeviceId = _newMobileDeviceId();
   String _clientLocale = '';
-  String _autonomousAuthorizationOrigin = '';
-  String _scheduledAuthorizationOrigin = '';
-  final String _permissionDeviceId = _newPermissionDeviceId();
-  String _permissionSessionId = '';
-  final Set<String> _retiredPermissionSessionIds = <String>{};
-  int _lastPermissionSequence = 0;
-  int _lastPermissionEpoch = -1;
-  bool _permissionsLive = false;
-  PermissionSnapshot? _permissionSnapshot;
-  final Map<String, _PendingPermissionRevocation>
-  _pendingPermissionRevocations = <String, _PendingPermissionRevocation>{};
-  String _autonomousProgressSessionId = '';
-  String _autonomousProgressRunId = '';
-  final Set<String> _retiredAutonomousProgressSessions = <String>{};
-  int _lastAutonomousProgressSequence = 0;
-  int _lastAutonomousPlanRevision = -1;
-  int _lastAutonomousAuthorizationRevision = -1;
-  bool _autonomousTerminalSeen = false;
-  bool _autonomousProgressLive = false;
-  bool _awaitingAutonomousSnapshot = true;
-  bool _expectNewAutonomousRun = false;
-  AutonomousProgressMessage? _autonomousProgress;
-  String _autonomousResumeTarget = '';
-  int _autonomousResumeSequence = 0;
-  String _autonomousAbandonState = '';
-  String _autonomousAbandonEffectState = '';
   String _browserProgressSessionId = '';
   String _browserProgressRunId = '';
   final Set<String> _retiredBrowserProgressSessions = <String>{};
@@ -3014,12 +2119,6 @@ class WebSocketService {
   final StreamController<ConfigData> _configCtrl =
       StreamController<ConfigData>.broadcast();
 
-  final StreamController<PermissionSnapshot> _permissionSnapshotCtrl =
-      StreamController<PermissionSnapshot>.broadcast();
-
-  final StreamController<PermissionRevocationAck> _permissionAckCtrl =
-      StreamController<PermissionRevocationAck>.broadcast();
-
   final StreamController<ChatGptAccountState> _chatGptAccountCtrl =
       StreamController<ChatGptAccountState>.broadcast();
 
@@ -3048,13 +2147,6 @@ class WebSocketService {
   final StreamController<CronNotificationMessage> _cronNotificationCtrl =
       StreamController<CronNotificationMessage>.broadcast();
 
-  final StreamController<ScheduledTaskAuthorizationEvent>
-  _scheduledAuthorizationCtrl =
-      StreamController<ScheduledTaskAuthorizationEvent>.broadcast();
-
-  final StreamController<AutonomousProgressMessage> _autonomousCtrl =
-      StreamController<AutonomousProgressMessage>.broadcast();
-
   final StreamController<BrowserProgressMessage> _browserProgressCtrl =
       StreamController<BrowserProgressMessage>.broadcast();
 
@@ -3063,9 +2155,6 @@ class WebSocketService {
 
   final StreamController<McpStatusMessage> _mcpStatusCtrl =
       StreamController<McpStatusMessage>.broadcast();
-
-  final StreamController<McpConfirmRequest> _mcpConfirmCtrl =
-      StreamController<McpConfirmRequest>.broadcast();
 
   final StreamController<McpOauthUrl> _mcpOauthUrlCtrl =
       StreamController<McpOauthUrl>.broadcast();
@@ -3129,12 +2218,8 @@ class WebSocketService {
   final Map<String, String> _toolAttemptByRequest = <String, String>{};
   final Set<String> _pendingChatCancellationRequests = <String>{};
   final Map<String, String> _sentChatCancellationTargets = <String, String>{};
-  String _autonomousCancellationTarget = '';
-  AutonomousProgressMessage? _pendingLegacyAutonomousCancellation;
-  int _legacyAutonomousCancellationSentGeneration = -1;
   final Set<String> _unboundRequestIds = <String>{};
   final Set<String> _seenCronNotifications = {};
-  final Set<String> _respondedScheduledAuthorizationRequests = {};
   final Set<String> _seenApplicationEventIds = <String>{};
   final Map<String, String> _applicationEventIdentityById = <String, String>{};
   final Queue<String> _applicationEventOrder = Queue<String>();
@@ -3182,29 +2267,6 @@ class WebSocketService {
   /// [messageStream] so the chat screen's sealed-message switch is untouched.
   Stream<ConfigData> get configStream => _configCtrl.stream;
 
-  /// Strict, sanitized snapshots from the currently authenticated PC.
-  Stream<PermissionSnapshot> get permissionSnapshotStream =>
-      _permissionSnapshotCtrl.stream;
-
-  /// Typed PC acknowledgements for locally pending revocation requests.
-  Stream<PermissionRevocationAck> get permissionRevocationAckStream =>
-      _permissionAckCtrl.stream;
-
-  /// Last accepted canonical state. It is display-only while offline.
-  PermissionSnapshot? get permissionSnapshot => _permissionSnapshot;
-
-  /// True only after this connection has accepted a fresh session snapshot.
-  bool get permissionsLive =>
-      _permissionsLive && _state == ConnectionState.connected;
-
-  Set<String> get pendingPermissionRequestIds =>
-      Set<String>.unmodifiable(_pendingPermissionRevocations.keys);
-
-  bool isPermissionItemPending(String mobileItemId) =>
-      _pendingPermissionRevocations.values.any(
-        (pending) => pending.targetId == mobileItemId,
-      );
-
   /// Sanitized ChatGPT-account status and ephemeral device-code updates.
   Stream<ChatGptAccountState> get chatGptAccountStream =>
       _chatGptAccountCtrl.stream;
@@ -3213,8 +2275,9 @@ class WebSocketService {
   /// Settings never flashes a fabricated disconnected state while refreshing.
   ChatGptAccountState get chatGptAccountState => _chatGptAccountState;
 
-  /// Stream of raw API-key snapshots (one per `get_api_keys` reply). Kept off
-  /// [messageStream] for the same reason as [configStream].
+  /// Stream of configured-status metadata (one per `get_api_keys` reply).
+  /// Credential values are discarded before the message reaches this stream.
+  /// Kept off [messageStream] for the same reason as [configStream].
   Stream<ApiKeysMessage> get apiKeysStream => _apiKeysCtrl.stream;
 
   /// Stream of local OSIA memory snapshots (`memory` / `memory_updated`).
@@ -3241,19 +2304,6 @@ class WebSocketService {
   Stream<CronNotificationMessage> get cronNotificationStream =>
       _cronNotificationCtrl.stream;
 
-  /// Sanitized scheduled-task authorization requests and state transitions.
-  Stream<ScheduledTaskAuthorizationEvent> get scheduledAuthorizationStream =>
-      _scheduledAuthorizationCtrl.stream;
-
-  /// Stream of autonomous-run progress frames (`autonomous_progress`, WOR-45
-  /// Phase 5). Kept off [messageStream] for the same reason as [configStream].
-  Stream<AutonomousProgressMessage> get autonomousStream =>
-      _autonomousCtrl.stream;
-
-  /// Latest canonical Autonomous snapshot for screens opened after the
-  /// authenticated initial sync has already completed.
-  AutonomousProgressMessage? get autonomousProgress => _autonomousProgress;
-
   /// Strict live browser progress. The cached value is display-only while
   /// [browserProgressLive] is false during reconnect reconciliation.
   Stream<BrowserProgressMessage> get browserProgressStream =>
@@ -3277,24 +2327,12 @@ class WebSocketService {
   bool get browserProgressLive =>
       _browserProgressLive && _state == ConnectionState.connected;
 
-  bool get autonomousProgressLive =>
-      _autonomousProgressLive && _state == ConnectionState.connected;
-
-  bool get autonomousResumeRequested => _autonomousResumeTarget.isNotEmpty;
-
   /// Stream of live MCP connector status pushes (`mcp_status`, WOR-44 Phase 4).
   /// Kept off [messageStream] for the same reason as [configStream]. Each event
   /// reports a subset of servers (a transition broadcast is scoped to the
   /// changing server; a `mcp_status` request reply carries the full set), so
   /// listeners merge events into their local view.
   Stream<McpStatusMessage> get mcpStatusStream => _mcpStatusCtrl.stream;
-
-  /// Stream of write-tool confirmation requests (`mcp_confirm_request`, WOR-44
-  /// Phase 5). Kept off [messageStream] for the same reason as [configStream].
-  /// Each event MUST be answered with [sendMcpConfirmResponse] (matching its
-  /// id); the server blocks the agent until then. Timeout/final teardown denies;
-  /// transient reconnects may reproject the same device-bound request.
-  Stream<McpConfirmRequest> get mcpConfirmStream => _mcpConfirmCtrl.stream;
 
   /// Stream of OAuth authorization URLs (`mcp_oauth_url`, WOR-96 PART 2b).
   /// Kept off [messageStream] for the same reason as [configStream] — and so
@@ -3403,259 +2441,14 @@ class WebSocketService {
         _pendingChatCancellationRequests.contains(requestId);
   }
 
-  static const Set<String> _activeAutonomousStates = <String>{
-    'planning',
-    'authorization_pending',
-    'running',
-    'action_starting',
-    'action_in_progress',
-    'waiting_tool',
-    'verifying_tool',
-    'blocked_unknown_effect',
-    'resuming',
-    'cancellation_requested',
-  };
-
-  bool get hasActiveAutonomousWork {
-    final progress = _autonomousProgress;
-    if (progress == null || progress.terminal == true) return false;
-    final runId = progress.runId ?? '';
-    if (runId.isEmpty || runId == 'idle') return false;
-    return _activeAutonomousStates.contains(progress.durableState) ||
-        _activeAutonomousStates.contains(progress.runState) ||
-        _activeAutonomousStates.contains(progress.event) ||
-        progress.event == 'state_updated';
-  }
-
-  bool get autonomousCancellationRequested =>
-      _autonomousCancellationTarget.isNotEmpty ||
-      _autonomousProgress?.durableState == 'cancellation_requested' ||
-      _autonomousProgress?.runState == 'cancellation_requested';
-
-  String get autonomousAbandonState => _autonomousAbandonState;
-
-  String get autonomousAbandonEffectState => _autonomousAbandonEffectState;
-
-  bool get canAbandonAutonomousWork {
-    final progress = _autonomousProgress;
-    final runId = progress?.runId ?? '';
-    if (progress == null || runId.isEmpty || runId == 'idle') return false;
-    if (_autonomousAbandonState == 'abandoned_proven' ||
-        progress.abandonState == 'abandoned_proven') {
-      return false;
-    }
-    if (progress.terminal == true) {
-      return const <String>{'failed', 'plan_failed'}.contains(progress.event) ||
-          progress.status == 'failed' ||
-          progress.runState == 'failed';
-    }
-    return !const <String>{
-      'idle',
-      'busy',
-      'done',
-      'aborted',
-      'cancelled',
-    }.contains(progress.event);
-  }
-
-  static final RegExp _autonomousControlIdPattern = RegExp(
-    r'^[A-Za-z0-9._:-]+$',
-  );
-
-  static bool _validAutonomousControlId(String value, int maximum) =>
-      value.isNotEmpty &&
-      value.length <= maximum &&
-      _autonomousControlIdPattern.hasMatch(value);
-
-  bool _hasExactLegacyAutonomousControlIdentity(
-    AutonomousProgressMessage progress,
-  ) {
-    final runId = progress.runId ?? '';
-    final checkpointTaskId = progress.checkpointTaskId ?? '';
-    final taskId = progress.taskId ?? '';
-    final operationId = progress.operationId ?? '';
-    final toolAttemptId = progress.toolAttemptId ?? '';
-    final planRevision = progress.planRevision;
-    final authorizationRevision = progress.authorizationRevision;
-    final sequence = progress.sequence;
-    return progress.schemaVersion == 1 &&
-        _validAutonomousControlId(runId, 256) &&
-        runId != 'idle' &&
-        _validAutonomousControlId(checkpointTaskId, 160) &&
-        (taskId.isEmpty || _validAutonomousControlId(taskId, 160)) &&
-        (operationId.isEmpty || _validAutonomousControlId(operationId, 160)) &&
-        (toolAttemptId.isEmpty ||
-            _validAutonomousControlId(toolAttemptId, 160)) &&
-        planRevision != null &&
-        planRevision >= 0 &&
-        authorizationRevision != null &&
-        authorizationRevision >= 0 &&
-        sequence != null &&
-        sequence >= 1;
-  }
-
-  bool _sameLegacyAutonomousControlIdentity(
-    AutonomousProgressMessage displayed,
-    AutonomousProgressMessage current, {
-    required bool requireSameSequence,
-  }) {
-    if (!_hasExactLegacyAutonomousControlIdentity(displayed) ||
-        !_hasExactLegacyAutonomousControlIdentity(current)) {
-      return false;
-    }
-    final runId = displayed.runId!;
-    final checkpointTaskId = displayed.checkpointTaskId!;
-    final taskId = displayed.taskId ?? '';
-    final operationId = displayed.operationId ?? '';
-    final toolAttemptId = displayed.toolAttemptId ?? '';
-    final planRevision = displayed.planRevision!;
-    final authorizationRevision = displayed.authorizationRevision!;
-    final sequence = displayed.sequence!;
-    return current.schemaVersion == 1 &&
-        current.runId == runId &&
-        current.checkpointTaskId == checkpointTaskId &&
-        (current.taskId ?? '') == taskId &&
-        (current.operationId ?? '') == operationId &&
-        (current.toolAttemptId ?? '') == toolAttemptId &&
-        current.planRevision == planRevision &&
-        current.authorizationRevision == authorizationRevision &&
-        (!requireSameSequence || current.sequence == sequence);
-  }
-
-  bool canRequestLegacyAutonomousCancellation(
-    AutonomousProgressMessage progress,
-  ) {
-    final current = _autonomousProgress;
-    return _state == ConnectionState.connected &&
-        autonomousProgressLive &&
-        current != null &&
-        progress.legacyCompatibility != false &&
-        current.legacyCompatibility != false &&
-        progress.terminal != true &&
-        canAbandonAutonomousWork &&
-        _sameLegacyAutonomousControlIdentity(
-          progress,
-          current,
-          requireSameSequence: true,
-        );
-  }
-
-  bool canRequestLegacyAutonomousResume(AutonomousProgressMessage progress) {
-    final current = _autonomousProgress;
-    return _state == ConnectionState.connected &&
-        autonomousProgressLive &&
-        current != null &&
-        progress.legacyCompatibility != false &&
-        current.legacyCompatibility != false &&
-        progress.terminal != true &&
-        progress.event == 'interrupted' &&
-        progress.resumable == true &&
-        _autonomousResumeTarget.isEmpty &&
-        _sameLegacyAutonomousControlIdentity(
-          progress,
-          current,
-          requireSameSequence: true,
-        );
-  }
-
-  bool isLegacyAutonomousCancellationRequested(
-    AutonomousProgressMessage progress,
-  ) {
-    final current = _autonomousProgress;
-    if (current == null ||
-        progress.legacyCompatibility == false ||
-        current.legacyCompatibility == false ||
-        !_sameLegacyAutonomousControlIdentity(
-          progress,
-          current,
-          requireSameSequence: false,
-        )) {
-      return false;
-    }
-    return (_pendingLegacyAutonomousCancellation != null &&
-            _autonomousCancellationTarget ==
-                _legacyAutonomousCancellationKey(progress)) ||
-        current.abandonState == 'abandon_requested' ||
-        current.runState == 'cancellation_requested' ||
-        current.durableState == 'cancellation_requested';
-  }
-
-  void _clearPendingLegacyAutonomousCancellation() {
-    _pendingLegacyAutonomousCancellation = null;
-    _legacyAutonomousCancellationSentGeneration = -1;
-    _autonomousCancellationTarget = '';
-  }
-
-  String _legacyAutonomousCancellationKey(AutonomousProgressMessage progress) =>
-      '${progress.runId ?? ''}\u0000${progress.checkpointTaskId ?? ''}'
-      '\u0000${progress.planRevision ?? -1}'
-      '\u0000${progress.authorizationRevision ?? -1}'
-      '\u0000${progress.taskId ?? ''}'
-      '\u0000${progress.operationId ?? ''}'
-      '\u0000${progress.toolAttemptId ?? ''}';
-
-  bool _dispatchPendingLegacyAutonomousCancellation() {
-    final pending = _pendingLegacyAutonomousCancellation;
-    final current = _autonomousProgress;
-    if (pending == null ||
-        current == null ||
-        _state != ConnectionState.connected ||
-        !autonomousProgressLive) {
-      return false;
-    }
-    // Auxiliary authorization frames remain backward-compatible and may omit
-    // the canonical identity. They cannot prove a target change, so keep the
-    // immutable Stop intent parked until the next exact progress snapshot.
-    if (!_hasExactLegacyAutonomousControlIdentity(current)) return false;
-    if (current.legacyCompatibility == false) {
-      _clearPendingLegacyAutonomousCancellation();
-      return false;
-    }
-    if (current.terminal == true ||
-        !_sameLegacyAutonomousControlIdentity(
-          pending,
-          current,
-          requireSameSequence: false,
-        )) {
-      _clearPendingLegacyAutonomousCancellation();
-      return false;
-    }
-    if (current.abandonState == 'abandoned_proven') {
-      _clearPendingLegacyAutonomousCancellation();
-      return true;
-    }
-    if (_legacyAutonomousCancellationSentGeneration ==
-        _applicationTransportGeneration) {
-      return true;
-    }
-    final taskId = pending.taskId ?? '';
-    final operationId = pending.operationId ?? '';
-    final toolAttemptId = pending.toolAttemptId ?? '';
-    final sent = _send(<String, dynamic>{
-      'type': 'cancel_active_work',
-      'schema_version': 1,
-      'scope': 'autonomous',
-      'run_id': pending.runId,
-      'checkpoint_task_id': pending.checkpointTaskId,
-      'plan_revision': pending.planRevision,
-      'authorization_revision': pending.authorizationRevision,
-      if (taskId.isNotEmpty) 'task_id': taskId,
-      if (operationId.isNotEmpty) 'operation_id': operationId,
-      if (toolAttemptId.isNotEmpty) 'tool_attempt_id': toolAttemptId,
-    });
-    if (sent) {
-      _legacyAutonomousCancellationSentGeneration =
-          _applicationTransportGeneration;
-    }
-    return sent;
-  }
-
   static String newClientRequestId() {
     final random = Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));
     final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
     return 'mobile-${DateTime.now().microsecondsSinceEpoch}-$hex';
   }
+
+  static String _newMobileDeviceId() => 'mobile-device-${newClientRequestId()}';
 
   bool isSamePendingRequest(String? conversationId, String clientRequestId) {
     if (clientRequestId.isEmpty) return false;
@@ -3727,7 +2520,6 @@ class WebSocketService {
     _toolAttemptByRequest.clear();
     _pendingChatCancellationRequests.clear();
     _sentChatCancellationTargets.clear();
-    _clearPendingLegacyAutonomousCancellation();
     _unboundRequestIds.clear();
     _pendingConvs.clear();
     _waitingTurnStatusByConv.clear();
@@ -4018,9 +2810,17 @@ class WebSocketService {
       // presentation route.  Semantic truth remains backend-owned.
       return false;
     }
-    if (historical && (!ownsRequest || terminal != true)) {
+    final historicalOwnedCleanup =
+        historical &&
+        ownsRequest &&
+        ((type == 'media_status' && json['media_terminal'] == true) ||
+            (type == 'conversation_busy_changed' && json['busy'] == false));
+    if (historical &&
+        (!ownsRequest || terminal != true) &&
+        !historicalOwnedCleanup) {
       // Completed history is rendered from canonical conversation hydration;
       // replaying its old thinking/chunk frames would fake live activity.
+      // Correlated media/busy cleanup must still release an owned turn.
       return false;
     }
     if (replayed && !ownsRequest && !recoveredBinding) return false;
@@ -4394,36 +3194,6 @@ class WebSocketService {
   void _handleCancellationControl(Map<String, dynamic> json) {
     final scope = json['scope']?.toString() ?? '';
     final state = json['state']?.toString() ?? '';
-    if (scope == 'autonomous' && state == 'accepted') {
-      final runId = json['run_id']?.toString() ?? '';
-      final currentRunId = _autonomousProgress?.runId ?? '';
-      if (runId.isEmpty || runId != currentRunId) return;
-      final abandonState = json['abandon_state']?.toString() ?? '';
-      final abandonEffectState = json['abandon_effect_state']?.toString() ?? '';
-      if (!const <String>{
-            'abandon_requested',
-            'abandoned_proven',
-          }.contains(abandonState) ||
-          !const <String>{
-            'no_current_effect',
-            'no_effect_proven',
-            'effect_confirmed',
-            'effect_possible_or_unknown',
-          }.contains(abandonEffectState)) {
-        return;
-      }
-      _autonomousAbandonState = abandonState;
-      _autonomousAbandonEffectState = abandonEffectState;
-      if (abandonState == 'abandoned_proven' &&
-          _autonomousCancellationTarget.startsWith('$runId\u0000')) {
-        _clearPendingLegacyAutonomousCancellation();
-      }
-      final progress = _autonomousProgress;
-      if (progress != null && !_autonomousCtrl.isClosed) {
-        _autonomousCtrl.add(progress);
-      }
-      return;
-    }
     if (state != 'rejected') return;
     if (scope == 'chat') {
       final rawConversationId = json['conversation_id'];
@@ -4464,17 +3234,6 @@ class WebSocketService {
         effectiveReasoning: _reasoningByRequest[requestId] ?? '',
       );
       return;
-    }
-    if (scope == 'autonomous') {
-      final runId = json['run_id']?.toString() ?? '';
-      if (runId.isEmpty ||
-          _autonomousCancellationTarget.startsWith('$runId\u0000')) {
-        _clearPendingLegacyAutonomousCancellation();
-        final progress = _autonomousProgress;
-        if (progress != null && !_autonomousCtrl.isClosed) {
-          _autonomousCtrl.add(progress);
-        }
-      }
     }
   }
 
@@ -4560,21 +3319,7 @@ class WebSocketService {
   }
 
   @visibleForTesting
-  void setPermissionConnectionForTest(bool connected) {
-    if (connected) {
-      _beginPermissionReconnect();
-      _setState(ConnectionState.connected);
-    } else {
-      _markPermissionsOffline();
-      _setState(ConnectionState.disconnected);
-    }
-  }
-
-  @visibleForTesting
-  String get expectedPermissionServerIdForTest => _expectedPermissionServerId;
-
-  @visibleForTesting
-  String get permissionDeviceIdForTest => _permissionDeviceId;
+  String get expectedMobileServerIdForTest => _expectedMobileServerId;
 
   @visibleForTesting
   void rememberRequestForTest(String conversationId, String clientRequestId) {
@@ -4903,7 +3648,6 @@ class WebSocketService {
       ),
     );
 
-    _beginPermissionReconnect();
     _publishCommittedTransport(
       CommittedTransportState.switching,
       connectGeneration: connectGeneration,
@@ -4942,9 +3686,6 @@ class WebSocketService {
   /// Close the connection and stop reconnection attempts.
   void disconnect() {
     _intentionalClose = true;
-    _autonomousAuthorizationOrigin = '';
-    _scheduledAuthorizationOrigin = '';
-    _respondedScheduledAuthorizationRequests.clear();
     lanDiscoveryService.stop();
     _connectGeneration++;
     _socketGeneration++;
@@ -4980,7 +3721,6 @@ class WebSocketService {
     _relayConfig = null;
     _relayReadyCompleter = null;
     _clearApplicationTurnTracking();
-    _markPermissionsOffline();
     _setState(ConnectionState.disconnected);
     final connectCompleter = _connectCompleter;
     if (connectCompleter != null && !connectCompleter.isCompleted) {
@@ -5133,52 +3873,6 @@ class WebSocketService {
       _waitingTurnStatusByConv[conversationId] = 'cancellation_requested';
     }
     return sent;
-  }
-
-  /// Cancel one exact active Autonomous run without starting another mission.
-  bool requestAutonomousCancellation() {
-    final progress = _autonomousProgress;
-    final runId = progress?.runId ?? '';
-    if (!canAbandonAutonomousWork || runId.isEmpty || runId == 'idle') {
-      return false;
-    }
-    final taskId = progress?.taskId ?? '';
-    final operationId = progress?.operationId ?? '';
-    final toolAttemptId = progress?.toolAttemptId ?? '';
-    final target =
-        '$runId\u0000$taskId\u0000$operationId'
-        '\u0000$toolAttemptId';
-    if (_autonomousCancellationTarget == target) return true;
-    _pendingLegacyAutonomousCancellation = null;
-    _legacyAutonomousCancellationSentGeneration = -1;
-    final sent = _send(<String, dynamic>{
-      'type': 'cancel_active_work',
-      'schema_version': 1,
-      'scope': 'autonomous',
-      'run_id': runId,
-      if (taskId.isNotEmpty) 'task_id': taskId,
-      if (operationId.isNotEmpty) 'operation_id': operationId,
-      if (toolAttemptId.isNotEmpty) 'tool_attempt_id': toolAttemptId,
-    });
-    if (sent) _autonomousCancellationTarget = target;
-    return sent;
-  }
-
-  /// Queue cancellation only for the exact legacy projection the user saw.
-  /// A reconnect replays this same immutable target only after a fresh
-  /// authoritative snapshot proves that every identity field still matches.
-  bool requestLegacyAutonomousCancellation(AutonomousProgressMessage progress) {
-    final target = _legacyAutonomousCancellationKey(progress);
-    if (_pendingLegacyAutonomousCancellation != null &&
-        _autonomousCancellationTarget == target) {
-      return true;
-    }
-    if (!canRequestLegacyAutonomousCancellation(progress)) return false;
-    _pendingLegacyAutonomousCancellation = progress;
-    _legacyAutonomousCancellationSentGeneration = -1;
-    _autonomousCancellationTarget = target;
-    _dispatchPendingLegacyAutonomousCancellation();
-    return true;
   }
 
   /// Accept one already-committed attachment batch as a normal text turn.
@@ -5377,10 +4071,10 @@ class WebSocketService {
   /// Ask the server to delete a conversation.
   void sendDeleteConversation(String id) {
     _send({'type': 'delete_conversation', 'id': id});
-    // WOR-53: the conversation is gone — drop any streamed-reply buffer for it.
+  }
+
+  void _clearConversationAfterDeletion(String id) {
     clearConvBuffer(id);
-    // WOR-75: ...and clear its pending flag (clearConvBuffer no longer does so),
-    // so no stale background placeholder lingers for a deleted conversation.
     clearPending(id);
     _forgetConversationRequest(id);
     _setConversationBusy(id, false);
@@ -5672,61 +4366,8 @@ class WebSocketService {
     _send({'type': 'get_config'});
   }
 
-  /// Request a fresh canonical permission snapshot for this authenticated PC.
-  bool requestPermissionSnapshot() {
-    if (_state != ConnectionState.connected) return false;
-    return _send({
-      'type': 'get_permission_snapshot',
-      'schema_version': permissionSnapshotSchemaVersion,
-      'device_id': _permissionDeviceId,
-      'pending_request_ids': _pendingPermissionRevocations.keys.toList(),
-    });
-  }
-
-  /// Submit one non-optimistic, snapshot-bound revocation to the PC authority.
-  String? sendPermissionRevocation(
-    PermissionRevocationOperation operation, {
-    String targetId = '',
-  }) {
-    final snapshot = _permissionSnapshot;
-    if (!permissionsLive || snapshot == null || _permissionSessionId.isEmpty) {
-      return null;
-    }
-    final targeted = <PermissionRevocationOperation>{
-      PermissionRevocationOperation.revokeTemporaryPermission,
-      PermissionRevocationOperation.revokeAutonomousRun,
-      PermissionRevocationOperation.revokeScheduledTask,
-    }.contains(operation);
-    if (targeted != targetId.isNotEmpty ||
-        (targetId.isNotEmpty && !_isPermissionOpaqueId(targetId))) {
-      return null;
-    }
-    final requestId = 'permission-${newClientRequestId()}';
-    final pending = _PendingPermissionRevocation(
-      sessionId: _permissionSessionId,
-      policyEpoch: snapshot.policyEpoch,
-      snapshotSequence: snapshot.sequence,
-      targetId: targetId,
-    );
-    final sent = _send({
-      'type': 'permission_revocation_request',
-      'schema_version': permissionSnapshotSchemaVersion,
-      'request_id': requestId,
-      'device_id': _permissionDeviceId,
-      'session_id': _permissionSessionId,
-      'expected_policy_epoch': snapshot.policyEpoch,
-      'expected_snapshot_sequence': snapshot.sequence,
-      'operation': operation.wireValue,
-      'target_id': targetId,
-      'expires_at': DateTime.now().millisecondsSinceEpoch / 1000.0 + 30.0,
-    });
-    if (!sent) return null;
-    _pendingPermissionRevocations[requestId] = pending;
-    return requestId;
-  }
-
-  /// Ask the PC for the raw API keys, to pre-fill the provider editors. The
-  /// reply arrives on [apiKeysStream] as an [ApiKeysMessage].
+  /// Ask the PC for configured-status metadata through the legacy message
+  /// type. The reply never contains credential values.
   void sendGetApiKeys() {
     _send({'type': 'get_api_keys'});
   }
@@ -5759,295 +4400,6 @@ class WebSocketService {
     _send({'type': 'get_conversations'});
   }
 
-  /// Ask the PC authority to prepare an exact, revision-bound authorization.
-  void sendScheduledTaskAuthorizationRequest(
-    Map<String, dynamic> job, {
-    int? maxExecutions,
-  }) {
-    final taskId = (job['id'] ?? job['task_id'] ?? '').toString();
-    if (_scheduledAuthorizationOrigin.isEmpty || taskId.isEmpty) return;
-    _send({
-      'type': 'scheduled_task_authorization_request',
-      'task_id': taskId,
-      'max_executions': ?maxExecutions,
-    });
-  }
-
-  bool canRespondToScheduledTaskAuthorization(
-    ScheduledTaskAuthorizationEvent event,
-  ) {
-    final request = event.request;
-    if (request == null || _scheduledAuthorizationOrigin.isEmpty) return false;
-    final requestId = (request['request_id'] ?? '').toString();
-    return requestId.isNotEmpty &&
-        !_respondedScheduledAuthorizationRequests.contains(requestId) &&
-        request['origin_ref'] == _scheduledAuthorizationOrigin;
-  }
-
-  /// Approve or deny the exact sanitized envelope returned by the PC.
-  void sendScheduledTaskAuthorizationResponse(
-    ScheduledTaskAuthorizationEvent event,
-    String action,
-  ) {
-    if (!canRespondToScheduledTaskAuthorization(event)) return;
-    final request = event.request!;
-    final requestId = (request['request_id'] ?? '').toString();
-    _respondedScheduledAuthorizationRequests.add(requestId);
-    _send({
-      'type': 'scheduled_task_authorization_response',
-      'protocol_version': request['protocol_version'],
-      'request_id': requestId,
-      'task_id': request['task_id'],
-      'task_revision': request['task_revision'],
-      'definition_hash': request['definition_hash'],
-      'authorization_revision': request['authorization_revision'],
-      'policy_epoch': request['policy_epoch'],
-      'expiration': request['expiration'],
-      'origin_ref': _scheduledAuthorizationOrigin,
-      'action': action,
-    });
-  }
-
-  Map<String, dynamic>? _scheduledTaskControlEnvelope(
-    Map<String, dynamic> job,
-  ) {
-    final taskId = (job['id'] ?? job['task_id'] ?? '').toString();
-    final definitionHash = (job['definition_hash'] ?? '').toString();
-    if (_scheduledAuthorizationOrigin.isEmpty ||
-        taskId.isEmpty ||
-        definitionHash.isEmpty) {
-      return null;
-    }
-    return <String, dynamic>{
-      'protocol_version': 1,
-      'task_id': taskId,
-      'task_revision': job['task_revision'],
-      'definition_hash': definitionHash,
-      'authorization_revision': job['authorization_revision'],
-      'policy_epoch': job['policy_epoch'],
-      'expiration': job['authorization_expires_at'],
-      'origin_ref': _scheduledAuthorizationOrigin,
-    };
-  }
-
-  void sendScheduledTaskAuthorizationRevoke(Map<String, dynamic> job) {
-    final envelope = _scheduledTaskControlEnvelope(job);
-    if (envelope == null) return;
-    _send({'type': 'scheduled_task_authorization_revoke', ...envelope});
-  }
-
-  void sendScheduledTaskDisable(Map<String, dynamic> job) {
-    final envelope = _scheduledTaskControlEnvelope(job);
-    if (envelope == null) return;
-    _send({'type': 'scheduled_task_disable', ...envelope});
-  }
-
-  // ── Autonomous runs (WOR-45 Phase 5) ──
-  //
-  // The PC accepts these commands and broadcasts `autonomous_progress` frames
-  // (surfaced on [autonomousStream]). Purely additive: they reuse the same
-  // [_send] path as every other command and touch nothing on the chat /
-  // streaming path.
-
-  /// Start an autonomous run working toward [objective] using [model]
-  /// (a configured `"provider:model"` / model id). Progress arrives on
-  /// [autonomousStream].
-  void sendAutonomousStart(String objective, String model) {
-    sendAutonomousStartWithSources(objective, model, const []);
-  }
-
-  bool sendAutonomousStartWithSources(
-    String objective,
-    String model,
-    List<String> documentSources,
-  ) {
-    final sourcePattern = RegExp(r'^src_[0-9a-f]{32}$');
-    if (documentSources.length > 10 ||
-        documentSources.toSet().length != documentSources.length ||
-        documentSources.any((source) => !sourcePattern.hasMatch(source))) {
-      return false;
-    }
-    _expectNewAutonomousRun = true;
-    _clearPendingLegacyAutonomousCancellation();
-    _autonomousAbandonState = '';
-    _autonomousAbandonEffectState = '';
-    return _send({
-      'type': 'autonomous_start',
-      'objective': objective,
-      'model': model,
-      'document_sources': List<String>.unmodifiable(documentSources),
-      if (_clientLocale.isNotEmpty) 'locale': _clientLocale,
-    });
-  }
-
-  bool sendAutonomousReleaseSources(List<String> documentSources) {
-    final sourcePattern = RegExp(r'^src_[0-9a-f]{32}$');
-    if (documentSources.isEmpty ||
-        documentSources.length > 10 ||
-        documentSources.toSet().length != documentSources.length ||
-        documentSources.any((source) => !sourcePattern.hasMatch(source))) {
-      return false;
-    }
-    return _send({
-      'type': 'autonomous_release_sources',
-      'document_sources': List<String>.unmodifiable(documentSources),
-    });
-  }
-
-  bool canRespondToAutonomousRequest(Map<String, dynamic>? request) {
-    if (request == null || _autonomousAuthorizationOrigin.isEmpty) return false;
-    if (request['responded'] == true) return false;
-    return request['origin_ref'] == _autonomousAuthorizationOrigin;
-  }
-
-  Map<String, dynamic> _autonomousResponseEnvelope(
-    Map<String, dynamic> request,
-    String action,
-  ) {
-    return {
-      'protocol_version': request['protocol_version'],
-      'request_id': request['request_id'],
-      'run_id': request['run_id'],
-      'plan_revision': request['plan_revision'],
-      'authorization_revision': request['authorization_revision'],
-      'expected_policy_epoch': request['expected_policy_epoch'],
-      'origin_ref': _autonomousAuthorizationOrigin,
-      'action': action,
-    };
-  }
-
-  void sendAutonomousAuthorizationResponse(
-    AutonomousProgressMessage run,
-    String action, {
-    List<String>? selectedCapabilityIds,
-  }) {
-    final request = run.authorizationRequest;
-    if (!canRespondToAutonomousRequest(request)) return;
-    _send({
-      'type': 'autonomous_authorization_response',
-      ..._autonomousResponseEnvelope(request!, action),
-      'selected_capability_ids': ?selectedCapabilityIds,
-    });
-  }
-
-  void sendAutonomousScopeExtensionResponse(
-    AutonomousProgressMessage run,
-    String action,
-  ) {
-    final request = run.pendingScopeExtension;
-    if (!canRespondToAutonomousRequest(request)) return;
-    _send({
-      'type': 'autonomous_scope_extension_response',
-      ..._autonomousResponseEnvelope(request!, action),
-    });
-  }
-
-  void sendAutonomousAuthorizationRevoke(AutonomousProgressMessage run) {
-    if (_autonomousAuthorizationOrigin.isEmpty || run.runId == null) return;
-    _send({
-      'type': 'autonomous_authorization_revoke',
-      'protocol_version': run.protocolVersion,
-      'run_id': run.runId,
-      'plan_revision': run.planRevision,
-      'authorization_revision': run.authorizationRevision,
-      'expected_policy_epoch': run.policyEpoch,
-      'origin_ref': _autonomousAuthorizationOrigin,
-    });
-  }
-
-  /// Pause the current autonomous run (resumable — the server keeps its state).
-  void sendAutonomousInterrupt() {
-    _send({'type': 'autonomous_interrupt'});
-  }
-
-  /// Pause only the exact legacy checkpoint currently accepted by this client.
-  bool requestLegacyAutonomousInterrupt(AutonomousProgressMessage progress) {
-    final current = _autonomousProgress;
-    final runId = progress.runId ?? '';
-    final taskId = progress.taskId ?? '';
-    final planRevision = progress.planRevision;
-    final authorizationRevision = progress.authorizationRevision;
-    final sequence = progress.sequence;
-    if (!autonomousProgressLive ||
-        current == null ||
-        runId.isEmpty ||
-        runId == 'idle' ||
-        taskId.isEmpty ||
-        current.runId != runId ||
-        current.taskId != taskId ||
-        current.planRevision != planRevision ||
-        current.authorizationRevision != authorizationRevision ||
-        current.sequence != sequence ||
-        planRevision == null ||
-        authorizationRevision == null ||
-        sequence == null ||
-        progress.terminal == true) {
-      return false;
-    }
-    return _send({
-      'type': 'autonomous_interrupt',
-      'schema_version': 1,
-      'run_id': runId,
-      'task_id': taskId,
-      'plan_revision': planRevision,
-      'authorization_revision': authorizationRevision,
-    });
-  }
-
-  /// Resume a paused autonomous run (the server continues from its kept state).
-  void sendAutonomousResume() {
-    _send({'type': 'autonomous_resume'});
-  }
-
-  /// Resume one exact persisted run from the compatibility projection.
-  ///
-  /// Unified Chat never uses the uncorrelated historical method above. The
-  /// server revalidates this identity again after reloading the checkpoint.
-  bool requestLegacyAutonomousResume(AutonomousProgressMessage progress) {
-    final runId = progress.runId ?? '';
-    final checkpointTaskId = progress.checkpointTaskId ?? '';
-    final planRevision = progress.planRevision;
-    final authorizationRevision = progress.authorizationRevision;
-    final sequence = progress.sequence;
-    if (planRevision == null ||
-        authorizationRevision == null ||
-        sequence == null) {
-      return false;
-    }
-    final target =
-        '$runId\u0000$checkpointTaskId\u0000$planRevision'
-        '\u0000$authorizationRevision';
-    if (_autonomousResumeTarget == target) return true;
-    if (!canRequestLegacyAutonomousResume(progress)) return false;
-    final sent = _send({
-      'type': 'autonomous_resume',
-      'schema_version': 1,
-      'run_id': runId,
-      'task_id': checkpointTaskId,
-      'plan_revision': planRevision,
-      'authorization_revision': authorizationRevision,
-    });
-    if (sent) {
-      _autonomousResumeTarget = target;
-      _autonomousResumeSequence = sequence;
-    }
-    return sent;
-  }
-
-  /// Abandon the current autonomous run entirely (not resumable).
-  void sendAutonomousAbort() {
-    requestAutonomousCancellation();
-  }
-
-  /// Ask the PC for the current autonomous-run status, so a client that
-  /// reconnects mid-run can render live progress. The reply arrives on
-  /// [autonomousStream] as an [AutonomousProgressMessage] (a snapshot of the
-  /// active run, or an `event:"idle"` frame when nothing is running).
-  void sendGetAutonomousStatus() {
-    _awaitingAutonomousSnapshot = true;
-    _send({'type': 'get_autonomous_status'});
-  }
-
   /// Ask for a fresh value-free browser snapshot after authentication or
   /// reconnect. Cached state stays explicitly non-live until it arrives.
   void sendGetBrowserStatus() {
@@ -6060,14 +4412,11 @@ class WebSocketService {
       ..._knownDocumentScopes,
       for (final turnId in _turnByRequest.values)
         if (turnId.isNotEmpty) _documentScopeKey('chat', turnId),
-      if (_autonomousProgressRunId.isNotEmpty &&
-          _autonomousProgressRunId != 'idle')
-        _documentScopeKey('autonomous', _autonomousProgressRunId),
     };
     _send({
       'type': 'get_document_status',
       'schema_version': 1,
-      'device_id': _permissionDeviceId,
+      'device_id': _mobileDeviceId,
       'scopes': <Map<String, String>>[
         for (final key in scopes.take(8))
           <String, String>{
@@ -6142,14 +4491,6 @@ class WebSocketService {
   /// [mcpStatusStream] as an [McpStatusMessage].
   void sendMcpStatus([String? id]) {
     _send({'type': 'mcp_status', if (id != null && id.isNotEmpty) 'id': id});
-  }
-
-  /// Answer a write-tool confirmation request (`mcp_confirm_request`, WOR-44
-  /// Phase 5): reply `{"type":"mcp_confirm_response","id":id,"approved":...}`
-  /// with the SAME [id] the request carried. The server unblocks the agent and
-  /// either runs the tool ([approved] true) or denies it ([approved] false).
-  void sendMcpConfirmResponse(String id, bool approved) {
-    _send({'type': 'mcp_confirm_response', 'id': id, 'approved': approved});
   }
 
   /// Persist the personality document (`~/.osia/personality.md`) on the PC.
@@ -6228,8 +4569,6 @@ class WebSocketService {
     _committedTransportCtrl.close();
     _executionTraceCtrl.close();
     _configCtrl.close();
-    _permissionSnapshotCtrl.close();
-    _permissionAckCtrl.close();
     _chatGptAccountCtrl.close();
     _apiKeysCtrl.close();
     _memoryCtrl.close();
@@ -6238,12 +4577,9 @@ class WebSocketService {
     _newChatCtrl.close();
     _conversationsListCtrl.close();
     _cronNotificationCtrl.close();
-    _scheduledAuthorizationCtrl.close();
-    _autonomousCtrl.close();
     _browserProgressCtrl.close();
     _documentProgressCtrl.close();
     _mcpStatusCtrl.close();
-    _mcpConfirmCtrl.close();
     _mcpOauthUrlCtrl.close();
     _conversationBusyCtrl.close();
     _attachmentProtocolCtrl.close();
@@ -6263,7 +4599,6 @@ class WebSocketService {
     _toolAttemptByRequest.clear();
     _pendingChatCancellationRequests.clear();
     _sentChatCancellationTargets.clear();
-    _clearPendingLegacyAutonomousCancellation();
     _unboundRequestIds.clear();
     _seenCronNotifications.clear();
     _mediaByConversation.clear();
@@ -6273,7 +4608,6 @@ class WebSocketService {
     _lastApplicationSequence.clear();
     _pendingApplicationReplayStreams.clear();
     _executionTraceAccumulators.clear();
-    _pendingPermissionRevocations.clear();
     _documentProgress.clear();
     _knownDocumentScopes.clear();
     _canonicalTerminalDocumentScopes.clear();
@@ -6372,13 +4706,11 @@ class WebSocketService {
     }
     sendGetChatGptAccount();
     sendGetModels();
-    requestPermissionSnapshot();
-    sendGetAutonomousStatus();
     sendGetBrowserStatus();
     sendGetDocumentStatus();
   }
 
-  String get _expectedPermissionServerId => sha256
+  String get _expectedMobileServerId => sha256
       .convert(utf8.encode('osia-permission-server-v1\u0000$token'))
       .toString();
 
@@ -6393,10 +4725,6 @@ class WebSocketService {
   }
 
   void _beginProgressReconnect() {
-    _autonomousProgressLive = false;
-    _awaitingAutonomousSnapshot = true;
-    _autonomousResumeTarget = '';
-    _autonomousResumeSequence = 0;
     _browserProgressLive = false;
     _documentProgressLive = false;
     _awaitingDocumentSnapshot = true;
@@ -6404,209 +4732,6 @@ class WebSocketService {
 
   void _markProgressOffline() {
     _beginProgressReconnect();
-  }
-
-  bool _validAutonomousProgressFrame(Map<String, dynamic> json) {
-    if (json['schema_version'] != 1 ||
-        json['event_id'] is! String ||
-        json['sequence'] is! int ||
-        json['server_id'] != _expectedPermissionServerId ||
-        json['session_id'] is! String ||
-        json['run_id'] is! String ||
-        json['plan_revision'] is! int ||
-        json['authorization_revision'] is! int ||
-        json['safe_operation_phase'] is! String ||
-        json['safe_site_display'] is! String ||
-        json['safe_progress_text'] is! String ||
-        json['terminal'] is! bool) {
-      return false;
-    }
-    final eventId = json['event_id'] as String;
-    final sequence = json['sequence'] as int;
-    final sessionId = json['session_id'] as String;
-    final runId = json['run_id'] as String;
-    final checkpointTaskId = json['checkpoint_task_id'];
-    final legacyCompatibility = json['legacy_compatibility'];
-    final planRevision = json['plan_revision'] as int;
-    final authorizationRevision = json['authorization_revision'] as int;
-    final site = json['safe_site_display'] as String;
-    final progress = json['safe_progress_text'] as String;
-    final event = (json['event'] ?? '').toString().toLowerCase();
-    final durableState = json['durable_state'];
-    final abandonState = json['abandon_state'];
-    final abandonEffectState = json['abandon_effect_state'];
-    final finalAnswer = json['final_answer'];
-    if (eventId.isEmpty ||
-        eventId.length > 128 ||
-        sequence < 1 ||
-        sessionId.isEmpty ||
-        sessionId.length > 128 ||
-        runId.isEmpty ||
-        runId.length > 256 ||
-        (legacyCompatibility != null && legacyCompatibility is! bool) ||
-        (checkpointTaskId != null &&
-            (checkpointTaskId is! String ||
-                !_validAutonomousControlId(checkpointTaskId, 160))) ||
-        planRevision < 0 ||
-        authorizationRevision < 0 ||
-        site.length > 512 ||
-        !_isSafeProgressSiteDisplay(site) ||
-        progress.isEmpty ||
-        progress.length > 300 ||
-        json['safe_operation_phase'] != event ||
-        (durableState != null &&
-            (durableState is! String ||
-                !const <String>{
-                  '',
-                  'action_starting',
-                  'action_in_progress',
-                  'waiting_tool',
-                  'verifying_tool',
-                  'resuming',
-                  'cancellation_requested',
-                  'blocked_unknown_effect',
-                  'cancelled_proven',
-                }.contains(durableState))) ||
-        (abandonState != null &&
-            (abandonState is! String ||
-                !const <String>{
-                  '',
-                  'abandon_requested',
-                  'abandoned_proven',
-                }.contains(abandonState))) ||
-        (abandonEffectState != null &&
-            (abandonEffectState is! String ||
-                !const <String>{
-                  '',
-                  'no_current_effect',
-                  'no_effect_proven',
-                  'effect_confirmed',
-                  'effect_possible_or_unknown',
-                }.contains(abandonEffectState))) ||
-        !const <String>{
-          'aborted',
-          'authorization_denied',
-          'authorization_pending',
-          'blocked_outcome_unknown',
-          'busy',
-          'cancelled',
-          'done',
-          'failed',
-          'idle',
-          'interrupted',
-          'plan_failed',
-          'running',
-          'salvaged',
-          'scope_extension_denied',
-          'state_updated',
-          'suspended_authorization_revoked',
-          'suspended_browser_intervention',
-          'suspended_browser_state',
-          'suspended_scope_extension',
-          'task_done',
-          'task_failed',
-        }.contains(event) ||
-        !const <String>{
-          'Autonomous work is running',
-          'One planned step completed',
-          'One planned step needs attention',
-          'Autonomous work completed',
-          'Autonomous work stopped with an error',
-          'Autonomous work is paused',
-          'Autonomous work was cancelled',
-          'No Autonomous work is active',
-          'Autonomous state updated',
-        }.contains(progress) ||
-        (finalAnswer != null &&
-            (event != 'done' ||
-                json['terminal'] != true ||
-                finalAnswer is! String ||
-                finalAnswer.trim().isEmpty ||
-                finalAnswer.length > 8000)) ||
-        _seenProgressEventIds.contains(eventId)) {
-      return false;
-    }
-    final rawArtifact = json['artifact_safe_summary'];
-    if (rawArtifact != null) {
-      if (rawArtifact is! Map ||
-          rawArtifact.keys.any(
-            (key) =>
-                key is! String ||
-                !const <String>{
-                  'artifact_id',
-                  'size',
-                  'mime_type',
-                  'classification',
-                  'private',
-                }.contains(key),
-          ) ||
-          rawArtifact['private'] != true ||
-          (rawArtifact['size'] != null &&
-              (rawArtifact['size'] is! int || rawArtifact['size'] < 0)) ||
-          !_isSafeArtifactMetadata(rawArtifact)) {
-        return false;
-      }
-    }
-    if (_autonomousProgressSessionId.isEmpty) {
-      if (_retiredAutonomousProgressSessions.contains(sessionId)) return false;
-      _autonomousProgressSessionId = sessionId;
-    } else if (sessionId != _autonomousProgressSessionId) {
-      if (!_awaitingAutonomousSnapshot ||
-          _retiredAutonomousProgressSessions.contains(sessionId)) {
-        return false;
-      }
-      _retiredAutonomousProgressSessions.add(_autonomousProgressSessionId);
-      _autonomousProgressSessionId = sessionId;
-      _autonomousProgressRunId = '';
-      _lastAutonomousProgressSequence = 0;
-      _lastAutonomousPlanRevision = -1;
-      _lastAutonomousAuthorizationRevision = -1;
-      _autonomousTerminalSeen = false;
-    }
-    if (_autonomousProgressRunId.isEmpty) {
-      _autonomousProgressRunId = runId;
-    } else if (runId != _autonomousProgressRunId) {
-      final newRunAllowed =
-          _awaitingAutonomousSnapshot ||
-          _expectNewAutonomousRun ||
-          _autonomousTerminalSeen ||
-          _autonomousProgressRunId == 'idle';
-      if (!newRunAllowed ||
-          const <String>{
-            'task_done',
-            'task_failed',
-            'salvaged',
-          }.contains(event)) {
-        return false;
-      }
-      _autonomousProgressRunId = runId;
-      _lastAutonomousProgressSequence = 0;
-      _lastAutonomousPlanRevision = -1;
-      _lastAutonomousAuthorizationRevision = -1;
-      _autonomousTerminalSeen = false;
-    }
-    if (sequence <= _lastAutonomousProgressSequence ||
-        planRevision < _lastAutonomousPlanRevision ||
-        authorizationRevision < _lastAutonomousAuthorizationRevision ||
-        (_autonomousTerminalSeen &&
-            !(_awaitingAutonomousSnapshot && json['terminal'] == true))) {
-      return false;
-    }
-    _lastAutonomousProgressSequence = sequence;
-    _lastAutonomousPlanRevision = planRevision;
-    _lastAutonomousAuthorizationRevision = authorizationRevision;
-    _autonomousTerminalSeen = json['terminal'] as bool;
-    if (_autonomousResumeTarget.isNotEmpty &&
-        (!_autonomousResumeTarget.startsWith('$runId\u0000') ||
-            json['terminal'] == true ||
-            sequence > _autonomousResumeSequence)) {
-      _autonomousResumeTarget = '';
-      _autonomousResumeSequence = 0;
-    }
-    _autonomousProgressLive = true;
-    _awaitingAutonomousSnapshot = false;
-    _expectNewAutonomousRun = false;
-    return _rememberProgressEvent(eventId);
   }
 
   static String _documentScopeKey(String scopeType, String scopeId) =>
@@ -6627,15 +4752,13 @@ class WebSocketService {
     if (progress.scopeType == 'chat') {
       return _turnByRequest.values.contains(progress.scopeId);
     }
-    return _autonomousProgressRunId.isNotEmpty &&
-        _autonomousProgressRunId != 'idle' &&
-        progress.scopeId == _autonomousProgressRunId;
+    return false;
   }
 
   void _handleDocumentProgress(Map<String, dynamic> json) {
     final progress = DocumentProgressMessage.tryParse(json);
     if (progress == null ||
-        progress.serverId != _expectedPermissionServerId ||
+        progress.serverId != _expectedMobileServerId ||
         _seenProgressEventIds.contains(progress.eventId) ||
         !_ownsDocumentScope(progress)) {
       return;
@@ -6666,11 +4789,6 @@ class WebSocketService {
       _terminalDocumentItems.clear();
     }
     if (progress.scopeType == 'chat' && progress.planRevision != 0) return;
-    if (progress.scopeType == 'autonomous' &&
-        _lastAutonomousPlanRevision >= 0 &&
-        progress.planRevision < _lastAutonomousPlanRevision) {
-      return;
-    }
     final previousSequence = _lastDocumentSequence[scopeKey] ?? 0;
     final previousRevision = _lastDocumentRevision[scopeKey] ?? -1;
     if (progress.sequence <= previousSequence ||
@@ -6721,7 +4839,7 @@ class WebSocketService {
   void _handleBrowserProgress(Map<String, dynamic> json) {
     final progress = BrowserProgressMessage.tryParse(json);
     if (progress == null ||
-        progress.serverId != _expectedPermissionServerId ||
+        progress.serverId != _expectedMobileServerId ||
         _seenProgressEventIds.contains(progress.eventId)) {
       return;
     }
@@ -6772,84 +4890,6 @@ class WebSocketService {
         !_browserProgressCtrl.isClosed) {
       _browserProgressCtrl.add(progress);
     }
-  }
-
-  void _beginPermissionReconnect() {
-    _beginProgressReconnect();
-    if (_permissionSessionId.isNotEmpty) {
-      _retiredPermissionSessionIds.add(_permissionSessionId);
-    }
-    _permissionSessionId = '';
-    _lastPermissionSequence = 0;
-    _permissionsLive = false;
-  }
-
-  void _markPermissionsOffline() {
-    _markProgressOffline();
-    if (_permissionSessionId.isNotEmpty) {
-      _retiredPermissionSessionIds.add(_permissionSessionId);
-    }
-    _permissionSessionId = '';
-    _lastPermissionSequence = 0;
-    _permissionsLive = false;
-  }
-
-  void _handlePermissionSnapshot(Map<String, dynamic> json) {
-    final snapshot = PermissionSnapshot.tryParse(json);
-    if (snapshot == null ||
-        snapshot.serverId != _expectedPermissionServerId ||
-        snapshot.policyEpoch < _lastPermissionEpoch) {
-      return;
-    }
-    if (_permissionSessionId.isEmpty) {
-      if (_retiredPermissionSessionIds.contains(snapshot.sessionId)) {
-        return;
-      }
-      _permissionSessionId = snapshot.sessionId;
-      _lastPermissionSequence = 0;
-    } else if (snapshot.sessionId != _permissionSessionId) {
-      return;
-    }
-    if (snapshot.sequence <= _lastPermissionSequence) return;
-
-    _lastPermissionSequence = snapshot.sequence;
-    _lastPermissionEpoch = snapshot.policyEpoch;
-    _permissionSnapshot = snapshot;
-    _permissionsLive = _state == ConnectionState.connected;
-    for (final pending in snapshot.pendingRequests) {
-      if (pending.status != 'pending') {
-        _pendingPermissionRevocations.remove(pending.requestId);
-      }
-    }
-    if (!_permissionSnapshotCtrl.isClosed) {
-      _permissionSnapshotCtrl.add(snapshot);
-    }
-  }
-
-  void _handlePermissionRevocationAck(Map<String, dynamic> json) {
-    final ack = PermissionRevocationAck.tryParse(json);
-    if (ack == null ||
-        ack.serverId != _expectedPermissionServerId ||
-        _permissionSessionId.isEmpty ||
-        ack.sessionId != _permissionSessionId) {
-      return;
-    }
-    final pending = _pendingPermissionRevocations[ack.requestId];
-    if (pending == null ||
-        pending.sessionId != _permissionSessionId ||
-        ack.basePolicyEpoch != pending.policyEpoch ||
-        ack.baseSnapshotSequence != pending.snapshotSequence ||
-        ack.policyEpoch < pending.policyEpoch) {
-      return;
-    }
-    _pendingPermissionRevocations.remove(ack.requestId);
-    if (ack.succeeded ||
-        ack.reason == 'stale_epoch' ||
-        ack.reason == 'stale_snapshot') {
-      _permissionsLive = false;
-      requestPermissionSnapshot();
-    }
-    if (!_permissionAckCtrl.isClosed) _permissionAckCtrl.add(ack);
   }
 
   void _resetRelayE2eState() {
@@ -7106,7 +5146,7 @@ class WebSocketService {
     _completeRelayReady(false);
     _resetRelayE2eState();
     _relayReadyCompleter = null;
-    _markPermissionsOffline();
+    _markProgressOffline();
     if (channel != null) {
       debugPrint('[OSIA WS] Closing current socket ($reason).');
       try {
@@ -9333,7 +7373,7 @@ class WebSocketService {
       _send({
         'type': 'auth',
         'token': token,
-        'device_id': _permissionDeviceId,
+        'device_id': _mobileDeviceId,
         'event_cursors': Map<String, int>.from(_lastApplicationSequence),
       });
     } on TimeoutException {
@@ -9694,6 +7734,43 @@ class WebSocketService {
               '[OSIA WS] conversations message had no list payload: keys=${json.keys.toList()}',
             );
           }
+        case 'conversation_deleted':
+          final id = (json['id'] ?? '').toString();
+          final success = json['success'] == true;
+          final error = (json['error'] ?? '').toString();
+          if ((success || error == 'conversation_not_found') && id.isNotEmpty) {
+            _clearConversationAfterDeletion(id);
+          }
+          _emit(
+            ConversationDeletedMessage(id: id, success: success, error: error),
+          );
+        case 'conversations_bulk_deleted':
+          final rawDeleted = json['deleted_ids'];
+          final deletedIds = rawDeleted is List
+              ? rawDeleted
+                    .map((value) => value.toString())
+                    .where((value) => value.isNotEmpty)
+                    .toList(growable: false)
+              : const <String>[];
+          final success = json['success'] == true;
+          if (success) {
+            for (final id in deletedIds) {
+              _clearConversationAfterDeletion(id);
+            }
+          }
+          _emit(
+            ConversationsBulkDeletedMessage(
+              operationId: (json['operation_id'] ?? '').toString(),
+              success: success,
+              error: (json['error'] ?? '').toString(),
+              deletedIds: deletedIds,
+              revision: switch (json['revision']) {
+                final int value => value,
+                final num value => value.toInt(),
+                _ => int.tryParse((json['revision'] ?? '').toString()) ?? 0,
+              },
+            ),
+          );
         case 'active_conversation':
           final id = json['id']?.toString();
           final title = json['title']?.toString();
@@ -9763,10 +7840,6 @@ class WebSocketService {
           );
         case 'chatgpt_account_state':
           _acceptChatGptAccountSnapshot(json['account'], standalone: true);
-        case 'permission_snapshot':
-          _handlePermissionSnapshot(json);
-        case 'permission_revocation_ack':
-          _handlePermissionRevocationAck(json);
         case 'config':
           // Full config snapshot. Delivered on its own [configStream] (NOT
           // through the paced message queue) so it can't interleave with or
@@ -9807,12 +7880,11 @@ class WebSocketService {
           _reconcileLegacyRouteUnavailableReplay(history);
           _emit(history);
         case 'api_keys':
-          // Raw provider keys for pre-filling editors. Delivered on its own
-          // [apiKeysStream] (NOT the paced message queue) so it can't disturb
-          // response-chunk streaming.
+          // Safe configured-status metadata. Delivered on its own
+          // [apiKeysStream] so it cannot disturb response-chunk streaming.
           final keysMsg = ApiKeysMessage.fromJson(json);
           debugPrint(
-            '[OSIA WS] api_keys received: ${keysMsg.keys.length} key(s)',
+            '[OSIA WS] api_keys received: ${keysMsg.keysSet.length} status item(s)',
           );
           if (!_apiKeysCtrl.isClosed) _apiKeysCtrl.add(keysMsg);
         case 'memory':
@@ -9893,104 +7965,6 @@ class WebSocketService {
           if (!_cronNotificationCtrl.isClosed) {
             _cronNotificationCtrl.add(note);
           }
-        case 'scheduled_task_authorization_context':
-          final origin = json['origin_ref'];
-          _scheduledAuthorizationOrigin = origin is String ? origin : '';
-        case 'scheduled_task_authorization_request':
-        case 'scheduled_task_authorization_state':
-          final event = ScheduledTaskAuthorizationEvent.fromJson(json);
-          if (!_scheduledAuthorizationCtrl.isClosed) {
-            _scheduledAuthorizationCtrl.add(event);
-          }
-        case 'autonomous_authorization_context':
-          final origin = json['origin_ref'];
-          _autonomousAuthorizationOrigin = origin is String ? origin : '';
-        case 'autonomous_progress':
-          // Canonical progress is accepted only after the authenticated
-          // server/session/run/revision/sequence guard. A stale frame can
-          // never replace the terminal result.
-          if (!_validAutonomousProgressFrame(json)) break;
-          final canonicalProgress = AutonomousProgressMessage.fromJson(json);
-          final canonicalRunId = canonicalProgress.runId ?? '';
-          final previousRunId = _autonomousProgress?.runId ?? '';
-          if (canonicalRunId.isNotEmpty && canonicalRunId != previousRunId) {
-            _autonomousAbandonState = '';
-            _autonomousAbandonEffectState = '';
-          }
-          if ((canonicalProgress.abandonState ?? '').isNotEmpty) {
-            _autonomousAbandonState = canonicalProgress.abandonState!;
-          }
-          if ((canonicalProgress.abandonEffectState ?? '').isNotEmpty) {
-            _autonomousAbandonEffectState =
-                canonicalProgress.abandonEffectState!;
-          }
-          if (canonicalProgress.terminal == true ||
-              (_autonomousCancellationTarget.isNotEmpty &&
-                  !_autonomousCancellationTarget.startsWith(
-                    '$canonicalRunId\u0000',
-                  ))) {
-            _clearPendingLegacyAutonomousCancellation();
-          }
-          _autonomousProgress = canonicalProgress;
-          _dispatchPendingLegacyAutonomousCancellation();
-          final documentSnapshot = json['document_progress'];
-          if (documentSnapshot is List) {
-            for (final item in documentSnapshot.whereType<Map>()) {
-              _handleDocumentProgress(Map<String, dynamic>.from(item));
-            }
-          }
-          if (canonicalProgress.terminal == true &&
-              (canonicalProgress.runId ?? '').isNotEmpty) {
-            _markDocumentCanonicalTerminal(
-              'autonomous',
-              canonicalProgress.runId!,
-            );
-          }
-          debugPrint(
-            '[OSIA WS] autonomous_progress: event=${canonicalProgress.event} '
-            '${canonicalProgress.tasksDone}/${canonicalProgress.tasksTotal}',
-          );
-          if (!_autonomousCtrl.isClosed) {
-            _autonomousCtrl.add(canonicalProgress);
-          }
-        case 'autonomous_plan_ready':
-        case 'autonomous_authorization_request':
-        case 'autonomous_scope_extension_request':
-        case 'autonomous_authorization_state':
-        case 'autonomous_authorization_revoked':
-          // Live progress for an autonomous run (WOR-45 Phase 5). Delivered on
-          // its own [autonomousStream] (NOT the paced message queue) so it can't
-          // disturb response-chunk streaming.
-          final prog = AutonomousProgressMessage.fromJson(json);
-          final progressRunId = prog.runId ?? '';
-          final previousRunId = _autonomousProgress?.runId ?? '';
-          if (progressRunId.isNotEmpty && progressRunId != previousRunId) {
-            _autonomousAbandonState = '';
-            _autonomousAbandonEffectState = '';
-          }
-          if ((prog.abandonState ?? '').isNotEmpty) {
-            _autonomousAbandonState = prog.abandonState!;
-          }
-          if ((prog.abandonEffectState ?? '').isNotEmpty) {
-            _autonomousAbandonEffectState = prog.abandonEffectState!;
-          }
-          if (prog.terminal == true ||
-              (_autonomousCancellationTarget.isNotEmpty &&
-                  progressRunId.isNotEmpty &&
-                  !_autonomousCancellationTarget.startsWith(
-                    '$progressRunId\u0000',
-                  ))) {
-            _clearPendingLegacyAutonomousCancellation();
-          }
-          _autonomousProgress = prog;
-          _dispatchPendingLegacyAutonomousCancellation();
-          debugPrint(
-            '[OSIA WS] autonomous_progress: event=${prog.event} '
-            '${prog.tasksDone}/${prog.tasksTotal}',
-          );
-          if (!_autonomousCtrl.isClosed) {
-            _autonomousCtrl.add(prog);
-          }
         case 'browser_progress':
           _handleBrowserProgress(json);
         case 'document_progress':
@@ -10001,16 +7975,6 @@ class WebSocketService {
           // response-chunk streaming, exactly like config/heartbeat.
           final st = McpStatusMessage.fromJson(json);
           if (!_mcpStatusCtrl.isClosed) _mcpStatusCtrl.add(st);
-        case 'mcp_confirm_request':
-          // A write-tool confirmation gate (WOR-44 Phase 5). Delivered on its
-          // own [mcpConfirmStream] (NOT the paced message queue) so it can't
-          // disturb response-chunk streaming, exactly like mcp_status. The UI
-          // MUST answer via [sendMcpConfirmResponse] with the same id — the
-          // server blocks the agent until then and denies on timeout/disconnect.
-          final req = McpConfirmRequest.fromJson(json);
-          if (req.id.isNotEmpty && !_mcpConfirmCtrl.isClosed) {
-            _mcpConfirmCtrl.add(req);
-          }
         case 'mcp_oauth_url':
           // OAuth authorization URL for an MCP connector (WOR-96 PART 2b).
           // Sent to the requesting connection ONLY (not broadcast). Delivered
@@ -10099,7 +8063,7 @@ class WebSocketService {
     _relayReadyCompleter = null;
     if (directTransportActive) return;
     _publishCommittedTransport(CommittedTransportState.switching);
-    _markPermissionsOffline();
+    _markProgressOffline();
     _setState(ConnectionState.disconnected);
     if (relayDroppedWhileConnected && !_intentionalClose) {
       if (!_errorCtrl.isClosed) _errorCtrl.add(kRelayUnreachableError);

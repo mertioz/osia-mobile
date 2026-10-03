@@ -41,9 +41,7 @@ void main() {
       ),
       isTrue,
     );
-    service.sendAutonomousStart('Faire le travail', 'test-model');
-
-    expect(frames, hasLength(4));
+    expect(frames, hasLength(3));
     expect(frames.every((frame) => frame['locale'] == 'fr-fr'), isTrue);
 
     service.setClientLocale('../../fr');

@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:osia_mobile/guide_content.dart';
 import 'package:osia_mobile/guide/guide_catalog.dart' as v4;
 import 'package:osia_mobile/guide_progress.dart';
 import 'package:osia_mobile/services/storage_service.dart';
@@ -73,9 +72,11 @@ void main() {
       final storage = StorageService();
       final service = GuideProgressService(storage);
       final decision = await service.prepareLaunch();
-      final essential = guideLessonById('essential.first-message')!;
-      final mastery = guideLessonById('advanced.ai-model-hierarchy')!;
-      final advanced = guideLessonById('advanced.handshake')!;
+      final essential = v4.guideLessonById('essential.first-request')!;
+      final mastery = v4.guideLessonById('mastery.manual-model')!;
+      final advanced = v4
+          .guideLessonsForCategory(v4.guideAdvancedCategoryId)
+          .first;
       var progress = await service.completeLesson(decision.progress, essential);
       progress = await service.completeLesson(progress, mastery);
       progress = await service.completeLesson(progress, advanced);

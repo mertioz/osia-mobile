@@ -90,8 +90,8 @@ class LegalScreen extends StatelessWidget {
             const SizedBox(height: 24),
             Text(
               isTerms
-                  ? 'Le document complet couvre les actions agentiques, Gmail REST, Browser et Personal Browser, les fournisseurs et coûts tiers, les tâches planifiées et les contrôles d’exécution. OSIA ne réserve jamais une capacité fonctionnelle à un paiement ; aucun achat, abonnement ou élément cosmétique OSIA n’existe dans ce brouillon.'
-                  : 'Le document complet décrit les données locales, les contenus nécessaires envoyés au fournisseur choisi, Gmail REST, les endpoints personnalisés, Browser et Personal Browser, les artefacts temporaires, l’anti-rejeu et Adaptive Intelligence. Le transport suit LAN, puis WebRTC, puis relais chiffré de repli, sans masquer toutes les métadonnées réseau.',
+                  ? 'Le document complet couvre les actions agentiques, Gmail REST, Browser, les fournisseurs et coûts tiers, les tâches planifiées et les contrôles d’exécution. OSIA ne réserve jamais une capacité fonctionnelle à un paiement ; aucun achat, abonnement ou élément cosmétique OSIA n’existe dans ce brouillon.'
+                  : 'Le document complet décrit les données locales, les contenus nécessaires envoyés au fournisseur choisi, Gmail REST, les endpoints personnalisés, Browser, les artefacts temporaires, l’anti-rejeu et Adaptive Intelligence. Le transport suit LAN, puis WebRTC, puis relais chiffré de repli, sans masquer toutes les métadonnées réseau.',
               style: TextStyle(
                 color: palette.textPrimary.withValues(alpha: 0.86),
                 fontSize: 15,

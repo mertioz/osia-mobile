@@ -21,10 +21,10 @@ void main() {
     ]);
     expect(guideCatalog.tracks.map((track) => track.slides.length), <int>[
       17,
-      46,
+      45,
       43,
     ]);
-    expect(guideCatalog.slides.map((slide) => slide.id).toSet().length, 106);
+    expect(guideCatalog.slides.map((slide) => slide.id).toSet().length, 105);
 
     for (final track in guideCatalog.tracks) {
       expect(
@@ -70,7 +70,7 @@ void main() {
           )
           .join(' ');
       expect(settings, contains('eleven real categories'));
-      expect(settings, contains('Permissions'));
+      expect(settings, contains('Execution is always full-access'));
       expect(settings, isNot(contains('ten real categories')));
       expect(
         guideCatalog.slides.any(

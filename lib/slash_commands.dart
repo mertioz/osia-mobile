@@ -17,7 +17,6 @@ const Set<String> slashReasoningLevels = {
   'medium',
   'high',
 };
-const Set<String> slashBrowserBackends = {'personal', 'isolated'};
 final RegExp slashAliasPattern = RegExp(r'^[a-z][a-z0-9-]{0,31}$');
 final RegExp _partialAliasPattern = RegExp(r'^(?:[a-z][a-z0-9-]{0,31})?$');
 
@@ -296,7 +295,6 @@ class SlashTurnDirectivesV1 {
   final List<SlashConversationRef> conversationRefs;
   final SlashModelOverride? modelOverride;
   final String? reasoningOverride;
-  final String? browserBackendOverride;
 
   const SlashTurnDirectivesV1({
     this.schemaVersion = slashSchemaVersion,
@@ -305,7 +303,6 @@ class SlashTurnDirectivesV1 {
     this.conversationRefs = const [],
     this.modelOverride,
     this.reasoningOverride,
-    this.browserBackendOverride,
   });
 
   factory SlashTurnDirectivesV1.fromJson(Object? raw) {
@@ -317,7 +314,6 @@ class SlashTurnDirectivesV1 {
       'conversation_refs',
       'model_override',
       'reasoning_override',
-      'browser_backend_override',
     }, 'turn_directives');
     if (json['schema_version'] != slashSchemaVersion) {
       throw const SlashDirectiveException(
@@ -351,16 +347,6 @@ class SlashTurnDirectivesV1 {
         'Niveau de raisonnement non pris en charge.',
       );
     }
-    final browserBackend = json['browser_backend_override'];
-    if (browserBackend != null &&
-        (browserBackend is! String ||
-            !slashBrowserBackends.contains(browserBackend))) {
-      throw const SlashDirectiveException(
-        'unsupported_browser_backend',
-        'Unsupported browser backend.',
-        'Backend navigateur non pris en charge.',
-      );
-    }
     final result = SlashTurnDirectivesV1(
       connectorHints: List.unmodifiable(
         rawConnectors.map(SlashConnectorHint.fromJson),
@@ -375,7 +361,6 @@ class SlashTurnDirectivesV1 {
           ? null
           : SlashModelOverride.fromJson(json['model_override']),
       reasoningOverride: reasoning as String?,
-      browserBackendOverride: browserBackend as String?,
     );
     result.validateBounds();
     return result;
@@ -386,16 +371,14 @@ class SlashTurnDirectivesV1 {
       conversationRefs.isEmpty &&
       !capabilityRequirements.currentWeb &&
       modelOverride == null &&
-      reasoningOverride == null &&
-      browserBackendOverride == null;
+      reasoningOverride == null;
 
   int get modifierCount =>
       connectorHints.length +
       conversationRefs.length +
       (capabilityRequirements.currentWeb ? 1 : 0) +
       (modelOverride == null ? 0 : 1) +
-      (reasoningOverride == null ? 0 : 1) +
-      (browserBackendOverride == null ? 0 : 1);
+      (reasoningOverride == null ? 0 : 1);
 
   Map<String, dynamic> toJson() => {
     'schema_version': slashSchemaVersion,
@@ -404,8 +387,6 @@ class SlashTurnDirectivesV1 {
     'conversation_refs': conversationRefs.map((item) => item.toJson()).toList(),
     if (modelOverride != null) 'model_override': modelOverride!.toJson(),
     if (reasoningOverride != null) 'reasoning_override': reasoningOverride,
-    if (browserBackendOverride != null)
-      'browser_backend_override': browserBackendOverride,
   };
 
   String canonicalJson() {
@@ -428,8 +409,6 @@ class SlashTurnDirectivesV1 {
           'provider_id': modelOverride!.providerId,
         },
       if (reasoningOverride != null) 'reasoning_override': reasoningOverride,
-      if (browserBackendOverride != null)
-        'browser_backend_override': browserBackendOverride,
       'schema_version': slashSchemaVersion,
     });
   }
@@ -472,8 +451,6 @@ class SlashTurnDirectivesV1 {
     bool clearModelOverride = false,
     String? reasoningOverride,
     bool clearReasoningOverride = false,
-    String? browserBackendOverride,
-    bool clearBrowserBackendOverride = false,
   }) {
     final result = SlashTurnDirectivesV1(
       connectorHints: List.unmodifiable(connectorHints ?? this.connectorHints),
@@ -488,9 +465,6 @@ class SlashTurnDirectivesV1 {
       reasoningOverride: clearReasoningOverride
           ? null
           : (reasoningOverride ?? this.reasoningOverride),
-      browserBackendOverride: clearBrowserBackendOverride
-          ? null
-          : (browserBackendOverride ?? this.browserBackendOverride),
     );
     result.validateBounds();
     return result;
@@ -678,7 +652,6 @@ enum SlashPaletteSelectionType {
   model,
   reasoning,
   conversation,
-  browser,
 }
 
 class SlashPaletteSelection {

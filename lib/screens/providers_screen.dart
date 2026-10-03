@@ -105,60 +105,7 @@ const Map<String, String> _kProviderNames = {
   'ollama': 'Local (Ollama)',
 };
 
-// ── Vision capability (WOR-25) ──────────────────────────────────────────
-//
-// Mirrors of the PC's `osia.models` helpers so the mobile vision-companion UI
-// classifies models identically. Vision-capable: Anthropic Claude, Google
-// Gemini, xAI Grok and the OpenAI GPT-4o/4.1/5.x/o-series families. Text-only:
-// DeepSeek, Groq-hosted Llama/Qwen/Kimi/GPT-OSS, Mistral.
-
-/// Canonical provider display order for the vision-companion pickers (mirrors
-/// the AI-providers list / the PC's `_AI_PROVIDER_ORDER`).
-const List<String> _kVisionProviderOrder = [
-  'anthropic',
-  'openai',
-  'google',
-  'deepseek',
-  'xai',
-  'groq',
-  'ollama',
-];
-
-/// Whether `(provider, model)` can process images/screenshots — the heuristic
-/// half of the PC's `osia.models.model_has_vision`. The mobile only ever asks
-/// about models the server actually exposes, so the registry's exact-match
-/// pass isn't needed: the provider/name rules below decide every selector model
-/// identically (GPT-4o/Gemini/Claude/Grok → true; DeepSeek/Groq/Llama/Mistral →
-/// false).
-bool _modelHasVision(String provider, String model) {
-  if (model.isEmpty) return false;
-  final prov = provider.toLowerCase();
-  final lid = model.toLowerCase();
-  if (prov == 'anthropic' || prov == 'google' || prov == 'xai') return true;
-  if (lid.contains('claude') ||
-      lid.contains('gemini') ||
-      lid.contains('grok')) {
-    return true;
-  }
-  if (prov == 'openai') {
-    const tags = [
-      'gpt-4o',
-      'gpt-4.1',
-      'gpt-5',
-      'gpt-4-turbo',
-      'o1',
-      'o3',
-      'o4',
-    ];
-    return tags.any((t) => lid.contains(t));
-  }
-  return false;
-}
-
-/// Provider id for a model, preferring an exact match in [models] (the server's
-/// `models_list`) and falling back to the same name heuristic as the PC's
-/// `osia.models.provider_for_model`. Used to resolve the selected main model's
-/// provider before the vision check.
+/// Resolve a model id to its provider using the PC catalogue, with a conservative name fallback for older snapshots.
 String _providerForModel(String modelId, List<ws.OsiaModel> models) {
   for (final m in models) {
     if (m.id == modelId) return m.provider ?? '';
@@ -270,9 +217,9 @@ List<ProviderEntry> providersFor(ProviderCategory category) {
 
 /// TTS provider value → display label (mirrors the `providersFor(tts)` names).
 const Map<String, String> _kTtsProviderLabels = {
-  'local': 'Kokoro',
-  'openai': 'OpenAI TTS',
-  'google': 'Google TTS (Gemini)',
+  'local': 'Local (Kokoro)',
+  'openai': 'OpenAI',
+  'google': 'Google Cloud',
 };
 
 /// TTS provider dropdown order (default: `local` / Kokoro).
@@ -353,12 +300,13 @@ String _defaultTtsVoice(String provider) {
 
 /// STT provider value → display label (brand proper nouns, not localized).
 const Map<String, String> _kSttProviderLabels = {
-  'local': 'faster-whisper',
+  'local': 'faster-whisper (local)',
   'groq': 'Groq Whisper',
 };
 
 /// STT provider dropdown order (default: `local` / faster-whisper).
 const List<String> _kSttProviderOrder = ['local', 'groq'];
+const List<String> _kSttFallbackProviderOrder = ['local', 'groq', 'none'];
 
 String _categoryTitle(ProviderCategory category, OsiaStrings s) {
   switch (category) {
@@ -416,34 +364,14 @@ IconData _categoryIcon(ProviderCategory category) {
   }
 }
 
-/// Coerce the server's `api_key_fallbacks` blob (`{provider: [key, ...]}`, part
-/// of the config snapshot — WOR-29) into a typed map. Tolerates nulls and
-/// unexpected shapes, and drops empty key strings.
-Map<String, List<String>> _readFallbacks(Object? raw) {
-  final out = <String, List<String>>{};
+/// Coerce safe fallback-slot status (`{provider: [bool, ...]}`) into counts.
+/// Credential values are never read or retained by Mobile.
+Map<String, int> _readFallbackCounts(Object? raw) {
+  final out = <String, int>{};
   if (raw is Map) {
     raw.forEach((key, value) {
       if (value is List) {
-        out[key.toString()] = value
-            .map((e) => e.toString())
-            .where((s) => s.isNotEmpty)
-            .toList();
-      }
-    });
-  }
-  return out;
-}
-
-/// Coerce the server's `mcp_tokens` blob (`{id: rawtoken}`, shipped in the
-/// config snapshot for token-auth connectors only — OAuth excluded) into a
-/// typed map. Tolerates nulls and unexpected shapes; drops empty tokens.
-Map<String, String> _readMcpTokens(Object? raw) {
-  final out = <String, String>{};
-  if (raw is Map) {
-    raw.forEach((key, value) {
-      if (value != null) {
-        final s = value.toString();
-        if (s.isNotEmpty) out[key.toString()] = s;
+        out[key.toString()] = value.where((slot) => slot == true).length;
       }
     });
   }
@@ -468,18 +396,9 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
   /// the screen shows a loader until then so nothing is edited "blind".
   ws.ConfigData? _config;
 
-  /// Available models, used by the AI-hierarchy editor. Arrives via the
-  /// shared message stream (`models_list`); may land slightly after config.
-  List<ws.OsiaModel> _models = const [];
   late ws.ChatGptAccountState _chatGptAccount;
 
-  /// Latest raw API keys from the PC (real key strings, for pre-filling the
-  /// editors). Pulled right after each config snapshot lands.
-  Map<String, String> _apiKeys = const {};
-
   StreamSubscription<ws.ConfigData>? _configSub;
-  StreamSubscription<ws.ApiKeysMessage>? _apiKeysSub;
-  StreamSubscription<ws.OsiaMessage>? _msgSub;
   StreamSubscription<ws.ConnectionState>? _connSub;
   StreamSubscription<ws.ChatGptAccountState>? _chatGptSub;
 
@@ -491,18 +410,6 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
     // can't slip through before we're listening.
     _configSub = widget.wsService.configStream.listen((data) {
       if (mounted) setState(() => _config = data);
-      // The PC ships the real API keys on a separate channel; pull them in
-      // lockstep with each config snapshot — so editors pre-fill, and badges
-      // refresh after an edit (the landing re-pulls config on every pop).
-      widget.wsService.sendGetApiKeys();
-    });
-    _apiKeysSub = widget.wsService.apiKeysStream.listen((msg) {
-      if (mounted) setState(() => _apiKeys = msg.keys);
-    });
-    _msgSub = widget.wsService.messageStream.listen((msg) {
-      if (msg is ws.ModelsListMessage && mounted) {
-        setState(() => _models = msg.models);
-      }
     });
     _chatGptSub = widget.wsService.chatGptAccountStream.listen((state) {
       if (mounted) setState(() => _chatGptAccount = state);
@@ -518,8 +425,6 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
   @override
   void dispose() {
     _configSub?.cancel();
-    _apiKeysSub?.cancel();
-    _msgSub?.cancel();
     _connSub?.cancel();
     _chatGptSub?.cancel();
     super.dispose();
@@ -557,29 +462,9 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
     final strings = OsiaL10n.of(context);
     final config = _config;
 
-    // ── Vision companion (WOR-25) ──
-    // The selected main model, and whether it can already process images. When
-    // it can't, the vision-companion card is shown under the AI tile so the
-    // user can pair a vision-capable model. Companions are the vision-capable
-    // entries of the server's model list (`models_list` ships them regardless
-    // of which providers have a key, so the dropdown is populated even when only
-    // a text-only provider is configured).
-    final mainModel = (config?.settings['selected_model'] ?? '')
-        .toString()
-        .trim();
-    final visionModels = _models
-        .where((m) => _modelHasVision(m.provider ?? '', m.id))
-        .toList();
-    final showVisionCard =
-        mainModel.isNotEmpty &&
-        !_modelHasVision(_providerForModel(mainModel, _models), mainModel) &&
-        visionModels.isNotEmpty;
-
-    // Fallback API keys (WOR-29): per-provider ordered backup keys shipped in
-    // the config snapshot. Threaded into the AI providers list so each provider
-    // editor can manage its own list.
-    final apiKeyFallbacks = _readFallbacks(
-      config?.settings['api_key_fallbacks'],
+    // Fallback key values remain on the PC; Mobile receives slot counts only.
+    final apiKeyFallbackCounts = _readFallbackCounts(
+      config?.settings['api_key_fallbacks_set'],
     );
 
     return Scaffold(
@@ -616,23 +501,7 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                             category: category,
                             wsService: widget.wsService,
                             apiKeysSet: config.apiKeysSet,
-                            apiKeys: _apiKeys,
-                            // Fallback keys (WOR-29) — only the AI providers
-                            // screen renders the editor (see _ProviderListScreen).
-                            apiKeyFallbacks: apiKeyFallbacks,
-                            // Vision companion (WOR-25): rendered as a
-                            // sub-section inside the AI providers screen, only
-                            // when the selected main model can't process images.
-                            // Inert for the other categories.
-                            showVisionCard:
-                                category == ProviderCategory.ai &&
-                                showVisionCard,
-                            visionModels: visionModels,
-                            visionProvider:
-                                (config.settings['vision_provider'] ?? '')
-                                    .toString(),
-                            visionModel: (config.settings['vision_model'] ?? '')
-                                .toString(),
+                            apiKeyFallbackCounts: apiKeyFallbackCounts,
                             // TTS / STT selectors (WOR-78.2) — read from the
                             // same config snapshot; only the matching screen
                             // (tts / stt) renders and uses these.
@@ -642,6 +511,25 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                                 .toString(),
                             sttProvider: (config.settings['stt_provider'] ?? '')
                                 .toString(),
+                            sttFallbackProvider:
+                                (config.settings['stt_fallback_provider'] ??
+                                        'local')
+                                    .toString(),
+                            sttLocalModel:
+                                (config.settings['stt_local_model'] ?? 'small')
+                                    .toString(),
+                            sttGroqModel:
+                                (config.settings['stt_groq_model'] ??
+                                        'whisper-large-v3-turbo')
+                                    .toString(),
+                            sttLocalModelsAvailable:
+                                config.settings['stt_local_models_available']
+                                    is List
+                                ? (config.settings['stt_local_models_available']
+                                          as List)
+                                      .whereType<String>()
+                                      .toList()
+                                : const <String>[],
                             chatGptAccount: _chatGptAccount,
                           ),
                         ),
@@ -679,11 +567,9 @@ class SystemSettingsSection extends StatefulWidget {
 class _SystemSettingsSectionState extends State<SystemSettingsSection> {
   ws.ConfigData? _config;
   List<ws.OsiaModel> _models = const [];
-  Map<String, String> _apiKeys = const {};
   String? _timeFormatOverride;
 
   StreamSubscription<ws.ConfigData>? _configSub;
-  StreamSubscription<ws.ApiKeysMessage>? _apiKeysSub;
   StreamSubscription<ws.OsiaMessage>? _msgSub;
   StreamSubscription<ws.ConnectionState>? _connSub;
 
@@ -691,11 +577,12 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
   void initState() {
     super.initState();
     _configSub = widget.wsService.configStream.listen((data) {
-      if (mounted) setState(() => _config = data);
-      widget.wsService.sendGetApiKeys();
-    });
-    _apiKeysSub = widget.wsService.apiKeysStream.listen((msg) {
-      if (mounted) setState(() => _apiKeys = msg.keys);
+      if (mounted) {
+        setState(() {
+          _config = data;
+          _timeFormatOverride = null;
+        });
+      }
     });
     _msgSub = widget.wsService.messageStream.listen((msg) {
       if (msg is ws.ModelsListMessage && mounted) {
@@ -713,7 +600,6 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
   @override
   void dispose() {
     _configSub?.cancel();
-    _apiKeysSub?.cancel();
     _msgSub?.cancel();
     _connSub?.cancel();
     super.dispose();
@@ -825,7 +711,6 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
             _McpScreen(
               wsService: widget.wsService,
               config: config,
-              apiKeys: _apiKeys,
               oauthUrlLauncher: widget.oauthUrlLauncher,
             ),
           ),
@@ -863,7 +748,6 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
   }
 }
 
-/// Centered loader shown while the first config snapshot is in flight.
 class _LoadingBody extends StatelessWidget {
   final OsiaPalette palette;
   final String label;
@@ -894,432 +778,8 @@ class _LoadingBody extends StatelessWidget {
   }
 }
 
-// ── Vision companion card (WOR-25) ──────────────────────────────────────
+// ── TTS and speech selector cards ──
 
-/// Inline card shown under the AI providers tile when the selected main model
-/// can't process images. Mirrors the desktop's vision-companion row: pick a
-/// vision-capable provider + model (persisted via `set_setting`
-/// vision_provider / vision_model) and set that provider's API key — the same
-/// per-provider key store the main editors use, written with `set_api_key`.
-class _VisionCompanionCard extends StatefulWidget {
-  final ws.WebSocketService wsService;
-
-  /// Vision-capable companions, already filtered from the server's model list
-  /// via [_modelHasVision].
-  final List<ws.OsiaModel> visionModels;
-
-  /// Current `vision_provider` / `vision_model` from the config snapshot, used
-  /// to pre-select the dropdowns.
-  final String initialProvider;
-  final String initialModel;
-
-  /// `{provider: hasKey}` for the "configured" check and `{provider: key}` to
-  /// pre-fill the key field.
-  final Map<String, bool> apiKeysSet;
-  final Map<String, String> apiKeys;
-
-  const _VisionCompanionCard({
-    required this.wsService,
-    required this.visionModels,
-    required this.initialProvider,
-    required this.initialModel,
-    required this.apiKeysSet,
-    required this.apiKeys,
-  });
-
-  @override
-  State<_VisionCompanionCard> createState() => _VisionCompanionCardState();
-}
-
-class _VisionCompanionCardState extends State<_VisionCompanionCard> {
-  final TextEditingController _keyCtrl = TextEditingController();
-  late String _provider;
-  late String _model;
-  bool _obscured = true;
-  bool _hasText = false;
-  // The last value we wrote into the key field programmatically. Lets an
-  // incoming api_keys refresh re-prefill the field only while the user hasn't
-  // edited it (i.e. the current text still equals what we set).
-  String _prefilledKey = '';
-
-  /// Vision models grouped by provider.
-  Map<String, List<ws.OsiaModel>> get _byProvider {
-    final map = <String, List<ws.OsiaModel>>{};
-    for (final m in widget.visionModels) {
-      map.putIfAbsent(m.provider ?? '', () => <ws.OsiaModel>[]).add(m);
-    }
-    return map;
-  }
-
-  /// Providers with at least one vision model, in canonical order (any unknown
-  /// provider appended last, defensively).
-  List<String> get _providers {
-    final by = _byProvider;
-    final ordered = <String>[
-      for (final p in _kVisionProviderOrder)
-        if (by.containsKey(p)) p,
-    ];
-    for (final p in by.keys) {
-      if (!ordered.contains(p)) ordered.add(p);
-    }
-    return ordered;
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    final providers = _providers;
-    _provider = providers.contains(widget.initialProvider)
-        ? widget.initialProvider
-        : (providers.isNotEmpty ? providers.first : '');
-    _model = _resolveModel(_provider, widget.initialModel);
-    // Pre-fill the key BEFORE attaching the listener, so this initial set
-    // doesn't fire _onKeyChanged (which calls setState) during initState.
-    final key = widget.apiKeys[_provider] ?? '';
-    _keyCtrl.text = key;
-    _prefilledKey = key;
-    _hasText = key.trim().isNotEmpty;
-    _keyCtrl.addListener(_onKeyChanged);
-  }
-
-  @override
-  void didUpdateWidget(covariant _VisionCompanionCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // A fresh models_list can change the companion set — keep the selection
-    // valid so the dropdowns never hold an absent value.
-    if (!identical(oldWidget.visionModels, widget.visionModels)) {
-      final providers = _providers;
-      final p = providers.contains(_provider)
-          ? _provider
-          : (providers.isNotEmpty ? providers.first : '');
-      final m = _resolveModel(p, _model);
-      if (p != _provider || m != _model) {
-        setState(() {
-          _provider = p;
-          _model = m;
-        });
-      }
-    }
-    // Re-prefill the key once the real keys arrive (or after a save refreshes
-    // the snapshot), but never clobber an in-progress edit.
-    if (!identical(oldWidget.apiKeys, widget.apiKeys) &&
-        _keyCtrl.text == _prefilledKey) {
-      final key = widget.apiKeys[_provider] ?? '';
-      if (key != _keyCtrl.text) {
-        setState(() {
-          _keyCtrl.text = key;
-          _prefilledKey = key;
-          _hasText = key.trim().isNotEmpty;
-        });
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _keyCtrl.removeListener(_onKeyChanged);
-    _keyCtrl.dispose();
-    super.dispose();
-  }
-
-  void _onKeyChanged() {
-    final has = _keyCtrl.text.trim().isNotEmpty;
-    if (has != _hasText) setState(() => _hasText = has);
-  }
-
-  /// [preferred] if it belongs to [provider]'s vision models, else that
-  /// provider's first model (or '' when the provider has none).
-  String _resolveModel(String provider, String preferred) {
-    final models = _byProvider[provider] ?? const <ws.OsiaModel>[];
-    if (models.any((m) => m.id == preferred)) return preferred;
-    return models.isNotEmpty ? models.first.id : '';
-  }
-
-  void _onProviderChanged(String provider) {
-    final model = _resolveModel(provider, '');
-    final key = widget.apiKeys[provider] ?? '';
-    setState(() {
-      _provider = provider;
-      _model = model;
-      _keyCtrl.text = key;
-      _prefilledKey = key;
-      _hasText = key.trim().isNotEmpty;
-    });
-    // Mirror the desktop: switching provider resets the paired model to that
-    // provider's first vision model, and both are persisted.
-    widget.wsService.sendSetSetting('vision_provider', provider);
-    widget.wsService.sendSetSetting('vision_model', model);
-  }
-
-  void _onModelChanged(String model) {
-    setState(() => _model = model);
-    widget.wsService.sendSetSetting('vision_model', model);
-  }
-
-  void _saveKey() {
-    final key = _keyCtrl.text.trim();
-    if (_provider.isEmpty || key.isEmpty) return;
-    widget.wsService.sendSetApiKey(_provider, key);
-    // Refresh the snapshot so the "configured" check reflects the new key.
-    widget.wsService.sendGetConfig();
-    FocusScope.of(context).unfocus();
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(OsiaL10n.of(context).apiKeySaved)));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = OsiaTheme.of(context);
-    final strings = OsiaL10n.of(context);
-
-    final providers = _providers;
-    final byProvider = _byProvider;
-    // Clamp the rendered values so DropdownButton always finds its value among
-    // the items (its "exactly one match" invariant).
-    final provider = providers.contains(_provider)
-        ? _provider
-        : (providers.isNotEmpty ? providers.first : '');
-    final models = byProvider[provider] ?? const <ws.OsiaModel>[];
-    final modelId = models.any((m) => m.id == _model)
-        ? _model
-        : (models.isNotEmpty ? models.first.id : '');
-    final keyConfigured = widget.apiKeysSet[provider] ?? false;
-
-    return _OsiaCard(
-      palette: palette,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Heading
-          Row(
-            children: [
-              Icon(Icons.visibility_rounded, size: 18, color: palette.accent),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  strings.visionAssociated,
-                  style: TextStyle(
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w600,
-                    color: palette.textPrimary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          // Hint (mirrors the PC's sub-label): clarifies when pairing a vision
-          // model helps — i.e. when the main model is text-only.
-          Text(
-            strings.visionHint,
-            style: const TextStyle(
-              fontSize: 12,
-              height: 1.35,
-              color: Color(0xFF9D9AAD),
-            ),
-          ),
-          const SizedBox(height: 16),
-          // Provider
-          _FieldLabel(strings.visionProvider, palette),
-          const SizedBox(height: 8),
-          _dropdown<String>(
-            palette: palette,
-            value: provider.isNotEmpty ? provider : null,
-            items: [
-              for (final p in providers)
-                DropdownMenuItem(
-                  value: p,
-                  child: Text(
-                    _kProviderNames[p] ?? p,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      color: palette.textPrimary,
-                    ),
-                  ),
-                ),
-            ],
-            onChanged: (v) {
-              if (v != null && v != _provider) _onProviderChanged(v);
-            },
-          ),
-          const SizedBox(height: 14),
-          // Model
-          _FieldLabel(strings.visionModel, palette),
-          const SizedBox(height: 8),
-          _dropdown<String>(
-            palette: palette,
-            value: modelId.isNotEmpty ? modelId : null,
-            items: [
-              for (final m in models)
-                DropdownMenuItem(
-                  value: m.id,
-                  child: Text(
-                    m.label,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      color: palette.textPrimary,
-                    ),
-                  ),
-                ),
-            ],
-            onChanged: (v) {
-              if (v != null && v != _model) _onModelChanged(v);
-            },
-          ),
-          const SizedBox(height: 14),
-          // API key for the chosen vision provider
-          _FieldLabel(strings.apiKey, palette),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _keyCtrl,
-                  obscureText: _obscured,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted: (_) => _hasText ? _saveKey() : null,
-                  cursorColor: palette.accent,
-                  style: TextStyle(color: palette.textPrimary, fontSize: 15),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: palette.surfaceElevated,
-                    hintText: keyConfigured
-                        ? strings.apiKeyReplaceHint
-                        : strings.apiKeyHint,
-                    hintStyle: TextStyle(
-                      color: palette.textMuted,
-                      fontSize: 14,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(color: palette.border),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(color: palette.border),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(color: palette.accent, width: 1.4),
-                    ),
-                    suffixIcon: IconButton(
-                      tooltip: _obscured
-                          ? strings.showApiKey
-                          : strings.hideApiKey,
-                      onPressed: () => setState(() => _obscured = !_obscured),
-                      icon: Icon(
-                        _obscured
-                            ? Icons.visibility_rounded
-                            : Icons.visibility_off_rounded,
-                        size: 18,
-                        color: palette.textMuted,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              SizedBox(
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: _hasText ? _saveKey : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: palette.accent,
-                    foregroundColor: palette.isDark
-                        ? palette.background
-                        : Colors.white,
-                    disabledBackgroundColor: palette.accent.withValues(
-                      alpha: 0.4,
-                    ),
-                    disabledForegroundColor:
-                        (palette.isDark ? palette.background : Colors.white)
-                            .withValues(alpha: 0.7),
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    textStyle: const TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  child: Text(strings.save),
-                ),
-              ),
-            ],
-          ),
-          // "Configured" check — the chosen provider already has a key on the PC.
-          if (keyConfigured) ...[
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Icon(
-                  Icons.check_circle_rounded,
-                  size: 15,
-                  color: palette.accent,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  strings.apiKeyConfigured,
-                  style: TextStyle(fontSize: 12.5, color: palette.textMuted),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  /// Styled dropdown matching the screen's inset fields (elevated fill so it
-  /// reads against the card's surface).
-  Widget _dropdown<T>({
-    required OsiaPalette palette,
-    required T? value,
-    required List<DropdownMenuItem<T>> items,
-    required ValueChanged<T?> onChanged,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: palette.surfaceElevated,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: palette.border),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<T>(
-          value: value,
-          isExpanded: true,
-          dropdownColor: palette.surfaceElevated,
-          borderRadius: BorderRadius.circular(14),
-          icon: Icon(Icons.keyboard_arrow_down_rounded, color: palette.accent),
-          style: TextStyle(color: palette.textPrimary, fontSize: 14.5),
-          items: items,
-          onChanged: onChanged,
-        ),
-      ),
-    );
-  }
-}
-
-// ── TTS / STT selector cards (WOR-78.2) ─────────────────────────────────
-
-/// Compact selector shown at the top of the Voice Providers (TTS) screen,
-/// above the API-key list. Mirrors the PC: pick the TTS provider, and — for
-/// the cloud providers that expose named voices (OpenAI, Google/Gemini) — the
-/// voice. Kokoro (local) has no user-selectable voice, so the voice field
-/// reads a disabled "Automatic". Both are persisted with `set_setting`
-/// (`tts_provider` / `tts_voice`); the landing re-pulls config on pop, so the
-/// selection round-trips on re-open.
 class _TtsSelectorCard extends StatefulWidget {
   final ws.WebSocketService wsService;
 
@@ -1340,6 +800,7 @@ class _TtsSelectorCard extends StatefulWidget {
 class _TtsSelectorCardState extends State<_TtsSelectorCard> {
   late String _provider;
   late String _voice;
+  StreamSubscription<ws.ConfigData>? _configSub;
 
   @override
   void initState() {
@@ -1348,6 +809,28 @@ class _TtsSelectorCardState extends State<_TtsSelectorCard> {
         ? widget.initialProvider
         : 'local';
     _voice = _resolveVoice(_provider, widget.initialVoice);
+    _configSub = widget.wsService.configStream.listen((config) {
+      if (!mounted) return;
+      final settings = config.settings;
+      final provider = (settings['tts_provider'] ?? 'local').toString();
+      final voice = (settings['tts_voice'] ?? '').toString();
+      final nextProvider = _kTtsProviderOrder.contains(provider)
+          ? provider
+          : 'local';
+      final nextVoice = _resolveVoice(nextProvider, voice);
+      if (_provider != nextProvider || _voice != nextVoice) {
+        setState(() {
+          _provider = nextProvider;
+          _voice = nextVoice;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _configSub?.cancel();
+    super.dispose();
   }
 
   /// [preferred] when it is a valid voice for [provider], else that provider's
@@ -1360,16 +843,15 @@ class _TtsSelectorCardState extends State<_TtsSelectorCard> {
   }
 
   void _onProviderChanged(String provider) {
-    final voice = _resolveVoice(provider, _voice);
+    final voice = _defaultTtsVoice(provider);
     setState(() {
       _provider = provider;
       _voice = voice;
     });
     widget.wsService.sendSetSetting('tts_provider', provider);
-    // Mirror the vision card: persist the (re-defaulted) voice too, so the
-    // server never keeps a voice that doesn't belong to the new provider.
-    // Kokoro has no voice ('') — leave the stored tts_voice untouched there.
-    if (voice.isNotEmpty) widget.wsService.sendSetSetting('tts_voice', voice);
+    // PC resets the provider-specific voice to its default. Kokoro has no
+    // selectable voice, so clear the previous cloud voice in canonical state.
+    widget.wsService.sendSetSetting('tts_voice', voice.isEmpty ? null : voice);
   }
 
   void _onVoiceChanged(String voice) {
@@ -1456,19 +938,23 @@ class _TtsSelectorCardState extends State<_TtsSelectorCard> {
 }
 
 /// Compact selector shown at the top of the Whisper Providers (STT) screen,
-/// above the API-key list. Mirrors the PC's speech-to-text provider picker
-/// (faster-whisper local, or Groq Whisper). Persisted with `set_setting`
-/// (`stt_provider`). No model-size / fallback pickers — those stay on the PC
-/// for now (deferred).
+/// above the API-key list. Mirrors the PC's primary/fallback providers and
+/// model selectors; all choices are persisted to canonical PC settings.
 class _SttSelectorCard extends StatefulWidget {
   final ws.WebSocketService wsService;
-
-  /// Current `stt_provider` from the config snapshot.
   final String initialProvider;
+  final String initialFallbackProvider;
+  final String initialLocalModel;
+  final String initialGroqModel;
+  final List<String> availableLocalModels;
 
   const _SttSelectorCard({
     required this.wsService,
     required this.initialProvider,
+    required this.initialFallbackProvider,
+    required this.initialLocalModel,
+    required this.initialGroqModel,
+    required this.availableLocalModels,
   });
 
   @override
@@ -1477,6 +963,11 @@ class _SttSelectorCard extends StatefulWidget {
 
 class _SttSelectorCardState extends State<_SttSelectorCard> {
   late String _provider;
+  late String _fallbackProvider;
+  late String _localModel;
+  late String _groqModel;
+  late Set<String> _availableLocalModels;
+  StreamSubscription<ws.ConfigData>? _configSub;
 
   @override
   void initState() {
@@ -1484,11 +975,154 @@ class _SttSelectorCardState extends State<_SttSelectorCard> {
     _provider = _kSttProviderOrder.contains(widget.initialProvider)
         ? widget.initialProvider
         : 'local';
+    _fallbackProvider =
+        _kSttFallbackProviderOrder.contains(widget.initialFallbackProvider)
+        ? widget.initialFallbackProvider
+        : 'none';
+    _localModel = widget.initialLocalModel;
+    _groqModel = widget.initialGroqModel;
+    _availableLocalModels = widget.availableLocalModels.toSet();
+    _configSub = widget.wsService.configStream.listen(_applyConfig);
+  }
+
+  @override
+  void dispose() {
+    _configSub?.cancel();
+    super.dispose();
+  }
+
+  void _applyConfig(ws.ConfigData config) {
+    if (!mounted) return;
+    final settings = config.settings;
+    final provider = (settings['stt_provider'] ?? 'local').toString();
+    final fallback = (settings['stt_fallback_provider'] ?? 'local').toString();
+    final rawAvailable = settings['stt_local_models_available'];
+    setState(() {
+      _provider = _kSttProviderOrder.contains(provider) ? provider : 'local';
+      _fallbackProvider = _kSttFallbackProviderOrder.contains(fallback)
+          ? fallback
+          : 'none';
+      _localModel = (settings['stt_local_model'] ?? 'small').toString();
+      _groqModel = (settings['stt_groq_model'] ?? 'whisper-large-v3-turbo')
+          .toString();
+      _availableLocalModels = rawAvailable is List
+          ? rawAvailable.whereType<String>().toSet()
+          : <String>{};
+    });
   }
 
   void _onProviderChanged(String provider) {
     setState(() => _provider = provider);
     widget.wsService.sendSetSetting('stt_provider', provider);
+  }
+
+  void _onFallbackProviderChanged(String provider) {
+    setState(() => _fallbackProvider = provider);
+    widget.wsService.sendSetSetting('stt_fallback_provider', provider);
+  }
+
+  void _onModelChanged(String provider, String model) {
+    setState(() {
+      if (provider == 'groq') {
+        _groqModel = model;
+      } else {
+        _localModel = model;
+      }
+    });
+    widget.wsService.sendSetSetting(
+      provider == 'groq' ? 'stt_groq_model' : 'stt_local_model',
+      model,
+    );
+  }
+
+  String? _localModelSelection() {
+    if (_availableLocalModels.contains(_localModel)) return _localModel;
+    for (final size in const ['small', 'medium']) {
+      if (_availableLocalModels.contains(size)) return size;
+    }
+    return null;
+  }
+
+  Widget _modelField({required String provider, required OsiaPalette palette}) {
+    final strings = OsiaL10n.of(context);
+    if (provider == 'local') {
+      final model = _localModelSelection();
+      if (_availableLocalModels.isEmpty || model == null) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _FieldLabel(strings.model, palette),
+            const SizedBox(height: 8),
+            _DisabledField(label: strings.sttNoLocalModels, palette: palette),
+          ],
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _FieldLabel(strings.model, palette),
+          const SizedBox(height: 8),
+          _selectorDropdown<String>(
+            palette: palette,
+            value: model,
+            items: [
+              for (final size in ['small', 'medium'])
+                if (_availableLocalModels.contains(size))
+                  DropdownMenuItem(
+                    value: size,
+                    child: Text(
+                      size,
+                      style: TextStyle(color: palette.textPrimary),
+                    ),
+                  ),
+            ],
+            onChanged: (value) {
+              if (value != null && value != _localModel) {
+                _onModelChanged('local', value);
+              }
+            },
+          ),
+        ],
+      );
+    }
+    final groqModel =
+        const [
+          'whisper-large-v3-turbo',
+          'whisper-large-v3',
+        ].contains(_groqModel)
+        ? _groqModel
+        : 'whisper-large-v3-turbo';
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _FieldLabel(strings.model, palette),
+          const SizedBox(height: 8),
+          _selectorDropdown<String>(
+            palette: palette,
+            value: groqModel,
+            items: [
+              for (final model in const [
+                'whisper-large-v3-turbo',
+                'whisper-large-v3',
+              ])
+                DropdownMenuItem(
+                  value: model,
+                  child: Text(
+                    model,
+                    style: TextStyle(color: palette.textPrimary),
+                  ),
+                ),
+            ],
+            onChanged: (value) {
+              if (value != null && value != _groqModel) {
+                _onModelChanged('groq', value);
+              }
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -1499,6 +1133,10 @@ class _SttSelectorCardState extends State<_SttSelectorCard> {
     final provider = _kSttProviderOrder.contains(_provider)
         ? _provider
         : 'local';
+    final fallbackProvider =
+        _kSttFallbackProviderOrder.contains(_fallbackProvider)
+        ? _fallbackProvider
+        : 'none';
 
     return _OsiaCard(
       palette: palette,
@@ -1528,6 +1166,40 @@ class _SttSelectorCardState extends State<_SttSelectorCard> {
               if (v != null && v != _provider) _onProviderChanged(v);
             },
           ),
+          const SizedBox(height: 14),
+          _modelField(provider: provider, palette: palette),
+          const SizedBox(height: 18),
+          _FieldLabel(strings.sttFallbackProviderLabel, palette),
+          const SizedBox(height: 8),
+          _selectorDropdown<String>(
+            palette: palette,
+            value: fallbackProvider,
+            items: [
+              for (final fallback in _kSttFallbackProviderOrder)
+                DropdownMenuItem(
+                  value: fallback,
+                  child: Text(
+                    fallback == 'none'
+                        ? strings.sttNoFallback
+                        : (_kSttProviderLabels[fallback] ?? fallback),
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      color: palette.textPrimary,
+                    ),
+                  ),
+                ),
+            ],
+            onChanged: (value) {
+              if (value != null && value != _fallbackProvider) {
+                _onFallbackProviderChanged(value);
+              }
+            },
+          ),
+          if (fallbackProvider != 'none') ...[
+            const SizedBox(height: 14),
+            _modelField(provider: fallbackProvider, palette: palette),
+          ],
         ],
       ),
     );
@@ -1600,25 +1272,8 @@ class _ProviderListScreen extends StatelessWidget {
   /// "configured" check next to providers whose key is already set on the PC.
   final Map<String, bool> apiKeysSet;
 
-  /// `{provider: key}` real keys, used to pre-fill the editor. May be empty if
-  /// the keys haven't arrived yet (the editor then just shows a placeholder).
-  final Map<String, String> apiKeys;
-
-  /// Per-provider fallback API keys (WOR-29), `{provider: [key, ...]}` from the
-  /// config snapshot. Only the AI providers screen surfaces the editor — each
-  /// AI provider's config screen gets a "fallback keys" sub-section seeded from
-  /// this map. Empty / unused for the other categories.
-  final Map<String, List<String>> apiKeyFallbacks;
-
-  /// Vision companion (WOR-25). When [showVisionCard] is true — the AI category
-  /// and a selected main model that can't process images — a "paired vision
-  /// model" sub-section renders below the provider list. The remaining fields
-  /// feed it: the vision-capable models, and the current `vision_provider` /
-  /// `vision_model` for pre-selection. All inert (card unbuilt) otherwise.
-  final bool showVisionCard;
-  final List<ws.OsiaModel> visionModels;
-  final String visionProvider;
-  final String visionModel;
+  /// Per-provider fallback slot counts. Fallback credentials stay on the PC.
+  final Map<String, int> apiKeyFallbackCounts;
 
   /// Current `tts_provider` / `tts_voice` / `stt_provider` from the config
   /// snapshot (WOR-78.2). Only the TTS screen reads the first two; only the STT
@@ -1627,30 +1282,29 @@ class _ProviderListScreen extends StatelessWidget {
   final String ttsProvider;
   final String ttsVoice;
   final String sttProvider;
+  final String sttFallbackProvider;
+  final String sttLocalModel;
+  final String sttGroqModel;
+  final List<String> sttLocalModelsAvailable;
   final ws.ChatGptAccountState chatGptAccount;
 
   const _ProviderListScreen({
     required this.category,
     required this.wsService,
     required this.apiKeysSet,
-    required this.apiKeys,
-    this.apiKeyFallbacks = const {},
-    this.showVisionCard = false,
-    this.visionModels = const [],
-    this.visionProvider = '',
-    this.visionModel = '',
+    this.apiKeyFallbackCounts = const {},
     this.ttsProvider = '',
     this.ttsVoice = '',
     this.sttProvider = '',
+    this.sttFallbackProvider = 'local',
+    this.sttLocalModel = 'small',
+    this.sttGroqModel = 'whisper-large-v3-turbo',
+    this.sttLocalModelsAvailable = const [],
     this.chatGptAccount = const ws.ChatGptAccountState(),
   });
 
   bool _isKeySet(ProviderEntry entry) =>
       entry.apiProvider != null && (apiKeysSet[entry.apiProvider] ?? false);
-
-  /// The stored key for [entry]'s provider, or null when unknown / local.
-  String? _keyFor(ProviderEntry entry) =>
-      entry.apiProvider == null ? null : apiKeys[entry.apiProvider];
 
   @override
   Widget build(BuildContext context) {
@@ -1695,6 +1349,10 @@ class _ProviderListScreen extends StatelessWidget {
                 _SttSelectorCard(
                   wsService: wsService,
                   initialProvider: sttProvider,
+                  initialFallbackProvider: sttFallbackProvider,
+                  initialLocalModel: sttLocalModel,
+                  initialGroqModel: sttGroqModel,
+                  availableLocalModels: sttLocalModelsAvailable,
                 ),
                 const SizedBox(height: 16),
               ],
@@ -1727,15 +1385,13 @@ class _ProviderListScreen extends StatelessWidget {
                               entry: providers[i],
                               wsService: wsService,
                               keyConfigured: _isKeySet(providers[i]),
-                              initialKey: _keyFor(providers[i]),
-                              // Fallback keys (WOR-29): only in the AI flow, and
-                              // only for providers that take a key (not local).
                               showFallbackKeys:
                                   category == ProviderCategory.ai &&
                                   providers[i].apiProvider != null,
-                              fallbackKeys:
-                                  apiKeyFallbacks[providers[i].apiProvider] ??
-                                  const [],
+                              fallbackKeyCount:
+                                  apiKeyFallbackCounts[providers[i]
+                                      .apiProvider] ??
+                                  0,
                             ),
                           ),
                         ),
@@ -1744,22 +1400,6 @@ class _ProviderListScreen extends StatelessWidget {
                   ],
                 ),
               ),
-              // ── Vision companion (WOR-25) ──
-              // A clearly separated sub-section under the AI providers list,
-              // shown only when the selected main model can't process images.
-              // Same provider + model + key controls as before — relocated here
-              // from the providers landing screen.
-              if (showVisionCard) ...[
-                const SizedBox(height: 20),
-                _VisionCompanionCard(
-                  wsService: wsService,
-                  visionModels: visionModels,
-                  initialProvider: visionProvider,
-                  initialModel: visionModel,
-                  apiKeysSet: apiKeysSet,
-                  apiKeys: apiKeys,
-                ),
-              ],
             ],
           ),
         ),
@@ -1949,24 +1589,16 @@ class _ProviderConfigScreen extends StatefulWidget {
   /// Drives the "configured" badge and the "remove key" action.
   final bool keyConfigured;
 
-  /// The real key currently stored on the PC, used to pre-fill the field
-  /// (masked by default, revealed with the eye toggle). Null/empty when no key
-  /// is set yet (or not yet received) — the field then shows a placeholder.
-  final String? initialKey;
-
-  /// Fallback keys (WOR-29). When [showFallbackKeys] is true (AI providers flow,
-  /// non-local provider) a "fallback keys" sub-section renders below the main
-  /// key editor; [fallbackKeys] seeds its list from the config snapshot.
+  /// Fallback keys remain on the PC. Mobile only receives the slot count.
   final bool showFallbackKeys;
-  final List<String> fallbackKeys;
+  final int fallbackKeyCount;
 
   const _ProviderConfigScreen({
     required this.entry,
     required this.wsService,
     required this.keyConfigured,
-    this.initialKey,
     this.showFallbackKeys = false,
-    this.fallbackKeys = const [],
+    this.fallbackKeyCount = 0,
   });
 
   @override
@@ -1982,24 +1614,41 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
   // unconfigured immediately after a delete (optimistic), before the next
   // config snapshot lands.
   late bool _configured;
+  late int _fallbackKeyCount;
+  StreamSubscription<ws.ConfigData>? _configSub;
 
   @override
   void initState() {
     super.initState();
     _configured = widget.keyConfigured;
-    // Pre-fill with the real key when the PC sent one. It stays masked until
-    // the user taps the eye toggle; _hasText keeps the Save button enabled.
-    final initial = widget.initialKey ?? '';
-    _keyCtrl.text = initial;
-    _hasText = initial.trim().isNotEmpty;
+    _fallbackKeyCount = widget.fallbackKeyCount;
     _keyCtrl.addListener(() {
       final has = _keyCtrl.text.trim().isNotEmpty;
       if (has != _hasText) setState(() => _hasText = has);
+    });
+    _configSub = widget.wsService.configStream.listen((config) {
+      if (!mounted) return;
+      final provider = widget.entry.apiProvider;
+      final configured =
+          provider != null && config.apiKeysSet[provider] == true;
+      final fallbackCount = provider == null
+          ? 0
+          : _readFallbackCounts(
+                  config.settings['api_key_fallbacks_set'],
+                )[provider] ??
+                0;
+      if (configured != _configured || fallbackCount != _fallbackKeyCount) {
+        setState(() {
+          _configured = configured;
+          _fallbackKeyCount = fallbackCount;
+        });
+      }
     });
   }
 
   @override
   void dispose() {
+    _configSub?.cancel();
     _keyCtrl.dispose();
     super.dispose();
   }
@@ -2307,7 +1956,7 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
           _FallbackKeysSection(
             wsService: widget.wsService,
             provider: widget.entry.apiProvider!,
-            initialKeys: widget.fallbackKeys,
+            initialCount: _fallbackKeyCount,
           ),
         ],
       ],
@@ -2322,20 +1971,17 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
 /// these when the primary key is rate-limited or exhausted. Rendered as a
 /// sub-section under a provider's key editor, inside the AI-providers flow.
 ///
-/// Each key is masked by default (eye toggle to reveal), editable in place, or
-/// removable behind a confirmation. "Add" appends a new key. Every action
-/// updates the local list optimistically and writes to the PC over the
-/// WebSocket: `set_api_fallback_key` (index ≥ 0 replaces a slot, -1 appends)
-/// and `delete_api_fallback_key`.
+/// Existing values stay on the PC. Mobile can replace a slot with a newly
+/// entered key, append a slot, or remove a slot using safe slot-count metadata.
 class _FallbackKeysSection extends StatefulWidget {
   final ws.WebSocketService wsService;
   final String provider;
-  final List<String> initialKeys;
+  final int initialCount;
 
   const _FallbackKeysSection({
     required this.wsService,
     required this.provider,
-    required this.initialKeys,
+    required this.initialCount,
   });
 
   @override
@@ -2343,11 +1989,7 @@ class _FallbackKeysSection extends StatefulWidget {
 }
 
 class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
-  /// Local, optimistically-updated copy of the provider's fallback keys.
-  late List<String> _keys;
-
-  /// Indices currently shown in clear text (the rest stay masked).
-  final Set<int> _revealed = {};
+  late int _count;
 
   /// Which slot the inline editor targets: null = closed, -1 = adding a new
   /// key, ≥ 0 = editing that slot. Only one editor is open at a time.
@@ -2359,7 +2001,15 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
   @override
   void initState() {
     super.initState();
-    _keys = List<String>.from(widget.initialKeys);
+    _count = widget.initialCount.clamp(0, 64).toInt();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FallbackKeysSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_editIndex == null && oldWidget.initialCount != widget.initialCount) {
+      setState(() => _count = widget.initialCount.clamp(0, 64).toInt());
+    }
   }
 
   @override
@@ -2369,12 +2019,12 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
   }
 
   void _openEditor(int index) {
-    final initial = index >= 0 ? _keys[index] : '';
+    if (index < -1 || index >= _count) return;
     setState(() {
       _editIndex = index;
       _editObscured = true;
-      _editCtrl.text = initial;
-      _editHasText = initial.trim().isNotEmpty;
+      _editCtrl.clear();
+      _editHasText = false;
     });
   }
 
@@ -2389,12 +2039,10 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
     final key = _editCtrl.text.trim();
     if (key.isEmpty) return;
     setState(() {
-      if (index == -1) {
-        _keys.add(key);
-      } else if (index >= 0 && index < _keys.length) {
-        _keys[index] = key;
-      }
+      if (index == -1) _count++;
       _editIndex = null;
+      _editCtrl.clear();
+      _editHasText = false;
     });
     // -1 appends on the server; an in-range index replaces that slot.
     widget.wsService.sendSetApiFallbackKey(widget.provider, index, key);
@@ -2435,10 +2083,7 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
     );
     if (confirmed != true || !mounted) return;
     setState(() {
-      _keys.removeAt(index);
-      // Row indices shift after a removal — drop reveal state so a masked row
-      // can't surface the wrong key in clear text.
-      _revealed.clear();
+      if (_count > 0) _count--;
       _editIndex = null;
     });
     widget.wsService.sendDeleteApiFallbackKey(widget.provider, index);
@@ -2458,13 +2103,13 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _SectionLabel(label: strings.fallbackKeys, palette: palette),
-        if (_keys.isNotEmpty)
+        if (_count > 0)
           _OsiaCard(
             palette: palette,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (var i = 0; i < _keys.length; i++) ...[
+                for (var i = 0; i < _count; i++) ...[
                   if (i > 0)
                     Divider(
                       height: 20,
@@ -2493,10 +2138,8 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
     );
   }
 
-  /// One stored key: index chip, masked/revealed value, and reveal/edit/delete
-  /// actions.
+  /// One configured fallback slot. Its key value never leaves the PC.
   Widget _buildKeyRow(OsiaPalette palette, OsiaStrings strings, int i) {
-    final revealed = _revealed.contains(i);
     return Row(
       children: [
         Container(
@@ -2518,25 +2161,11 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
         const SizedBox(width: 12),
         Expanded(
           child: Text(
-            // Mask with a fixed run of dots so the key's length never leaks.
-            revealed ? _keys[i] : '••••••••••••',
+            strings.apiKeyConfigured,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 14,
-              color: palette.textPrimary,
-              letterSpacing: revealed ? 0 : 2,
-            ),
+            style: TextStyle(fontSize: 14, color: palette.textPrimary),
           ),
-        ),
-        _MiniIconButton(
-          icon: revealed
-              ? Icons.visibility_off_rounded
-              : Icons.visibility_rounded,
-          tooltip: revealed ? strings.hideApiKey : strings.showApiKey,
-          palette: palette,
-          onTap: () =>
-              setState(() => revealed ? _revealed.remove(i) : _revealed.add(i)),
         ),
         _MiniIconButton(
           icon: Icons.edit_rounded,
@@ -2583,7 +2212,7 @@ class _FallbackKeysSectionState extends State<_FallbackKeysSection> {
           decoration: InputDecoration(
             filled: true,
             fillColor: palette.surfaceElevated,
-            hintText: strings.apiKeyHint,
+            hintText: isNew ? strings.apiKeyHint : strings.apiKeyReplaceHint,
             hintStyle: TextStyle(color: palette.textMuted, fontSize: 14),
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 16,
@@ -2892,7 +2521,6 @@ class _CronScreenState extends State<_CronScreen> {
   late List<Map<String, dynamic>> _jobs;
   StreamSubscription<ws.ConfigData>? _configSub;
   StreamSubscription<ws.ConnectionState>? _connSub;
-  StreamSubscription<ws.ScheduledTaskAuthorizationEvent>? _authSub;
 
   @override
   void initState() {
@@ -2910,9 +2538,6 @@ class _CronScreenState extends State<_CronScreen> {
         _refreshServerState();
       }
     });
-    _authSub = widget.wsService.scheduledAuthorizationStream.listen(
-      _handleAuthorizationEvent,
-    );
     _recoverConnection();
   }
 
@@ -2920,7 +2545,6 @@ class _CronScreenState extends State<_CronScreen> {
   void dispose() {
     _configSub?.cancel();
     _connSub?.cancel();
-    _authSub?.cancel();
     super.dispose();
   }
 
@@ -2935,93 +2559,6 @@ class _CronScreenState extends State<_CronScreen> {
 
   void _refreshServerState() {
     widget.wsService.sendGetConfig();
-  }
-
-  void _handleAuthorizationEvent(ws.ScheduledTaskAuthorizationEvent event) {
-    if (!mounted) return;
-    if (event.request != null) {
-      unawaited(_reviewAuthorization(event));
-      return;
-    }
-    _refreshServerState();
-    final strings = OsiaL10n.of(context);
-    final message = event.code == 'pc_local_review_required'
-        ? strings.scheduledPcReviewRequired
-        : strings.scheduledAuthorizationStatus(
-            event.authorizationStatus.isEmpty
-                ? (event.ok ? 'authorized' : 'authorization_required')
-                : event.authorizationStatus,
-          );
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  Future<void> _reviewAuthorization(
-    ws.ScheduledTaskAuthorizationEvent event,
-  ) async {
-    final request = event.request!;
-    final strings = OsiaL10n.of(context);
-    final rawCapabilities = request['capabilities'];
-    final capabilities = rawCapabilities is List
-        ? rawCapabilities
-              .whereType<Map>()
-              .map((raw) {
-                final item = raw.cast<String, dynamic>();
-                return '${item['safe_category']} | ${item['effect_class']}';
-              })
-              .where((value) => value.trim().isNotEmpty)
-              .toList()
-        : <String>[];
-    final expiration = request['expiration'];
-    final expirationText = expiration is num
-        ? DateTime.fromMillisecondsSinceEpoch(
-            (expiration.toDouble() * 1000).round(),
-            isUtc: true,
-          ).toLocal().toIso8601String()
-        : '';
-    final maxExecutions = request['max_executions'];
-    final action = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(strings.scheduledAuthorizationTitle),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '${strings.scheduledExactCapabilities} '
-                '| ${strings.scheduledRevision(request['task_revision'] is int ? request['task_revision'] as int : 0)}',
-              ),
-              const SizedBox(height: 10),
-              for (final capability in capabilities)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text('- $capability'),
-                ),
-              if (maxExecutions is int)
-                Text(strings.scheduledMaxExecutions(maxExecutions)),
-              if (expirationText.isNotEmpty)
-                Text(strings.scheduledExpires(expirationText)),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop('deny'),
-            child: Text(strings.autonomousDeny),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop('approve'),
-            child: Text(strings.autonomousApproveExact),
-          ),
-        ],
-      ),
-    );
-    if (action != null && mounted) {
-      widget.wsService.sendScheduledTaskAuthorizationResponse(event, action);
-    }
   }
 
   void _toggle(int index, bool value) {
@@ -3097,12 +2634,6 @@ class _CronScreenState extends State<_CronScreen> {
                     onToggle: (v) => _toggle(i, v),
                     onDelete: () => _delete(i),
                     onTap: () => _edit(index: i),
-                    onAuthorize: () => widget.wsService
-                        .sendScheduledTaskAuthorizationRequest(_jobs[i]),
-                    onRevoke: () => widget.wsService
-                        .sendScheduledTaskAuthorizationRevoke(_jobs[i]),
-                    onDisable: () =>
-                        widget.wsService.sendScheduledTaskDisable(_jobs[i]),
                   ),
                   const SizedBox(height: 10),
                 ],
@@ -3129,9 +2660,6 @@ class _CronRow extends StatelessWidget {
   final ValueChanged<bool> onToggle;
   final VoidCallback onDelete;
   final VoidCallback onTap;
-  final VoidCallback onAuthorize;
-  final VoidCallback onRevoke;
-  final VoidCallback onDisable;
   const _CronRow({
     required this.job,
     required this.palette,
@@ -3141,9 +2669,6 @@ class _CronRow extends StatelessWidget {
     required this.onToggle,
     required this.onDelete,
     required this.onTap,
-    required this.onAuthorize,
-    required this.onRevoke,
-    required this.onDisable,
   });
 
   @override
@@ -3156,30 +2681,6 @@ class _CronRow extends StatelessWidget {
       strings.cronModelDefault,
     );
     final enabled = job['enabled'] == true;
-    final authorizationStatus =
-        (job['authorization_status'] ?? 'authorization_required').toString();
-    final revision = job['task_revision'] is int
-        ? job['task_revision'] as int
-        : 0;
-    final rawBounds = job['authorization_bounds'];
-    final bounds = rawBounds is Map
-        ? rawBounds.cast<String, dynamic>()
-        : const <String, dynamic>{};
-    final mode = (bounds['mode'] ?? '').toString();
-    final maxExecutions = bounds['max_executions'];
-    final expires = job['authorization_expires_at'];
-    final expiryText = expires is num
-        ? DateTime.fromMillisecondsSinceEpoch(
-            (expires.toDouble() * 1000).round(),
-            isUtc: true,
-          ).toLocal().toIso8601String()
-        : '';
-    final authorizationDetails = <String>[
-      strings.scheduledRevision(revision),
-      if (mode.isNotEmpty) mode,
-      if (maxExecutions is int) strings.scheduledMaxExecutions(maxExecutions),
-      if (expiryText.isNotEmpty) strings.scheduledExpires(expiryText),
-    ].join(' | ');
     return _OsiaCard(
       palette: palette,
       padding: EdgeInsets.zero,
@@ -3218,51 +2719,6 @@ class _CronRow extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontSize: 12, color: palette.textMuted),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      strings.scheduledAuthorizationStatus(authorizationStatus),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: authorizationStatus == 'authorized'
-                            ? palette.accent
-                            : palette.textMuted,
-                      ),
-                    ),
-                    if (authorizationDetails.isNotEmpty)
-                      Text(
-                        authorizationDetails,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: palette.textMuted,
-                        ),
-                      ),
-                    const SizedBox(height: 5),
-                    Wrap(
-                      spacing: 4,
-                      runSpacing: 2,
-                      children: [
-                        TextButton(
-                          onPressed: onAuthorize,
-                          child: Text(
-                            authorizationStatus == 'authorized'
-                                ? strings.scheduledReauthorize
-                                : strings.scheduledAuthorize,
-                          ),
-                        ),
-                        if (authorizationStatus == 'authorized')
-                          TextButton(
-                            onPressed: onRevoke,
-                            child: Text(strings.autonomousRevoke),
-                          ),
-                        TextButton(
-                          onPressed: onDisable,
-                          child: Text(strings.scheduledDisable),
-                        ),
-                      ],
                     ),
                   ],
                 ),
@@ -3369,6 +2825,16 @@ Map<String, dynamic> buildCronJobForSettingsSave({
     'enabled': enabled,
     'conversation_id': conversationId,
   };
+  for (final obsoleteField in const <String>[
+    'grant_refs',
+    'authorization_status',
+    'authorization_expires_at',
+    'authorization_bounds',
+    'authorization_request',
+    'migration_state',
+  ]) {
+    job.remove(obsoleteField);
+  }
   final cleanModel = _cronModelFromRaw(model);
   if (cleanModel == null) {
     job.remove('model');
@@ -6442,14 +5908,9 @@ class _McpScreen extends StatefulWidget {
   final ws.ConfigData config;
   final Future<bool> Function(Uri uri)? oauthUrlLauncher;
 
-  /// Real token strings keyed by provider (`mcp:<id>` → token), from the
-  /// parent's `get_api_keys` pull — used to pre-fill the token field.
-  final Map<String, String> apiKeys;
-
   const _McpScreen({
     required this.wsService,
     required this.config,
-    required this.apiKeys,
     this.oauthUrlLauncher,
   });
 
@@ -6463,18 +5924,6 @@ class _McpScreenState extends State<_McpScreen> {
   /// wholesale via `set_setting` (the server forces env={} on each entry).
   late List<Map<String, dynamic>> _servers;
   late List<Map<String, dynamic>> _serverCatalog;
-
-  /// Real token strings per provider (`mcp:<id>` → token), for pre-filling the
-  /// token field. Seeded from the parent, refreshed on api-keys pushes.
-  late Map<String, String> _apiKeys;
-
-  /// Real token strings per connector (`<id>` → token), shipped in the config
-  /// snapshot under `mcp_tokens` (token-auth connectors only — OAuth excluded).
-  /// The primary pre-fill source for the token field. The map is refreshed on
-  /// every config push, and freshly-arrived tokens are applied to any empty
-  /// token field. `get_api_keys` does not return `mcp:` entries, so this is how
-  /// the real token reaches the screen.
-  late Map<String, String> _mcpTokens;
 
   /// Which providers have a key set on the PC (`mcp:<id>` → bool).
   late Map<String, bool> _apiKeysSet;
@@ -6506,7 +5955,6 @@ class _McpScreenState extends State<_McpScreen> {
   final Map<String, Map<String, TextEditingController>> _extraCtrls = {};
 
   StreamSubscription<ws.ConfigData>? _configSub;
-  StreamSubscription<ws.ApiKeysMessage>? _apiKeysSub;
   StreamSubscription<ws.McpStatusMessage>? _statusSub;
   StreamSubscription<ws.McpOauthUrl>? _oauthSub;
   StreamSubscription<ws.ConnectionState>? _connSub;
@@ -6521,32 +5969,18 @@ class _McpScreenState extends State<_McpScreen> {
     super.initState();
     _servers = _readServers(widget.config);
     _serverCatalog = _readServerCatalog(widget.config);
-    _apiKeys = Map<String, String>.from(widget.apiKeys);
-    _mcpTokens = _readMcpTokens(widget.config.settings['mcp_tokens']);
     _apiKeysSet = Map<String, bool>.from(widget.config.apiKeysSet);
     _gmailRest = widget.config.gmailRest;
     _gmailRestConnecting = _gmailRest?.connecting == true;
     _syncGmailAttemptTimer(_gmailRest);
 
-    // Stay live while open: the parent passed a snapshot, but config / keys /
-    // status can change (incl. from the PC), so subscribe to all three.
+    // Stay live while open: canonical config and connector status can change
+    // on the PC, while credential values remain there.
     _configSub = widget.wsService.configStream.listen((cfg) {
       if (!mounted) return;
       setState(() {
         _servers = _readServers(cfg);
         _serverCatalog = _readServerCatalog(cfg);
-        _mcpTokens = _readMcpTokens(cfg.settings['mcp_tokens']);
-        // Token controllers are created lazily (putIfAbsent), so a token that
-        // lands AFTER a panel was first built (e.g. set on the PC while this
-        // screen is open) would otherwise never reach its field. Push the fresh
-        // value into any already-built controller that is still empty — never
-        // overwrite text the user has typed.
-        _mcpTokens.forEach((id, token) {
-          final ctrl = _tokenCtrls[id];
-          if (ctrl != null && ctrl.text.isEmpty && token.isNotEmpty) {
-            ctrl.text = token;
-          }
-        });
         _apiKeysSet = Map<String, bool>.from(cfg.apiKeysSet);
         final nextGmail = cfg.gmailRest;
         _gmailRest = nextGmail;
@@ -6569,9 +6003,6 @@ class _McpScreenState extends State<_McpScreen> {
         }
         _syncGmailAttemptTimer(nextGmail);
       });
-    });
-    _apiKeysSub = widget.wsService.apiKeysStream.listen((msg) {
-      if (mounted) setState(() => _apiKeys = msg.keys);
     });
     _statusSub = widget.wsService.mcpStatusStream.listen((msg) {
       if (!mounted) return;
@@ -6652,7 +6083,6 @@ class _McpScreenState extends State<_McpScreen> {
   @override
   void dispose() {
     _configSub?.cancel();
-    _apiKeysSub?.cancel();
     _statusSub?.cancel();
     _oauthSub?.cancel();
     _connSub?.cancel();
@@ -6712,7 +6142,6 @@ class _McpScreenState extends State<_McpScreen> {
 
   void _refreshServerState() {
     widget.wsService.sendGetConfig();
-    widget.wsService.sendGetApiKeys();
     widget.wsService.sendMcpStatus();
   }
 
@@ -6865,12 +6294,7 @@ class _McpScreenState extends State<_McpScreen> {
   }
 
   TextEditingController _tokenCtrlFor(_McpConnector c) {
-    return _tokenCtrls.putIfAbsent(
-      c.id,
-      () => TextEditingController(
-        text: _mcpTokens[c.id] ?? _apiKeys['mcp:${c.id}'] ?? '',
-      ),
-    );
+    return _tokenCtrls.putIfAbsent(c.id, TextEditingController.new);
   }
 
   TextEditingController _extraCtrlFor(_McpConnector c, String varName) {
@@ -6905,10 +6329,7 @@ class _McpScreenState extends State<_McpScreen> {
     return 'disconnected';
   }
 
-  bool _configured(String id) =>
-      (_mcpTokens[id] ?? '').isNotEmpty ||
-      (_apiKeys['mcp:$id'] ?? '').isNotEmpty ||
-      _apiKeysSet['mcp:$id'] == true;
+  bool _configured(String id) => _apiKeysSet['mcp:$id'] == true;
 
   String _descFor(OsiaStrings s, _McpConnector c) {
     switch (c.descField) {
@@ -7013,7 +6434,6 @@ class _McpScreenState extends State<_McpScreen> {
       () => _statuses[c.id] = const ws.McpServerStatus(status: 'connecting'),
     );
     widget.wsService.sendGetConfig();
-    widget.wsService.sendGetApiKeys();
   }
 
   void _disconnect(
@@ -7319,7 +6739,6 @@ class _McpScreenState extends State<_McpScreen> {
       widget.wsService.sendSetApiKey('mcp:$id', result.token.trim());
     }
     widget.wsService.sendGetConfig();
-    widget.wsService.sendGetApiKeys();
   }
 
   Future<void> _pasteInto(TextEditingController ctrl) async {

@@ -221,16 +221,13 @@ class OsiaStrings {
   final String deleteFallbackKey;
   final String fallbackKeyIndex; // {n}
 
-  // ── Vision companion model (WOR-25) ──
-  final String visionAssociated;
-  final String visionProvider;
-  final String visionModel;
-  final String visionHint;
-
   // ── TTS / STT selectors (WOR-78.2) ──
   final String ttsProviderLabel;
   final String ttsVoiceLabel;
   final String sttProviderLabel;
+  final String sttFallbackProviderLabel;
+  final String sttNoFallback;
+  final String sttNoLocalModels;
   final String ttsVoiceAutomatic;
 
   // ── Common (config sections) ──
@@ -606,13 +603,12 @@ class OsiaStrings {
     required this.editFallbackKey,
     required this.deleteFallbackKey,
     required this.fallbackKeyIndex,
-    required this.visionAssociated,
-    required this.visionProvider,
-    required this.visionModel,
-    required this.visionHint,
     required this.ttsProviderLabel,
     required this.ttsVoiceLabel,
     required this.sttProviderLabel,
+    required this.sttFallbackProviderLabel,
+    required this.sttNoFallback,
+    required this.sttNoLocalModels,
     required this.ttsVoiceAutomatic,
     required this.add,
     required this.edit,
@@ -997,6 +993,25 @@ class OsiaStrings {
     'de' => 'Alle Unterhaltungen löschen',
     'es' => 'Eliminar todas las conversaciones',
     _ => 'Delete all conversations',
+  };
+
+  String get conversationDeleteFailed => switch (languageCode) {
+    'fr' => 'La conversation n’a pas pu être supprimée. Réessayez.',
+    'zh' => '无法删除此对话，请重试。',
+    'ja' => '会話を削除できませんでした。もう一度お試しください。',
+    'de' =>
+      'Die Unterhaltung konnte nicht gelöscht werden. Bitte erneut versuchen.',
+    'es' => 'No se pudo eliminar la conversación. Inténtalo de nuevo.',
+    _ => 'The conversation could not be deleted. Please try again.',
+  };
+
+  String get conversationDeleteInProgress => switch (languageCode) {
+    'fr' => 'Une suppression de conversation est déjà en cours.',
+    'zh' => '对话删除正在进行中。',
+    'ja' => '会話の削除を処理中です。',
+    'de' => 'Eine Unterhaltungs-Löschung läuft bereits.',
+    'es' => 'Ya hay una eliminación de conversación en curso.',
+    _ => 'A conversation deletion is already in progress.',
   };
 
   String get noUngroupedConversations => switch (languageCode) {
@@ -1846,20 +1861,18 @@ class OsiaStrings {
   /// Localized display name for a theme palette key.
   String themeName(String paletteKey) {
     switch (paletteKey) {
-      case 'violet':
-        return themeViolet;
+      case 'osia':
+        return 'OSIA';
+      case 'azure':
+        return 'Azure';
+      case 'emerald':
+        return 'Emerald';
       case 'rose':
         return themeRose;
-      case 'noir':
-        return themeNoir;
-      case 'blanc':
-        return themeBlanc;
-      case 'dore':
-        return themeDore;
-      case 'red':
-        return themeRed;
-      case 'green':
-        return themeGreen;
+      case 'amber':
+        return 'Amber';
+      case 'neutral':
+        return 'Neutral';
     }
     return paletteKey;
   }
@@ -2194,8 +2207,7 @@ const Map<String, Map<String, String>> _wor254Messages = {
     'trace.title': 'Proceso',
     'thinking': 'Pensando…',
     'legacy_run.title': 'Ejecución duradera anterior',
-    'legacy_run.active':
-        'El trabajo de una versión anterior sigue disponible.',
+    'legacy_run.active': 'El trabajo de una versión anterior sigue disponible.',
     'legacy_run.resume': 'Reanudar',
     'legacy_run.stop': 'Detener',
     'execution.reasoning.summary': 'Resumen del proveedor',
@@ -2871,14 +2883,12 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   editFallbackKey: 'Edit fallback key',
   deleteFallbackKey: 'Delete fallback key',
   fallbackKeyIndex: 'Key {n}',
-  visionAssociated: 'Paired vision model',
-  visionProvider: 'Vision provider',
-  visionModel: 'Vision model',
-  visionHint:
-      'Useful if your main model does not handle images (e.g. DeepSeek, Groq, Llama, Mistral).',
   ttsProviderLabel: 'TTS provider',
   ttsVoiceLabel: 'Voice',
   sttProviderLabel: 'Speech-to-text provider',
+  sttFallbackProviderLabel: 'Fallback provider',
+  sttNoFallback: 'None',
+  sttNoLocalModels: 'No local Whisper model is downloaded on the PC',
   ttsVoiceAutomatic: 'Automatic',
   add: 'Add',
   edit: 'Edit',
@@ -3270,14 +3280,12 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   editFallbackKey: 'Modifier la clé de secours',
   deleteFallbackKey: 'Supprimer la clé de secours',
   fallbackKeyIndex: 'Clé {n}',
-  visionAssociated: 'Modèle vision associé',
-  visionProvider: 'Fournisseur vision',
-  visionModel: 'Modèle vision',
-  visionHint:
-      'Utile si votre modèle principal ne gère pas les images (ex: DeepSeek, Groq, Llama, Mistral).',
   ttsProviderLabel: 'Fournisseur TTS',
   ttsVoiceLabel: 'Voix',
   sttProviderLabel: 'Fournisseur de reconnaissance vocale',
+  sttFallbackProviderLabel: 'Fournisseur de secours',
+  sttNoFallback: 'Aucun',
+  sttNoLocalModels: 'Aucun modèle Whisper local n’est téléchargé sur le PC',
   ttsVoiceAutomatic: 'Automatique',
   add: 'Ajouter',
   edit: 'Modifier',
@@ -3653,13 +3661,12 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   editFallbackKey: '编辑备用密钥',
   deleteFallbackKey: '删除备用密钥',
   fallbackKeyIndex: '密钥 {n}',
-  visionAssociated: '配套视觉模型',
-  visionProvider: '视觉提供商',
-  visionModel: '视觉模型',
-  visionHint: '如果您的主模型不支持图像（例如 DeepSeek、Groq、Llama、Mistral），此功能很有用。',
   ttsProviderLabel: 'TTS 提供商',
   ttsVoiceLabel: '语音',
   sttProviderLabel: '语音转文字提供商',
+  sttFallbackProviderLabel: '备用提供商',
+  sttNoFallback: '无',
+  sttNoLocalModels: 'PC 上未下载本地 Whisper 模型',
   ttsVoiceAutomatic: '自动',
   add: '添加',
   edit: '编辑',
@@ -4027,13 +4034,12 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   editFallbackKey: 'フォールバックキーを編集',
   deleteFallbackKey: 'フォールバックキーを削除',
   fallbackKeyIndex: 'キー {n}',
-  visionAssociated: '連携ビジョンモデル',
-  visionProvider: 'ビジョンプロバイダー',
-  visionModel: 'ビジョンモデル',
-  visionHint: 'メインモデルが画像を扱えない場合に便利です（例：DeepSeek、Groq、Llama、Mistral）。',
   ttsProviderLabel: 'TTS プロバイダー',
   ttsVoiceLabel: '音声',
   sttProviderLabel: '音声認識プロバイダー',
+  sttFallbackProviderLabel: '予備プロバイダー',
+  sttNoFallback: 'なし',
+  sttNoLocalModels: 'PC にローカル Whisper モデルがダウンロードされていません',
   ttsVoiceAutomatic: '自動',
   add: '追加',
   edit: '編集',
@@ -4427,14 +4433,13 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   editFallbackKey: 'Ersatzschlüssel bearbeiten',
   deleteFallbackKey: 'Ersatzschlüssel löschen',
   fallbackKeyIndex: 'Schlüssel {n}',
-  visionAssociated: 'Verknüpftes Vision-Modell',
-  visionProvider: 'Vision-Anbieter',
-  visionModel: 'Vision-Modell',
-  visionHint:
-      'Nützlich, wenn Ihr Hauptmodell keine Bilder verarbeiten kann (z. B. DeepSeek, Groq, Llama, Mistral).',
   ttsProviderLabel: 'TTS-Anbieter',
   ttsVoiceLabel: 'Stimme',
   sttProviderLabel: 'Spracherkennungs-Anbieter',
+  sttFallbackProviderLabel: 'Ersatzanbieter',
+  sttNoFallback: 'Keiner',
+  sttNoLocalModels:
+      'Auf dem PC ist kein lokales Whisper-Modell heruntergeladen',
   ttsVoiceAutomatic: 'Automatisch',
   add: 'Hinzufügen',
   edit: 'Bearbeiten',
@@ -4831,14 +4836,12 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   editFallbackKey: 'Editar clave de respaldo',
   deleteFallbackKey: 'Eliminar clave de respaldo',
   fallbackKeyIndex: 'Clave {n}',
-  visionAssociated: 'Modelo de visión asociado',
-  visionProvider: 'Proveedor de visión',
-  visionModel: 'Modelo de visión',
-  visionHint:
-      'Útil si tu modelo principal no admite imágenes (p. ej. DeepSeek, Groq, Llama, Mistral).',
   ttsProviderLabel: 'Proveedor de TTS',
   ttsVoiceLabel: 'Voz',
   sttProviderLabel: 'Proveedor de voz a texto',
+  sttFallbackProviderLabel: 'Proveedor alternativo',
+  sttNoFallback: 'Ninguno',
+  sttNoLocalModels: 'No hay ningún modelo Whisper local descargado en el PC',
   ttsVoiceAutomatic: 'Automático',
   add: 'Añadir',
   edit: 'Editar',

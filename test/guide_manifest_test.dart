@@ -6,18 +6,15 @@ import 'package:flutter_test/flutter_test.dart';
 import '../tool/guide_content_manifest.dart';
 
 void main() {
-  test(
-    'safe guide manifest preserves essential and can be compared with PC',
-    () {
-      final manifest = buildGuideManifest();
-      if (expectedEssentialHash != 'TO_BE_RECORDED') {
-        expect(manifest['essentialHash'], expectedEssentialHash);
-      }
-      final output = Platform.environment['OSIA_GUIDE_MANIFEST_OUTPUT'];
-      if (output != null && output.isNotEmpty) {
-        final rendered = const JsonEncoder.withIndent('  ').convert(manifest);
-        File(output).writeAsStringSync('$rendered\n');
-      }
-    },
-  );
+  test('Mobile guide catalog matches the canonical PC guide catalog', () {
+    final manifest = buildGuideManifest();
+    expect(manifest['schemaVersion'], 4);
+    expect(manifest['contentVersion'], 4);
+    expect(manifest['catalogSha256'], expectedCanonicalGuideSha256);
+    final output = Platform.environment['OSIA_GUIDE_MANIFEST_OUTPUT'];
+    if (output != null && output.isNotEmpty) {
+      final rendered = const JsonEncoder.withIndent('  ').convert(manifest);
+      File(output).writeAsStringSync('$rendered\n');
+    }
+  });
 }

@@ -97,16 +97,12 @@ class _StableWebSocketService extends ws.WebSocketService {
     countedCron = _ListenCountingStream<ws.CronNotificationMessage>(
       super.cronNotificationStream,
     );
-    countedMcp = _ListenCountingStream<ws.McpConfirmRequest>(
-      super.mcpConfirmStream,
-    );
   }
 
   late final _ListenCountingStream<ws.OsiaMessage> countedMessages;
   late final _ListenCountingStream<ws.ConvStreamEvent>
   countedConversationStream;
   late final _ListenCountingStream<ws.CronNotificationMessage> countedCron;
-  late final _ListenCountingStream<ws.McpConfirmRequest> countedMcp;
 
   final Object socketIdentity = Object();
   int socketGeneration = 7;
@@ -119,7 +115,9 @@ class _StableWebSocketService extends ws.WebSocketService {
   int mcpStatusRequests = 0;
   final List<String> ensureReasons = <String>[];
   final List<(String, String)> sentTurns = <(String, String)>[];
-  final List<(String, bool)> mcpResponses = <(String, bool)>[];
+  final List<(String, Object?)> settingChanges = <(String, Object?)>[];
+  final List<String> deleteRequests = <String>[];
+  final List<(int, String)> bulkDeleteRequests = <(int, String)>[];
 
   @override
   ws.ConnectionState get state => ws.ConnectionState.connected;
@@ -132,9 +130,6 @@ class _StableWebSocketService extends ws.WebSocketService {
 
   @override
   Stream<ws.CronNotificationMessage> get cronNotificationStream => countedCron;
-
-  @override
-  Stream<ws.McpConfirmRequest> get mcpConfirmStream => countedMcp;
 
   @override
   void connect() {
@@ -189,6 +184,11 @@ class _StableWebSocketService extends ws.WebSocketService {
   }
 
   @override
+  void sendSetSetting(String key, Object? value) {
+    settingChanges.add((key, value));
+  }
+
+  @override
   void sendMcpStatus([String? id]) {
     mcpStatusRequests++;
   }
@@ -197,8 +197,18 @@ class _StableWebSocketService extends ws.WebSocketService {
   void sendLoadConversation(String id) {}
 
   @override
-  void sendMcpConfirmResponse(String id, bool approved) {
-    mcpResponses.add((id, approved));
+  void sendDeleteConversation(String id) {
+    deleteRequests.add(id);
+  }
+
+  @override
+  String sendBulkDeleteUngroupedConversations({
+    required int expectedCount,
+    String? operationId,
+  }) {
+    final operation = operationId ?? 'fake-bulk-delete';
+    bulkDeleteRequests.add((expectedCount, operation));
+    return operation;
   }
 }
 
@@ -275,30 +285,6 @@ Map<String, dynamic> _canonicalTurnFrame({
     if (recovered) 'recovered': true,
   };
 }
-
-Map<String, dynamic> _correlatedMcpFrame({
-  required String id,
-  required String server,
-  required String tool,
-  required String summary,
-  required String conversationId,
-  required String requestId,
-  required String turnId,
-}) => <String, dynamic>{
-  'type': 'mcp_confirm_request',
-  'id': id,
-  'server': server,
-  'tool': tool,
-  'summary': summary,
-  'conversation_id': conversationId,
-  'request_id': requestId,
-  'client_request_id': requestId,
-  'turn_id': turnId,
-  'run_id': 'run-$turnId',
-  'provider_id': 'provider-test',
-  'model_id': 'model-test',
-  'effective_reasoning': 'medium',
-};
 
 Future<_Harness> _pumpChat(
   WidgetTester tester, {
@@ -389,6 +375,50 @@ Future<void> _disposeChatHarness(WidgetTester tester, _Harness harness) async {
   harness.language.dispose();
 }
 
+void _emitConversationList(
+  _StableWebSocketService service,
+  List<(String, String)> items, {
+  int revision = 1,
+  String operationId = '',
+  List<Map<String, dynamic>> folders = const <Map<String, dynamic>>[],
+  Map<String, String> folderIds = const <String, String>{},
+}) {
+  service.handleIncomingFrameForTest(<String, dynamic>{
+    'type': 'conversations',
+    'version': 2,
+    'snapshot_revision': revision,
+    'operation_id': operationId,
+    'folders': folders,
+    'items': [
+      for (final (id, title) in items)
+        <String, dynamic>{
+          'id': id,
+          'title': title,
+          'updated_at': '2026-10-03T10:00:00Z',
+          'folder_id': folderIds[id],
+        },
+    ],
+  });
+}
+
+Future<void> _openDrawer(WidgetTester tester) async {
+  await tester.tap(find.byIcon(Icons.menu_rounded));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _confirmSingleDelete(
+  WidgetTester tester,
+  String conversationId,
+) async {
+  await tester.longPress(find.byKey(ValueKey('conv_$conversationId')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Delete').last);
+  await tester.pumpAndSettle();
+  expect(find.text('Delete conversation?'), findsOneWidget);
+  await tester.tap(find.text('Delete').last);
+  await tester.pumpAndSettle();
+}
+
 Future<void> _openSettings(WidgetTester tester) async {
   await tester.tap(find.byIcon(Icons.settings_rounded));
   await tester.pump();
@@ -423,7 +453,6 @@ void main() {
         service.countedMessages.activeCount,
         service.countedConversationStream.activeCount,
         service.countedCron.activeCount,
-        service.countedMcp.activeCount,
       ];
       final configRequests = service.configRequests;
       final modelRequests = service.modelRequests;
@@ -465,22 +494,6 @@ void main() {
       expect(find.textContaining('Navigation cron'), findsOneWidget);
 
       service.handleIncomingFrameForTest(
-        _correlatedMcpFrame(
-          id: 'confirm-nav',
-          server: 'calendar',
-          tool: 'create_event',
-          summary: 'title',
-          conversationId: 'conv-nav',
-          requestId: requestId,
-          turnId: 'turn-nav',
-        ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(find.textContaining('calendar'), findsNothing);
-      expect(service.mcpResponses, <(String, bool)>[('confirm-nav', false)]);
-
-      service.handleIncomingFrameForTest(
         _canonicalTurnFrame(
           type: 'response_chunk',
           conversationId: 'conv-nav',
@@ -494,27 +507,6 @@ void main() {
       await tester.pump(const Duration(milliseconds: 150));
 
       expect(find.textContaining('stream survives navigation'), findsOneWidget);
-      service.handleIncomingFrameForTest(
-        _correlatedMcpFrame(
-          id: 'confirm-nav-approve',
-          server: 'gmail',
-          tool: 'gmail_create_draft',
-          summary: 'Create one temporary draft',
-          conversationId: 'conv-nav',
-          requestId: requestId,
-          turnId: 'turn-nav',
-        ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(find.textContaining('gmail'), findsOneWidget);
-      await tester.tap(find.text('Approve'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(service.mcpResponses, <(String, bool)>[
-        ('confirm-nav', false),
-        ('confirm-nav-approve', true),
-      ]);
       expect(identical(service.socketIdentity, socket), isTrue);
       expect(service.socketGeneration, generation);
       expect(service.connectCalls, 0);
@@ -525,7 +517,6 @@ void main() {
         service.countedMessages.activeCount,
         service.countedConversationStream.activeCount,
         service.countedCron.activeCount,
-        service.countedMcp.activeCount,
       ], listenerCounts);
 
       await tester.pumpWidget(const SizedBox());
@@ -535,6 +526,158 @@ void main() {
     },
   );
 
+  testWidgets('single delete is optimistic, confirmed, and not resurrected', (
+    tester,
+  ) async {
+    final harness = await _pumpChat(tester);
+    await _openDrawer(tester);
+    await _confirmSingleDelete(tester, 'conv-nav');
+
+    expect(harness.service.deleteRequests, <String>['conv-nav']);
+    expect(find.byKey(const ValueKey('conv_conv-nav')), findsNothing);
+    expect(find.text('No conversations yet'), findsOneWidget);
+
+    harness.service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'conversation_deleted',
+      'id': 'conv-nav',
+      'success': true,
+    });
+    await tester.pump();
+    _emitConversationList(harness.service, <(String, String)>[
+      ("conv-nav", "Navigation test"),
+    ], revision: 1);
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('conv_conv-nav')), findsNothing);
+    expect(find.text('OSIA'), findsOneWidget);
+    await _disposeChatHarness(tester, harness);
+  });
+
+  testWidgets('single delete failure restores row, order, and active chat', (
+    tester,
+  ) async {
+    final harness = await _pumpChat(tester);
+    _emitConversationList(harness.service, <(String, String)>[
+      ("conv-nav", "Navigation test"),
+      ("conv-second", "Second chat"),
+    ]);
+    await tester.pump();
+    await _openDrawer(tester);
+    await _confirmSingleDelete(tester, 'conv-nav');
+    expect(find.byKey(const ValueKey('conv_conv-nav')), findsNothing);
+
+    harness.service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'conversation_deleted',
+      'id': 'conv-nav',
+      'success': false,
+      'error': 'conversation_busy',
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(find.byKey(const ValueKey('conv_conv-nav')), findsOneWidget);
+    expect(find.byKey(const ValueKey('conv_conv-second')), findsOneWidget);
+    expect(find.text('Navigation test'), findsWidgets);
+    expect(
+      find.text('The conversation could not be deleted. Please try again.'),
+      findsOneWidget,
+    );
+    ScaffoldMessenger.of(
+      tester.element(find.byType(ChatScreen)),
+    ).clearSnackBars();
+    await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
+    await _disposeChatHarness(tester, harness);
+  });
+
+  testWidgets(
+    'non-selected delete keeps chat stable and PC list sync applies',
+    (tester) async {
+      final harness = await _pumpChat(tester);
+      _emitConversationList(harness.service, <(String, String)>[
+        ("conv-nav", "Navigation test"),
+        ("conv-second", "Second chat"),
+      ]);
+      await tester.pump();
+      await _openDrawer(tester);
+      await _confirmSingleDelete(tester, 'conv-second');
+      expect(find.byKey(const ValueKey('conv-second')), findsNothing);
+      expect(find.text('Navigation test'), findsWidgets);
+
+      harness.service.handleIncomingFrameForTest(<String, dynamic>{
+        'type': 'conversation_deleted',
+        'id': 'conv-second',
+        'success': true,
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Navigation test'), findsWidgets);
+
+      // A canonical list update from Desktop removes the selected conversation
+      // on Mobile through the existing synchronization path.
+      _emitConversationList(
+        harness.service,
+        const <(String, String)>[],
+        revision: 2,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('conv_conv-nav')), findsNothing);
+      expect(find.text('OSIA'), findsOneWidget);
+      await _disposeChatHarness(tester, harness);
+    },
+  );
+
+  testWidgets('delete all hides ungrouped rows and rolls back in order', (
+    tester,
+  ) async {
+    final harness = await _pumpChat(tester);
+    _emitConversationList(
+      harness.service,
+      <(String, String)>[
+        ("conv-nav", "Navigation test"),
+        ("conv-second", "Second chat"),
+        ("conv-project", "Project chat"),
+      ],
+      folders: <Map<String, dynamic>>[
+        <String, dynamic>{"id": "folder-1", "name": "Project", "order": 0},
+      ],
+      folderIds: const <String, String>{"conv-project": "folder-1"},
+    );
+    await tester.pump();
+    await _openDrawer(tester);
+    await tester.tap(find.text('⋯'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete all conversations').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'DELETE 2');
+    await tester.pump();
+    await tester.tap(find.text('Delete').last);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('conv_conv-nav')), findsNothing);
+    expect(find.byKey(const ValueKey('conv_conv-second')), findsNothing);
+    expect(find.byKey(const ValueKey('conv_conv-project')), findsOneWidget);
+    expect(harness.service.bulkDeleteRequests.single.$1, 2);
+
+    final operationId = harness.service.bulkDeleteRequests.single.$2;
+    harness.service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'conversations_bulk_deleted',
+      'operation_id': operationId,
+      'success': false,
+      'error': 'snapshot_changed',
+      'deleted_ids': <String>[],
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(find.byKey(const ValueKey('conv_conv-nav')), findsOneWidget);
+    expect(find.byKey(const ValueKey('conv_conv-second')), findsOneWidget);
+    expect(find.byKey(const ValueKey('conv_conv-project')), findsOneWidget);
+    ScaffoldMessenger.of(
+      tester.element(find.byType(ChatScreen)),
+    ).clearSnackBars();
+    await tester.pumpAndSettle();
+    await _disposeChatHarness(tester, harness);
+  });
   testWidgets('50 Settings round-trips keep one socket and one listener set', (
     tester,
   ) async {
@@ -547,7 +690,6 @@ void main() {
       service.countedMessages.activeCount,
       service.countedConversationStream.activeCount,
       service.countedCron.activeCount,
-      service.countedMcp.activeCount,
     ];
 
     for (var i = 0; i < 50; i++) {
@@ -575,7 +717,6 @@ void main() {
       service.countedMessages.activeCount,
       service.countedConversationStream.activeCount,
       service.countedCron.activeCount,
-      service.countedMcp.activeCount,
     ], listenerCounts);
 
     // Repeated route disposal exposes an existing PressableScale test-only
@@ -611,7 +752,6 @@ void main() {
       service.countedMessages.activeCount,
       service.countedConversationStream.activeCount,
       service.countedCron.activeCount,
-      service.countedMcp.activeCount,
     ];
 
     await tester.enterText(find.byType(TextField), 'coalesced response');
@@ -719,9 +859,8 @@ void main() {
         service.countedMessages.activeCount,
         service.countedConversationStream.activeCount,
         service.countedCron.activeCount,
-        service.countedMcp.activeCount,
       ],
-      <int>[0, 0, 0, 0],
+      <int>[0, 0, 0],
     );
     expect(listenerCounts, everyElement(1));
     harness.theme.dispose();
@@ -925,115 +1064,25 @@ void main() {
     },
   );
 
-  testWidgets('correlated inline permissions remain distinct and answer once', (
+  testWidgets('Chat follows PC theme updates from config snapshots', (
     tester,
   ) async {
     final harness = await _pumpChat(tester);
-    await tester.enterText(find.byType(TextField), 'permission turn');
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-    await tester.pump();
-    final requestId = harness.service.sentTurns.single.$2;
-    harness.service.handleIncomingFrameForTest(
-      _canonicalTurnFrame(
-        type: 'turn_accepted',
-        conversationId: 'conv-nav',
-        requestId: requestId,
-        turnId: 'turn-permission-queue',
-      ),
-    );
-    harness.service.handleIncomingFrameForTest(
-      _correlatedMcpFrame(
-        id: 'confirm-a',
-        server: 'calendar',
-        tool: 'create_event',
-        summary: 'First action',
-        conversationId: 'conv-nav',
-        requestId: requestId,
-        turnId: 'turn-permission-queue',
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    harness.service.handleIncomingFrameForTest(
-      _correlatedMcpFrame(
-        id: 'confirm-b',
-        server: 'gmail',
-        tool: 'gmail_create_draft',
-        summary: 'Second action',
-        conversationId: 'conv-nav',
-        requestId: requestId,
-        turnId: 'turn-permission-queue',
-      ),
-    );
-    await tester.pump();
+    final service = harness.service;
 
-    expect(find.textContaining('calendar'), findsOneWidget);
-    expect(find.textContaining('gmail'), findsOneWidget);
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(const ValueKey('permission_confirm-a')),
-        matching: find.text('Approve'),
-      ),
-    );
+    service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'config',
+      'config': <String, dynamic>{'ui_theme': 'amber'},
+    });
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.textContaining('gmail'), findsOneWidget);
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(const ValueKey('permission_confirm-b')),
-        matching: find.text('Decline'),
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(harness.service.mcpResponses, <(String, bool)>[
-      ('confirm-a', true),
-      ('confirm-b', false),
-    ]);
+    expect(harness.theme.palette.key, 'amber');
 
-    await _disposeChatHarness(tester, harness);
-  });
-
-  testWidgets('reprojected permission id is presented and answered once', (
-    tester,
-  ) async {
-    final harness = await _pumpChat(tester);
-    await tester.enterText(find.byType(TextField), 'reproject permission');
+    service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'config',
+      'config': <String, dynamic>{'ui_theme': 'emerald'},
+    });
     await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-    await tester.pump();
-    final requestId = harness.service.sentTurns.single.$2;
-    harness.service.handleIncomingFrameForTest(
-      _canonicalTurnFrame(
-        type: 'turn_accepted',
-        conversationId: 'conv-nav',
-        requestId: requestId,
-        turnId: 'turn-permission-reprojected',
-      ),
-    );
-    final frame = _correlatedMcpFrame(
-      id: 'confirm-reprojected',
-      server: 'calendar',
-      tool: 'create_event',
-      summary: 'Reprojected action',
-      conversationId: 'conv-nav',
-      requestId: requestId,
-      turnId: 'turn-permission-reprojected',
-    );
-    harness.service.handleIncomingFrameForTest(frame);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    harness.service.handleIncomingFrameForTest(frame);
-    await tester.pump();
-    await tester.tap(find.text('Approve'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-
-    expect(harness.service.mcpResponses, <(String, bool)>[
-      ('confirm-reprojected', true),
-    ]);
-    expect(find.text('Approve'), findsNothing);
+    expect(harness.theme.palette.key, 'emerald');
 
     await _disposeChatHarness(tester, harness);
   });

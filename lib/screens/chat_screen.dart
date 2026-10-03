@@ -130,7 +130,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
+class _ChatScreenState extends State<ChatScreen> {
   // Services
   late ws.WebSocketService _wsService;
   final AudioService _audioService = AudioService();
@@ -170,12 +170,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   StreamSubscription? _newChatSub;
   StreamSubscription? _cronNotificationSub;
   StreamSubscription? _configSub;
-  StreamSubscription? _mcpConfirmSub;
   StreamSubscription? _busySub;
   StreamSubscription? _attachmentProtocolSub;
   StreamSubscription? _documentProgressSub;
-  StreamSubscription? _autonomousSub;
-  ws.AutonomousProgressMessage? _legacyRun;
+  StreamSubscription<ws.BrowserProgressMessage>? _browserProgressSub;
+  ws.BrowserProgressMessage? _browserProgress;
   ExecutionTraceSnapshot? _liveExecutionTrace;
   String? _connError;
   final List<String> _abandonedAudioRequestIds = <String>[];
@@ -201,6 +200,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String? _projectDeleteOperationId;
   String? _bulkDeleteOperationId;
   int? _bulkDeleteExpectedCount;
+  _PendingConversationDeletion? _pendingBulkDeletion;
+  final Map<String, _PendingConversationDeletion>
+  _pendingConversationDeletions = <String, _PendingConversationDeletion>{};
+  final Set<String> _confirmedDeletedConversationIds = <String>{};
+  int _conversationSelectionEpoch = 0;
   String? _activeConversationId;
   String? _activeConversationTitle;
   // The conversation whose history we've asked the server for and are still
@@ -355,7 +359,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _slashPaletteController.addListener(_onSlashPaletteChanged);
     _notificationService = OsiaNotificationService(storage: widget.storage);
     _pendingHandoff = widget.handoff;
@@ -454,8 +457,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _connSub = _wsService.connectionStream.listen((state) {
       if (state != ws.ConnectionState.connected) {
         _attachmentCancellation?.cancel();
-        _mcpConfirmQueue.clear();
-        _mcpConfirmPendingIds.clear();
+        for (final deletion in _pendingConversationDeletions.values) {
+          deletion.disconnected = true;
+        }
       }
       if (mounted) {
         setState(() {
@@ -469,9 +473,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             _wsService.sendGetModels();
             // Pull config too, so we know whether the AI hierarchy is on.
             _wsService.sendGetConfig();
-            // Legacy durable runs may still exist on the PC. They are surfaced
-            // read-only/controllable inside Chat; this never starts a new run.
-            _wsService.sendGetAutonomousStatus();
             final pendingProjectCreate = _projectCreateOperationId;
             final pendingProjectName = _projectCreateName;
             if (pendingProjectCreate != null && pendingProjectName != null) {
@@ -551,14 +552,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _documentProgressSub = _wsService.documentProgressStream.listen(
       _onDocumentProgress,
     );
-    _autonomousSub = _wsService.autonomousStream.listen((progress) {
-      if (mounted) setState(() => _legacyRun = progress);
+    _browserProgress = _wsService.browserProgress;
+    _browserProgressSub = _wsService.browserProgressStream.listen((progress) {
+      if (mounted) setState(() => _browserProgress = progress);
     });
 
     // AI-hierarchy state arrives on its own config channel (kept off the
     // sealed-message switch). Track it so the model selector can note when
     // the chosen model is overridden by the configured chain.
     _configSub = _wsService.configStream.listen((cfg) {
+      final canonicalTheme = cfg.settings['ui_theme']?.toString();
+      if (canonicalTheme != null && canonicalTheme.isNotEmpty) {
+        widget.themeController.setPaletteByKey(canonicalTheme);
+        unawaited(widget.storage.setThemeKey(canonicalTheme));
+      }
       if (mounted) {
         setState(() {
           _aiHierarchyEnabled = cfg.aiHierarchyEnabled;
@@ -577,11 +584,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _cronNotificationSub = _wsService.cronNotificationStream.listen(
       _onCronNotification,
     );
-
-    // WOR-44 Phase 5: write-tool confirmation requests (kept off the sealed
-    // message switch). The server blocks the agent until we answer; the handler
-    // serializes requests and guarantees exactly one response per request.
-    _mcpConfirmSub = _wsService.mcpConfirmStream.listen(_onMcpConfirmRequest);
 
     _errSub = _wsService.errorStream.listen((err) {
       if (mounted) {
@@ -613,7 +615,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _connError = null;
       _wsService.sendGetModels();
       _wsService.sendGetConfig();
-      _wsService.sendGetAutonomousStatus();
     } else {
       // Fresh connection (relaunch or a handed-over socket that dropped during
       // navigation).
@@ -658,6 +659,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   void _onMessage(ws.OsiaMessage msg) {
     switch (msg) {
+      case ws.ConversationDeletedMessage(
+        :final id,
+        :final success,
+        :final error,
+      ):
+        _resolveConversationDeletion(id, success: success, error: error);
+      case ws.ConversationsBulkDeletedMessage(
+        :final operationId,
+        :final success,
+        :final error,
+        :final deletedIds,
+      ):
+        _resolveBulkConversationDeletion(
+          operationId,
+          success: success,
+          error: error,
+          deletedIds: deletedIds,
+        );
       case ws.TranscriptMessage(
         :final content,
         :final conversationId,
@@ -1030,6 +1049,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ):
         if (snapshotRevision < _conversationFolderSnapshotRevision) break;
         _conversationFolderSnapshotRevision = snapshotRevision;
+        final projectedConversations = _reconcileConversationSnapshot(
+          conversations,
+          operationId: operationId,
+        );
         final orderedFolders = List<ws.ConversationFolder>.of(folders)
           ..sort((a, b) {
             final order = a.order.compareTo(b.order);
@@ -1045,18 +1068,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         if (_projectDeleteOperationId == operationId) {
           _projectDeleteOperationId = null;
         }
-        if (_bulkDeleteOperationId == operationId) {
+        if (_bulkDeleteOperationId == operationId &&
+            _pendingBulkDeletion == null) {
           _bulkDeleteOperationId = null;
           _bulkDeleteExpectedCount = null;
         }
         final activeId = _activeConversationId;
         final active = canonicalConversationForActiveId(
-          conversations,
+          projectedConversations,
           activeId,
         );
         final activeWasDeleted = activeId != null && active == null;
         if (activeWasDeleted) {
-          _denyAllMcpConfirmRequests();
           _canonicalHistory.forget(activeId);
           _cancelPendingConvLoad();
           _cancelFirstTokenTimer();
@@ -1067,7 +1090,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _clearActiveTurnProjection();
         }
         setState(() {
-          _conversations = conversations;
+          _conversations = projectedConversations;
           _conversationFolders = orderedFolders;
           if (activeWasDeleted) {
             _entries.clear();
@@ -1085,6 +1108,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         :final title,
         :final operationId,
       ):
+        if (id != null && _isConversationDeletionPending(id)) return;
         // Defensive mirror of the conversation_history guard below: an inbound
         // active_conversation must never silently repoint the view off the
         // conversation the user is on. Adopt it only when nothing is displayed
@@ -1126,6 +1150,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _optimisticUserNoId = null;
         }
       case ws.ConversationHistoryMessage(:final id, :final messages):
+        if (id != null && _isConversationDeletionPending(id)) break;
         // Capture the in-flight requested-load id BEFORE anything clears it: a
         // late/deferred history frame for a DIFFERENT conversation must not
         // cancel a load the user is still waiting on (part of the WOR-53/WOR-75
@@ -1913,6 +1938,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   void _onConvStream(ws.ConvStreamEvent event) {
     if (!mounted) return;
+    if (_isConversationDeletionPending(event.conversationId)) return;
     if (ws.kOsiaDebugPlaceholder && (event.done || event.error)) {
       debugPrint(
         '[OSIA WOR-75] _onConvStream TERMINAL: convId='
@@ -2346,8 +2372,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       );
       return;
     }
+    _conversationSelectionEpoch++;
     if (conv.id != _activeConversationId) {
-      _denyAllMcpConfirmRequests();
       _stopQueuedAudio();
     }
     if (conv.id != _activeConversationId && _pendingAttachments.isNotEmpty) {
@@ -2549,7 +2575,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       );
       return;
     }
-    _denyAllMcpConfirmRequests();
+    _conversationSelectionEpoch++;
     _abandonQueuedAudio();
     if (_pendingAttachments.isNotEmpty) {
       unawaited(_clearPendingAttachments());
@@ -2610,6 +2636,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       );
       return;
     }
+    _conversationSelectionEpoch++;
     _projectNewChatOperationId = _wsService.sendNewConversationInProject(
       folder.id,
     );
@@ -2624,7 +2651,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// clearing those methods perform.
   void _onNewChat() {
     if (!mounted) return;
-    _denyAllMcpConfirmRequests();
+    _conversationSelectionEpoch++;
     _abandonQueuedAudio();
     _clearAttachmentsWhenIdle = _attachmentBusy;
     _attachmentCancellation?.cancel();
@@ -2667,6 +2694,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _deleteConversation(ws.Conversation conv) async {
     final palette = OsiaTheme.of(context);
     final strings = OsiaL10n.of(context);
+    if (_bulkDeleteOperationId != null ||
+        _pendingConversationDeletions.isNotEmpty) {
+      _showConversationDeleteInProgress(strings);
+      return;
+    }
+    if (_wsService.isConversationBusy(conv.id)) {
+      _showConversationDeleteFailure(strings);
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -2690,42 +2726,273 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (!mounted || confirmed != true) return;
 
-    _wsService.sendDeleteConversation(conv.id);
-    _canonicalHistory.forget(conv.id);
-    if (_pendingConvLoadId == conv.id) _cancelPendingConvLoad();
-    // Feature 1: the conversation is gone — drop its optimistic user message.
-    _optimisticUser.remove(conv.id);
-    final deletingActive = _activeConversationId == conv.id;
-    if (deletingActive) {
-      _stopQueuedAudio();
-      _clearAttachmentsWhenIdle = _attachmentBusy;
-      _attachmentCancellation?.cancel();
-      if (_pendingAttachments.isNotEmpty) {
-        unawaited(_clearPendingAttachments());
-      }
-      // The emptied chat must not keep a recovery poll or a retry payload for a
-      // turn that belonged to the now-deleted conversation.
-      _cancelFirstTokenTimer();
-      _stopRecoveryPoll();
-      _stopTypewriter(); // Feature 2: no stale reveal into the emptied view.
-      _pendingTurn = null;
-      _clearActiveTurnProjection();
-    }
+    final snapshot = _captureConversationDeletion(<ws.Conversation>[conv]);
+    _pendingConversationDeletions[conv.id] = snapshot;
+    final deletingActive = snapshot.wasActive;
     setState(() {
       _conversations = _conversations.where((c) => c.id != conv.id).toList();
-      if (deletingActive) {
-        _entries.clear();
-        _liveExecutionTrace = null;
-        _thinking = false;
-        _noResponse = false;
-        _streamingIndex = null;
-        _resetTypeTarget();
-        _activeConversationId = null;
-        _activeConversationTitle = null;
+      if (deletingActive) _clearDeletedActiveConversationProjection();
+    });
+    if (deletingActive) {
+      _cancelPendingConvLoad();
+      _cancelFirstTokenTimer();
+      _stopRecoveryPoll();
+      _stopTypewriter();
+      _pendingTurn = null;
+      _clearActiveTurnProjection();
+      _stopQueuedAudio();
+    }
+    _wsService.sendDeleteConversation(conv.id);
+    snapshot.timeout = Timer(
+      const Duration(seconds: 8),
+      () => unawaited(_reconcileConversationDeletionTimeout(conv.id)),
+    );
+  }
+
+  void _clearDeletedActiveConversationProjection() {
+    _entries.clear();
+    _liveExecutionTrace = null;
+    _thinking = false;
+    _awaitingResponse = false;
+    _noResponse = false;
+    _streamingIndex = null;
+    _resetTypeTarget();
+    _activeConversationId = null;
+    _activeConversationTitle = null;
+  }
+
+  _PendingConversationDeletion _captureConversationDeletion(
+    List<ws.Conversation> affected,
+  ) {
+    final activeId = _activeConversationId;
+    final affectedIds = affected.map((item) => item.id).toSet();
+    return _PendingConversationDeletion(
+      originalConversations: List<ws.Conversation>.of(_conversations),
+      affectedIds: affectedIds,
+      wasActive: activeId != null && affectedIds.contains(activeId),
+      activeConversationId: activeId,
+      activeConversationTitle: _activeConversationTitle,
+      entries: List<_ChatEntry>.of(_entries),
+      thinking: _thinking,
+      awaitingResponse: _awaitingResponse,
+      noResponse: _noResponse,
+      streamingIndex: _streamingIndex,
+      pendingAttachments: List<PreparedAttachment>.of(_pendingAttachments),
+      wasPendingLoad: activeId != null && _pendingConvLoadId == activeId,
+      selectionEpoch: _conversationSelectionEpoch,
+    );
+  }
+
+  void _showConversationDeleteFailure(OsiaStrings strings) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(strings.conversationDeleteFailed)));
+  }
+
+  void _showConversationDeleteInProgress(OsiaStrings strings) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(strings.conversationDeleteInProgress)),
+      );
+  }
+
+  List<ws.Conversation> _restoreConversationDeletionProjection(
+    _PendingConversationDeletion deletion,
+  ) {
+    final currentById = <String, ws.Conversation>{
+      for (final conversation in _conversations) conversation.id: conversation,
+    };
+    final restored = <ws.Conversation>[];
+    for (final original in deletion.originalConversations) {
+      final current = currentById.remove(original.id);
+      if (current != null) {
+        restored.add(current);
+      } else if (deletion.affectedIds.contains(original.id)) {
+        restored.add(original);
+      }
+    }
+    for (final current in _conversations) {
+      if (currentById.remove(current.id) != null) restored.add(current);
+    }
+    return restored;
+  }
+
+  void _restoreConversationDeletion(_PendingConversationDeletion deletion) {
+    final restoreActive =
+        deletion.wasActive &&
+        deletion.activeConversationId != null &&
+        deletion.selectionEpoch == _conversationSelectionEpoch &&
+        _activeConversationId == null;
+    setState(() {
+      _conversations = _restoreConversationDeletionProjection(deletion);
+      if (restoreActive) {
+        _entries
+          ..clear()
+          ..addAll(deletion.entries);
+        _activeConversationId = deletion.activeConversationId;
+        _activeConversationTitle = deletion.activeConversationTitle;
+        _thinking = deletion.thinking;
+        _awaitingResponse = deletion.awaitingResponse;
+        _noResponse = deletion.noResponse;
+        _streamingIndex = deletion.streamingIndex;
       }
     });
+    if (restoreActive) {
+      final activeId = deletion.activeConversationId!;
+      if (_wsService.isConversationWorkActive(activeId) ||
+          _wsService.isPending(activeId)) {
+        _recoverActiveTurnProjection(activeId);
+        _startRecoveryPoll();
+      } else if (deletion.wasPendingLoad) {
+        _requestConversationContent(activeId);
+      }
+    }
+  }
+
+  void _discardDeletedConversationDraft(_PendingConversationDeletion deletion) {
+    if (!deletion.wasActive ||
+        deletion.selectionEpoch != _conversationSelectionEpoch ||
+        _activeConversationId != null ||
+        deletion.pendingAttachments.isEmpty) {
+      return;
+    }
+    final captured = deletion.pendingAttachments.toSet();
+    final removed = _pendingAttachments
+        .where(captured.contains)
+        .toList(growable: false);
+    if (removed.isEmpty) return;
+    setState(() {
+      _pendingAttachments.removeWhere(captured.contains);
+    });
+    for (final file in removed) {
+      unawaited(file.delete());
+    }
+  }
+
+  void _resolveConversationDeletion(
+    String id, {
+    required bool success,
+    String error = '',
+  }) {
+    final deletion = _pendingConversationDeletions.remove(id);
+    if (deletion == null) return;
+    deletion.timeout?.cancel();
+    final alreadyAbsent = error == 'conversation_not_found';
+    if (success || alreadyAbsent) {
+      _confirmedDeletedConversationIds.add(id);
+      _canonicalHistory.forget(id);
+      _optimisticUser.remove(id);
+      _discardDeletedConversationDraft(deletion);
+      return;
+    }
+    _restoreConversationDeletion(deletion);
+    _showConversationDeleteFailure(OsiaL10n.of(context));
+  }
+
+  void _resolveBulkConversationDeletion(
+    String operationId, {
+    required bool success,
+    required String error,
+    required List<String> deletedIds,
+  }) {
+    if (operationId.isEmpty || operationId != _bulkDeleteOperationId) return;
+    final deletion = _pendingBulkDeletion;
+    if (deletion == null) return;
+    if (success) {
+      final committedIds = deletedIds.isEmpty
+          ? deletion.affectedIds
+          : deletedIds.toSet();
+      _confirmedDeletedConversationIds.addAll(committedIds);
+      for (final id in committedIds) {
+        _canonicalHistory.forget(id);
+        _optimisticUser.remove(id);
+      }
+      _discardDeletedConversationDraft(deletion);
+    } else {
+      _restoreConversationDeletion(deletion);
+      _showConversationDeleteFailure(OsiaL10n.of(context));
+    }
+    setState(() {
+      _pendingBulkDeletion = null;
+      _bulkDeleteOperationId = null;
+      _bulkDeleteExpectedCount = null;
+    });
+  }
+
+  Future<void> _reconcileConversationDeletionTimeout(String id) async {
+    final deletion = _pendingConversationDeletions[id];
+    if (deletion == null) return;
+    if (_wsService.state != ws.ConnectionState.connected) {
+      deletion.disconnected = true;
+      return;
+    }
+    try {
+      final canonical = await _wsService.requestCanonicalConversationSnapshot();
+      if (!_pendingConversationDeletions.containsKey(id)) return;
+      final exists = canonical.conversations.any((item) => item.id == id);
+      _resolveConversationDeletion(
+        id,
+        success: !exists,
+        error: exists ? 'canonical_snapshot_still_contains_conversation' : '',
+      );
+    } on Object {
+      final pending = _pendingConversationDeletions[id];
+      if (pending != null) pending.disconnected = true;
+    }
+  }
+
+  bool _isConversationDeletionPending(String id) =>
+      _pendingConversationDeletions.containsKey(id) ||
+      _confirmedDeletedConversationIds.contains(id) ||
+      (_pendingBulkDeletion?.affectedIds.contains(id) ?? false);
+
+  List<ws.Conversation> _reconcileConversationSnapshot(
+    List<ws.Conversation> canonical, {
+    required String operationId,
+  }) {
+    final canonicalIds = canonical.map((item) => item.id).toSet();
+    for (final entry in _pendingConversationDeletions.entries.toList()) {
+      if (!entry.value.disconnected) continue;
+      final exists = canonicalIds.contains(entry.key);
+      _resolveConversationDeletion(
+        entry.key,
+        success: !exists,
+        error: exists ? 'reconnect_snapshot_contains_conversation' : '',
+      );
+    }
+    final bulk = _pendingBulkDeletion;
+    if (bulk != null &&
+        operationId.isNotEmpty &&
+        operationId == _bulkDeleteOperationId) {
+      final noneRemain = bulk.affectedIds.every(
+        (id) => !canonicalIds.contains(id),
+      );
+      final allRemain = bulk.affectedIds.every(canonicalIds.contains);
+      if (noneRemain || allRemain) {
+        _resolveBulkConversationDeletion(
+          operationId,
+          success: noneRemain,
+          error: noneRemain ? '' : 'snapshot_contains_conversations',
+          deletedIds: noneRemain ? bulk.affectedIds.toList() : const <String>[],
+        );
+      }
+    }
+    _confirmedDeletedConversationIds.removeWhere(
+      (id) => !canonicalIds.contains(id),
+    );
+    final hiddenIds = <String>{
+      ..._pendingConversationDeletions.keys,
+      ..._confirmedDeletedConversationIds,
+      ...?_pendingBulkDeletion?.affectedIds,
+    };
+    return canonical
+        .where((conversation) => !hiddenIds.contains(conversation.id))
+        .toList(growable: false);
   }
 
   /// Long-press action sheet for a conversation row (WOR-76): an on-brand
@@ -2974,68 +3241,59 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _confirmBulkDeleteUngrouped() async {
+    final strings = OsiaL10n.of(context);
+    if (_bulkDeleteOperationId != null ||
+        _pendingConversationDeletions.isNotEmpty) {
+      _showConversationDeleteInProgress(strings);
+      return;
+    }
     final ungrouped = _conversations
         .where((conversation) => conversation.folderId == null)
         .toList(growable: false);
-    final strings = OsiaL10n.of(context);
     if (ungrouped.isEmpty) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(strings.noUngroupedConversations)));
       return;
     }
-    final required = 'DELETE ${ungrouped.length}';
-    final controller = TextEditingController();
-    try {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          title: Text(strings.deleteAllConversations),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(strings.bulkDeleteWarning(ungrouped.length)),
-              const SizedBox(height: 14),
-              Text(strings.typeToConfirm(required)),
-              const SizedBox(height: 8),
-              TextField(
-                controller: controller,
-                autofocus: true,
-                decoration: InputDecoration(hintText: required),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text(strings.cancel),
-            ),
-            ValueListenableBuilder<TextEditingValue>(
-              valueListenable: controller,
-              builder: (_, value, _) => TextButton(
-                onPressed: value.text.trim() == required
-                    ? () => Navigator.of(ctx).pop(true)
-                    : null,
-                child: Text(strings.delete),
-              ),
-            ),
-          ],
-        ),
-      );
-      if (confirmed == true && _bulkDeleteOperationId == null) {
-        final op = _wsService.sendBulkDeleteUngroupedConversations(
-          expectedCount: ungrouped.length,
-        );
-        setState(() {
-          _bulkDeleteOperationId = op;
-          _bulkDeleteExpectedCount = ungrouped.length;
-        });
-      }
-    } finally {
-      controller.dispose();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _BulkDeleteConfirmationDialog(
+        count: ungrouped.length,
+        strings: strings,
+      ),
+    );
+    if (!mounted || confirmed != true || _bulkDeleteOperationId != null) {
+      return;
     }
+    final operationId =
+        'mobile_bulk_${ws.WebSocketService.newClientRequestId()}';
+    final snapshot = _captureConversationDeletion(ungrouped);
+    _pendingBulkDeletion = snapshot;
+    setState(() {
+      _bulkDeleteOperationId = operationId;
+      _bulkDeleteExpectedCount = ungrouped.length;
+      _conversations = _conversations
+          .where((conversation) => conversation.folderId != null)
+          .toList();
+      if (snapshot.wasActive) {
+        _clearDeletedActiveConversationProjection();
+      }
+    });
+    if (snapshot.wasActive) {
+      _cancelPendingConvLoad();
+      _cancelFirstTokenTimer();
+      _stopRecoveryPoll();
+      _stopTypewriter();
+      _pendingTurn = null;
+      _clearActiveTurnProjection();
+      _stopQueuedAudio();
+    }
+    _wsService.sendBulkDeleteUngroupedConversations(
+      expectedCount: ungrouped.length,
+      operationId: operationId,
+    );
   }
 
   Future<void> _moveConversationToFolder(ws.Conversation conv) async {
@@ -3375,27 +3633,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   bool get _activeWork => _activeChatWork;
 
-  bool get _showLegacyRun {
-    final progress = _legacyRun;
-    final runId = progress?.runId ?? '';
-    if (progress == null || runId.isEmpty || runId == 'idle') return false;
-    if (progress.legacyCompatibility == false) return false;
-    return progress.event != 'idle';
-  }
-
-  void _resumeLegacyRun() {
-    final progress = _legacyRun;
-    if (!_showLegacyRun || progress == null) return;
-    final sent = _wsService.requestLegacyAutonomousResume(progress);
-    if (sent && mounted) setState(() {});
-  }
-
-  void _stopLegacyRun() {
-    final progress = _legacyRun;
-    if (!_showLegacyRun || progress == null) return;
-    final sent = _wsService.requestLegacyAutonomousCancellation(progress);
-    if (sent && mounted) setState(() {});
-  }
+  bool get _showBrowserProgress =>
+      _browserProgress != null && _browserProgress!.phase != 'snapshot';
 
   bool get _stopRequested {
     final requestId =
@@ -3672,16 +3911,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       );
       return;
     }
-    if (selection.type == SlashPaletteSelectionType.browser) {
-      _applySlashDirectives(
-        _slashDirectives.copyWith(
-          browserBackendOverride: selection.value as String,
-        ),
-        'browser',
-      );
-      return;
-    }
-
     switch (selection.handlerContract) {
       case 'set_current_web_requirement_v1':
         _applySlashDirectives(
@@ -3698,8 +3927,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _showSlashReasoning();
       case 'select_conversation_reference_v1':
         _showSlashConversations();
-      case 'select_browser_backend_v1':
-        _showSlashBrowserBackends();
       case 'show_safe_tools_v1':
       case 'show_safe_status_v1':
       case 'show_available_help_v1':
@@ -3801,29 +4028,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _slashPaletteController.show(rows, _onSlashSelection);
   }
 
-  void _showSlashBrowserBackends() {
-    final rows = ['personal', 'isolated']
-        .map(
-          (backend) => SlashPaletteSelection(
-            type: SlashPaletteSelectionType.browser,
-            id: 'browser.$backend',
-            title: backend == 'personal'
-                ? (_slashLocale.startsWith('fr')
-                      ? 'Navigateur personnel'
-                      : 'Personal Browser')
-                : (_slashLocale.startsWith('fr')
-                      ? 'Profil isolé OSIA'
-                      : 'Isolated OSIA browser'),
-            description: _slashLocale.startsWith('fr')
-                ? 'Ce tour uniquement'
-                : 'This turn only',
-            value: backend,
-          ),
-        )
-        .toList(growable: false);
-    _slashPaletteController.show(rows, _onSlashSelection);
-  }
-
   void _applySlashDirectives(SlashTurnDirectivesV1 directives, String alias) {
     try {
       directives.validateBounds();
@@ -3874,10 +4078,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (reasoning != null) {
       rows.add(ComposerDirective(id: 'reasoning', label: reasoning));
     }
-    final browser = _slashDirectives.browserBackendOverride;
-    if (browser != null) {
-      rows.add(ComposerDirective(id: 'browser', label: '/browser $browser'));
-    }
     return rows;
   }
 
@@ -3891,9 +4091,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         'conversation' => _slashDirectives.copyWith(conversationRefs: const []),
         'model' => _slashDirectives.copyWith(clearModelOverride: true),
         'reasoning' => _slashDirectives.copyWith(clearReasoningOverride: true),
-        'browser' => _slashDirectives.copyWith(
-          clearBrowserBackendOverride: true,
-        ),
         _ => _slashDirectives,
       };
     });
@@ -4034,9 +4231,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ? _slashCurrentModel
           : null;
       final families = _slashAvailability['capability_families'];
-      final permissionSnapshot = _wsService.permissionsLive
-          ? _wsService.permissionSnapshot
-          : null;
       lines.add('Surface: Mobile');
       lines.add(
         '${localeFr ? 'Routage' : 'Routing'}: '
@@ -4053,10 +4247,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       lines.add(
         '${localeFr ? 'Raisonnement' : 'Reasoning'}: '
         '${currentModel == null ? (localeFr ? 'indisponible' : 'unavailable') : _currentSlashReasoning}',
-      );
-      lines.add(
-        '${localeFr ? 'Autorisation' : 'Permission'}: '
-        '${permissionSnapshot == null ? (localeFr ? 'indisponible' : 'unavailable') : (permissionSnapshot.fullAccessActive ? 'Full' : 'Standard')}',
       );
       lines.add(
         '${localeFr ? 'Fournisseur prêt' : 'Provider ready'}: '
@@ -4335,12 +4525,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final idx = _streamingIndex;
       if (idx != null && idx >= 0 && idx < _entries.length) {
         _setTypeTarget(_entries[idx].content, fullyRevealed: true);
-      }
-      for (final request in List<ws.McpConfirmRequest>.of(_mcpConfirmQueue)) {
-        if (request.requestId == requestId ||
-            (request.requestId.isEmpty && projection?.runId.isEmpty == true)) {
-          _answerMcpConfirm(request, false);
-        }
       }
       setState(() {
         _awaitingResponse = false;
@@ -5206,159 +5390,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  // ── MCP write-tool confirmation (WOR-44 Phase 5) ─────────────────────────
-  //
-  // The server sends `mcp_confirm_request` when a *write* MCP tool is about to
-  // run on a mobile-initiated turn, and BLOCKS the agent until we answer with
-  // sendMcpConfirmResponse(id, approved). Timeout/final teardown denies; a
-  // transient reconnect may reproject the same device-bound request. Requests
-  // are serialized as inline Chat projections. Exactly one verdict is sent per
-  // id; reconnect reprojection reuses the remembered answer.
-
-  /// Confirmation requests awaiting an inline answer.
-  final List<ws.McpConfirmRequest> _mcpConfirmQueue = [];
-
-  /// IDs currently visible/queued and recently answered. Reprojection of the
-  /// same canonical request must never create a second prompt.
-  final Set<String> _mcpConfirmPendingIds = <String>{};
-  final Map<String, bool> _mcpConfirmAnswered = <String, bool>{};
-  final List<String> _mcpConfirmAnsweredOrder = <String>[];
-  bool _permissionAppForeground = true;
-  bool _permissionRouteCovered = false;
-
-  bool get _inlinePermissionSurfaceVisible =>
-      _permissionAppForeground && !_permissionRouteCovered;
-
-  void _onMcpConfirmRequest(ws.McpConfirmRequest req) {
-    if (!mounted) {
-      _wsService.sendMcpConfirmResponse(req.id, false);
-      return;
-    }
-    final priorAnswer = _mcpConfirmAnswered[req.id];
-    if (priorAnswer != null) {
-      // The server response is idempotent. Re-send the exact prior verdict so
-      // a reconnect cannot lose it, without asking the user twice.
-      _wsService.sendMcpConfirmResponse(req.id, priorAnswer);
-      return;
-    }
-    if (!_inlinePermissionSurfaceVisible) {
-      _rememberMcpConfirmAnswer(req.id, false);
-      _wsService.sendMcpConfirmResponse(req.id, false);
-      return;
-    }
-    if (req.isPcOnlyColossalDeletion) {
-      // This reinforced frame is informational and structurally incapable of
-      // granting authority. It intentionally has no Chat-turn correlation;
-      // showing its sanitized counts is safe while every response remains a
-      // denial and the destructive review stays exclusively on the PC.
-      if (!_mcpConfirmPendingIds.add(req.id)) return;
-      setState(() => _mcpConfirmQueue.add(req));
-      _scrollToBottomAnimated();
-      return;
-    }
-    final hasCorrelation =
-        req.conversationId.isNotEmpty ||
-        req.requestId.isNotEmpty ||
-        req.turnId.isNotEmpty ||
-        req.runId.isNotEmpty ||
-        req.providerId.isNotEmpty ||
-        req.modelId.isNotEmpty ||
-        req.effectiveReasoning.isNotEmpty;
-    final exactCorrelation =
-        req.conversationId.isNotEmpty &&
-        req.requestId.isNotEmpty &&
-        req.turnId.isNotEmpty &&
-        req.runId.isNotEmpty &&
-        req.providerId.isNotEmpty &&
-        req.modelId.isNotEmpty;
-    final correlated = hasCorrelation
-        ? exactCorrelation &&
-              _activeChatWork &&
-              _adoptActiveTurnIfNeeded(
-                conversationId: req.conversationId,
-                requestId: req.requestId,
-                turnId: req.turnId,
-                runId: req.runId,
-                providerId: req.providerId,
-                modelId: req.modelId,
-                effectiveReasoning: req.effectiveReasoning,
-              ) &&
-              _isFrameForCurrentTurn(
-                conversationId: req.conversationId,
-                clientRequestId: req.requestId,
-                turnId: req.turnId,
-                runId: req.runId,
-              ) &&
-              _bindActiveTurn(
-                conversationId: req.conversationId,
-                requestId: req.requestId,
-                turnId: req.turnId,
-                runId: req.runId,
-                providerId: req.providerId,
-                modelId: req.modelId,
-                effectiveReasoning: req.effectiveReasoning,
-                requireExactMetadata: true,
-              )
-        : _activeTurn != null &&
-              !_activeTurn!.requiresCanonicalIdentity &&
-              _activeChatWork;
-    if (!correlated) {
-      _rememberMcpConfirmAnswer(req.id, false);
-      _wsService.sendMcpConfirmResponse(req.id, false);
-      return;
-    }
-    if (!_mcpConfirmPendingIds.add(req.id)) return;
-    setState(() => _mcpConfirmQueue.add(req));
-    _scrollToBottomAnimated();
-  }
-
-  void _rememberMcpConfirmAnswer(String id, bool approved) {
-    _mcpConfirmAnswered[id] = approved;
-    _mcpConfirmAnsweredOrder.add(id);
-    while (_mcpConfirmAnsweredOrder.length > 128) {
-      final expired = _mcpConfirmAnsweredOrder.removeAt(0);
-      _mcpConfirmAnswered.remove(expired);
-    }
-  }
-
-  void _answerMcpConfirm(ws.McpConfirmRequest req, bool approved) {
-    if (!_mcpConfirmPendingIds.contains(req.id)) return;
-    _mcpConfirmPendingIds.remove(req.id);
-    _rememberMcpConfirmAnswer(req.id, approved);
-    _wsService.sendMcpConfirmResponse(req.id, approved);
-    if (mounted) {
-      setState(() => _mcpConfirmQueue.removeWhere((item) => item.id == req.id));
-    }
-  }
-
-  void _denyAllMcpConfirmRequests() {
-    if (_mcpConfirmQueue.isEmpty) return;
-    final pending = List<ws.McpConfirmRequest>.of(_mcpConfirmQueue);
-    for (final request in pending) {
-      _mcpConfirmPendingIds.remove(request.id);
-      _rememberMcpConfirmAnswer(request.id, false);
-      _wsService.sendMcpConfirmResponse(request.id, false);
-    }
-    if (mounted) {
-      setState(_mcpConfirmQueue.clear);
-    } else {
-      _mcpConfirmQueue.clear();
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    final visible = state == AppLifecycleState.resumed;
-    _permissionAppForeground = visible;
-    if (!visible) _denyAllMcpConfirmRequests();
-  }
-
   /// Settings is pushed directly (not via a named route) so it can borrow
   /// the live WebSocket service for server-backed actions. Route navigation
   /// must not disturb that app-level connection or Chat's live subscriptions.
   Future<void> _openSettings() async {
-    _permissionRouteCovered = true;
-    _denyAllMcpConfirmRequests();
     await Navigator.of(context).push(
       slideFadeRoute(
         SettingsScreen(
@@ -5370,7 +5405,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
       ),
     );
-    _permissionRouteCovered = false;
     if (!mounted) return;
 
     // Auto-TTS is a Chat-local preference that Settings can change. Refresh it
@@ -5397,8 +5431,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _attachmentCancellation?.cancel();
+    for (final deletion in _pendingConversationDeletions.values) {
+      deletion.timeout?.cancel();
+    }
     for (final file in List<PreparedAttachment>.of(_pendingAttachments)) {
       unawaited(file.delete());
     }
@@ -5420,11 +5456,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _newChatSub?.cancel();
     _cronNotificationSub?.cancel();
     _configSub?.cancel();
-    _mcpConfirmSub?.cancel();
     _busySub?.cancel();
     _attachmentProtocolSub?.cancel();
     _documentProgressSub?.cancel();
-    _autonomousSub?.cancel();
+    _browserProgressSub?.cancel();
     widget.connectionLifecycle.detach(_wsService);
     _wsService.dispose();
     _audioService.dispose();
@@ -5516,27 +5551,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ),
           Column(
             children: [
-              if (_showLegacyRun)
-                _LegacyRunProjection(
-                  progress: _legacyRun!,
-                  canResume:
-                      !_activeChatWork &&
-                      _wsService.canRequestLegacyAutonomousResume(_legacyRun!),
-                  canStop: _wsService.canRequestLegacyAutonomousCancellation(
-                    _legacyRun!,
-                  ),
-                  stopRequested: _wsService
-                      .isLegacyAutonomousCancellationRequested(_legacyRun!),
-                  onResume: _resumeLegacyRun,
-                  onStop: _stopLegacyRun,
+              if (_showBrowserProgress)
+                _BrowserProgressProjection(
+                  progress: _browserProgress!,
+                  live: _wsService.browserProgressLive,
                 ),
               Expanded(
                 child:
                     _entries.isEmpty &&
                         !_thinking &&
                         !_noResponse &&
-                        _liveExecutionTrace == null &&
-                        _mcpConfirmQueue.isEmpty
+                        _liveExecutionTrace == null
                     ? _buildEmptyState(palette, strings)
                     : ListView.builder(
                         controller: _scrollCtrl,
@@ -5555,9 +5580,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           listBottomPadding,
                         ),
                         itemCount:
-                            _entries.length +
-                            (showStatusTrailer ? 1 : 0) +
-                            _mcpConfirmQueue.length,
+                            _entries.length + (showStatusTrailer ? 1 : 0),
                         itemBuilder: (context, index) {
                           // Trailing slot: the pre-stream thinking indicator,
                           // or — after a 12s no-first-token timeout — the
@@ -5585,20 +5608,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 ? const ThinkingDisclosure()
                                 : _buildNoResponseTile(palette, strings);
                           }
-                          if (index >= _entries.length) {
-                            final permissionIndex =
-                                index -
-                                _entries.length -
-                                (showStatusTrailer ? 1 : 0);
-                            final request = _mcpConfirmQueue[permissionIndex];
-                            return _McpPermissionProjection(
-                              key: ValueKey('permission_${request.id}'),
-                              request: request,
-                              onApprove: () => _answerMcpConfirm(request, true),
-                              onDecline: () =>
-                                  _answerMcpConfirm(request, false),
-                            );
-                          }
                           final entry = _entries[index];
                           final isAssistant = !entry.isUser && !entry.isSystem;
                           return Column(
@@ -5613,7 +5622,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   ),
                                   snapshot: trace,
                                   collapsed: true,
-                                  active: entry.isStreaming && !trace.terminal,
+                                  active:
+                                      !entry.isStreaming &&
+                                      !trace.terminal &&
+                                      _activeChatWork,
+                                  finalStreaming: entry.isStreaming,
                                 ),
                               ChatBubble(
                                 // Stable key per slot so the bubble (and its
@@ -6254,205 +6267,167 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 }
 
-class _McpPermissionProjection extends StatelessWidget {
-  const _McpPermissionProjection({
-    super.key,
-    required this.request,
-    required this.onApprove,
-    required this.onDecline,
-  });
-
-  final ws.McpConfirmRequest request;
-  final VoidCallback onApprove;
-  final VoidCallback onDecline;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = OsiaTheme.of(context);
-    final strings = OsiaL10n.of(context);
-    final pcOnly = request.isPcOnlyColossalDeletion;
-    final detail = pcOnly
-        ? strings.colossalDeletionSafeCounts(
-            request.filesCount,
-            request.foldersCount,
-            request.totalBytes,
-            request.rootCount,
-          )
-        : request.summary.trim();
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: palette.surface.withValues(alpha: 0.78),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: palette.accent.withValues(alpha: 0.24)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.shield_outlined, size: 18, color: palette.accent),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  pcOnly
-                      ? strings.colossalDeletionPcReviewTitle
-                      : strings.mcpConfirmTitle(request.server, request.tool),
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 7),
-          Text(
-            pcOnly
-                ? strings.colossalDeletionPcReviewBody
-                : strings.mcpConfirmWriteWarning,
-            style: TextStyle(
-              color: palette.textMuted,
-              fontSize: 13,
-              height: 1.35,
-            ),
-          ),
-          if (detail.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            SelectionArea(
-              child: Text(
-                detail,
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 12.5,
-                  height: 1.35,
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: onDecline,
-                child: Text(
-                  pcOnly
-                      ? strings.colossalDeletionClose
-                      : strings.mcpConfirmDecline,
-                ),
-              ),
-              if (request.canApprove) ...[
-                const SizedBox(width: 6),
-                FilledButton(
-                  onPressed: onApprove,
-                  child: Text(strings.mcpConfirmApprove),
-                ),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Compact compatibility projection for a run that was created by an older
-/// client. It exposes only resume/stop and safe progress/final text; there is
-/// deliberately no objective editor, plan builder, model picker, or start path.
-class _LegacyRunProjection extends StatelessWidget {
-  const _LegacyRunProjection({
+/// Status-only projection for browser work executed by the PC.
+class _BrowserProgressProjection extends StatelessWidget {
+  const _BrowserProgressProjection({
     required this.progress,
-    required this.canResume,
-    required this.canStop,
-    required this.stopRequested,
-    required this.onResume,
-    required this.onStop,
+    required this.live,
   });
 
-  final ws.AutonomousProgressMessage progress;
-  final bool canResume;
-  final bool canStop;
-  final bool stopRequested;
-  final VoidCallback onResume;
-  final VoidCallback onStop;
+  final ws.BrowserProgressMessage progress;
+  final bool live;
 
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
-    final strings = OsiaL10n.of(context);
-    final finalAnswer = progress.finalAnswer?.trim() ?? '';
-    final detail = progress.terminal == true && finalAnswer.isNotEmpty
-        ? finalAnswer
-        : strings.legacyRunActive;
     return Container(
-      width: double.infinity,
+      key: const Key('chat-browser-progress'),
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 2),
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
-        color: palette.surface.withValues(alpha: 0.72),
+        color: palette.surface.withValues(alpha: 0.82),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: palette.border.withValues(alpha: 0.55)),
+        border: Border.all(color: palette.accent.withValues(alpha: 0.22)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.history_rounded, size: 18, color: palette.textMuted),
-          const SizedBox(width: 9),
+          Icon(Icons.language_rounded, size: 18, color: palette.accent),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  strings.legacyRunTitle,
+                  progress.safeProgressText,
                   style: TextStyle(
                     color: palette.textPrimary,
-                    fontSize: 13,
+                    fontSize: 13.5,
                     fontWeight: FontWeight.w600,
+                    height: 1.3,
                   ),
                 ),
-                const SizedBox(height: 2),
-                SelectionArea(
-                  child: Text(
-                    detail,
-                    maxLines: 3,
+                if (progress.safeSiteDisplay.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    progress.safeSiteDisplay,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.textMuted,
-                      fontSize: 12.5,
-                      height: 1.3,
-                    ),
+                    style: TextStyle(color: palette.textMuted, fontSize: 12),
                   ),
-                ),
+                ],
               ],
             ),
           ),
-          if (canResume)
-            TextButton(
-              onPressed: onResume,
-              child: Text(strings.legacyRunResume),
-            ),
-          if (canStop)
-            IconButton(
-              onPressed: stopRequested ? null : onStop,
-              icon: stopRequested
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 1.6),
-                    )
-                  : const Icon(Icons.stop_circle_outlined),
-              tooltip: strings.legacyRunStop,
-            ),
+          if (live) ...[
+            const SizedBox(width: 8),
+            Icon(Icons.circle, size: 7, color: palette.success),
+          ],
         ],
       ),
     );
   }
 }
 
-/// A single entry in the chat history.
+class _BulkDeleteConfirmationDialog extends StatefulWidget {
+  final int count;
+  final OsiaStrings strings;
+
+  const _BulkDeleteConfirmationDialog({
+    required this.count,
+    required this.strings,
+  });
+
+  @override
+  State<_BulkDeleteConfirmationDialog> createState() =>
+      _BulkDeleteConfirmationDialogState();
+}
+
+class _BulkDeleteConfirmationDialogState
+    extends State<_BulkDeleteConfirmationDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  String get _requiredPhrase => 'DELETE ${widget.count}';
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = widget.strings;
+    return AlertDialog(
+      title: Text(strings.deleteAllConversations),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(strings.bulkDeleteWarning(widget.count)),
+          const SizedBox(height: 14),
+          Text(strings.typeToConfirm(_requiredPhrase)),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            decoration: InputDecoration(hintText: _requiredPhrase),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text(strings.cancel),
+        ),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _controller,
+          builder: (_, value, _) => TextButton(
+            onPressed: value.text.trim() == _requiredPhrase
+                ? () => Navigator.of(context).pop(true)
+                : null,
+            child: Text(strings.delete),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PendingConversationDeletion {
+  final List<ws.Conversation> originalConversations;
+  final Set<String> affectedIds;
+  final bool wasActive;
+  final String? activeConversationId;
+  final String? activeConversationTitle;
+  final List<_ChatEntry> entries;
+  final bool thinking;
+  final bool awaitingResponse;
+  final bool noResponse;
+  final int? streamingIndex;
+  final List<PreparedAttachment> pendingAttachments;
+  final bool wasPendingLoad;
+  final int selectionEpoch;
+  Timer? timeout;
+  bool disconnected = false;
+
+  _PendingConversationDeletion({
+    required this.originalConversations,
+    required this.affectedIds,
+    required this.wasActive,
+    required this.activeConversationId,
+    required this.activeConversationTitle,
+    required this.entries,
+    required this.thinking,
+    required this.awaitingResponse,
+    required this.noResponse,
+    required this.streamingIndex,
+    required this.pendingAttachments,
+    required this.wasPendingLoad,
+    required this.selectionEpoch,
+  });
+}
+
 class _ChatEntry {
   final String content;
   final bool isUser;

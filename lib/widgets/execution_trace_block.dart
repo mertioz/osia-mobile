@@ -4,6 +4,7 @@ import '../l10n.dart';
 import '../motion.dart';
 import '../services/execution_trace.dart';
 import '../theme.dart';
+import 'thinking_orbs.dart';
 
 const int executionTraceSummaryMaxClauses = 12;
 
@@ -155,9 +156,9 @@ String formatExecutionTraceSummary(
     if (event.terminal) break;
   }
 
-  // A provider-designated public summary is the canonical explanation when it
-  // exists. Activity prose is strictly the fallback, never filler appended to
-  // an authorized provider summary.
+  // Bounded public model narration or a provider-designated public summary is
+  // the canonical explanation when present. Factual activity prose is only a
+  // fallback; it is never filler appended to an existing narration.
   if (publicSummaries.isNotEmpty) {
     return publicSummaries.toSet().join('\n\n');
   }
@@ -458,11 +459,13 @@ class ExecutionTraceBlock extends StatefulWidget {
     required this.snapshot,
     this.collapsed = false,
     this.active = false,
+    this.finalStreaming = false,
   });
 
   final ExecutionTraceSnapshot snapshot;
   final bool collapsed;
   final bool active;
+  final bool finalStreaming;
 
   @override
   State<ExecutionTraceBlock> createState() => _ExecutionTraceBlockState();
@@ -470,15 +473,48 @@ class ExecutionTraceBlock extends StatefulWidget {
 
 class _ExecutionTraceBlockState extends State<ExecutionTraceBlock> {
   late bool _expanded = !widget.collapsed;
+  bool _finalStreamStarted = false;
+  bool _autoCollapsedForFinal = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _finalStreamStarted = widget.finalStreaming;
+    _autoCollapsedForFinal = widget.finalStreaming || widget.snapshot.terminal;
+    if (_autoCollapsedForFinal) _expanded = false;
+  }
 
   @override
   void didUpdateWidget(covariant ExecutionTraceBlock oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.snapshot.key != widget.snapshot.key) {
-      _expanded = !widget.collapsed;
-    } else if (!oldWidget.collapsed && widget.collapsed) {
-      _expanded = false;
+      _expanded =
+          !widget.collapsed &&
+          !widget.finalStreaming &&
+          !widget.snapshot.terminal;
+      _finalStreamStarted = widget.finalStreaming;
+      _autoCollapsedForFinal =
+          widget.finalStreaming || widget.snapshot.terminal;
+    } else {
+      final finalStreamStarted =
+          !oldWidget.finalStreaming && widget.finalStreaming;
+      if (finalStreamStarted && !_finalStreamStarted) {
+        _finalStreamStarted = true;
+        _autoCollapseForFinal();
+      } else if (!oldWidget.snapshot.terminal &&
+          widget.snapshot.terminal &&
+          !_autoCollapsedForFinal) {
+        _autoCollapseForFinal();
+      } else if (!oldWidget.collapsed && widget.collapsed) {
+        _expanded = false;
+      }
     }
+  }
+
+  void _autoCollapseForFinal() {
+    if (_autoCollapsedForFinal) return;
+    _autoCollapsedForFinal = true;
+    _expanded = false;
   }
 
   @override
@@ -532,14 +568,10 @@ class _ExecutionTraceBlockState extends State<ExecutionTraceBlock> {
                     ),
                     if (widget.active) ...[
                       const SizedBox(width: 4),
-                      SizedBox(
-                        width: 10,
-                        height: 10,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.4,
-                          color: palette.accent.withValues(alpha: 0.7),
-                        ),
-                      ),
+                      ThinkingOrbs(active: true),
+                    ] else ...[
+                      const SizedBox(width: 4),
+                      const ThinkingOrbs(active: false),
                     ],
                   ],
                 ),
@@ -604,14 +636,7 @@ class ThinkingDisclosure extends StatelessWidget {
           const SizedBox(width: 2),
           Icon(Icons.chevron_right_rounded, color: palette.textMuted, size: 17),
           const SizedBox(width: 4),
-          SizedBox(
-            width: 10,
-            height: 10,
-            child: CircularProgressIndicator(
-              strokeWidth: 1.4,
-              color: palette.accent.withValues(alpha: 0.7),
-            ),
-          ),
+          const ThinkingOrbs(active: true),
         ],
       ),
     );

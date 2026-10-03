@@ -352,7 +352,7 @@ void main() {
   });
 
   test(
-    'protected WebSocket service matches reviewed contract checksum',
+    'WebSocket service matches reviewed PC-canonical parity contract checksum',
     () async {
       final bytes = await File(
         'lib/services/websocket_service.dart',
@@ -360,7 +360,7 @@ void main() {
 
       expect(
         sha256.convert(bytes).toString().toUpperCase(),
-      '60838E093A519963A6F252942B8E4E36708A17456966014736D53F9E91DAC742',
+      'D5B73BA5F31766B245325115242491CF750A5154E66415759BC0C974BA89691E',
       );
     },
   );

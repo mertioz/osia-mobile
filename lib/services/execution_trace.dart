@@ -58,6 +58,23 @@ const Map<String, ExecutionTraceKind> executionTraceDisplayKeys =
     };
 
 final RegExp _safeIdPattern = RegExp(r'^[A-Za-z0-9._:-]{1,256}$');
+final List<RegExp> _sensitivePublicTextPatterns = <RegExp>[
+  RegExp(
+    r'\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|secret|password|passphrase|credential|private[_ -]?key)\b\s*[:=]\s*[^\s,;]+',
+    caseSensitive: false,
+  ),
+  RegExp(r'\bBearer\s+[A-Za-z0-9._~+/-]+=*', caseSensitive: false),
+  RegExp(
+    r'\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b',
+  ),
+  RegExp(r'-----BEGIN [A-Z ]*PRIVATE KEY-----', caseSensitive: false),
+  RegExp(r'\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b', caseSensitive: false),
+  RegExp(r'(?<!\w)\+?(?:\d[\s().-]?){8,}\d(?!\w)'),
+  RegExp(
+    r'<\s*/?\s*(?:system|developer)\b|\b(?:system|developer)\s+prompt\s*[:=]',
+    caseSensitive: false,
+  ),
+];
 
 bool _safeOptionalId(String value) =>
     value.isEmpty || _safeIdPattern.hasMatch(value);
@@ -80,6 +97,9 @@ bool _safePublicSummary(String value) {
     r'<\s*/?\s*(?:think(?:ing)?|reasoning|analysis|tool(?:[_-]?(?:call|result|code))?|function_calls)\b',
     caseSensitive: false,
   ).hasMatch(value)) {
+    return false;
+  }
+  if (_sensitivePublicTextPatterns.any((pattern) => pattern.hasMatch(value))) {
     return false;
   }
   for (final unit in value.codeUnits) {

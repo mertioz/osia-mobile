@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:osia_mobile/guide_content.dart';
+import 'package:osia_mobile/guide/guide_catalog.dart';
 import 'package:osia_mobile/guide_progress.dart';
 import 'package:osia_mobile/l10n.dart';
 import 'package:osia_mobile/screens/guide_screen.dart';
@@ -290,7 +290,7 @@ void main() {
         kind: _SceneKind.guide,
         size: const Size(393, 852),
         textScale: 1,
-        lessonId: 'essential.what-is-mobile',
+        lessonId: 'essential.osia-role',
         reducedMotion: false,
       ),
       (
@@ -298,7 +298,7 @@ void main() {
         kind: _SceneKind.guide,
         size: const Size(390, 844),
         textScale: 1.25,
-        lessonId: 'essential.pair-token',
+        lessonId: 'essential.pairing-token',
         reducedMotion: false,
       ),
       (
@@ -306,7 +306,7 @@ void main() {
         kind: _SceneKind.guide,
         size: const Size(390, 844),
         textScale: 1,
-        lessonId: 'essential.enter-token',
+        lessonId: 'essential.pairing-connect',
         reducedMotion: false,
       ),
       (
@@ -314,7 +314,7 @@ void main() {
         kind: _SceneKind.guide,
         size: const Size(430, 932),
         textScale: 1,
-        lessonId: 'essential.first-message',
+        lessonId: 'essential.first-request',
         reducedMotion: false,
       ),
       (
@@ -330,7 +330,7 @@ void main() {
         kind: _SceneKind.guide,
         size: const Size(844, 390),
         textScale: 1,
-        lessonId: 'advanced.pc-mobile-connection',
+        lessonId: 'advanced.transport-overview',
         reducedMotion: false,
       ),
       (
@@ -338,7 +338,7 @@ void main() {
         kind: _SceneKind.guide,
         size: const Size(390, 844),
         textScale: 1,
-        lessonId: 'advanced.voice-tts-stt',
+        lessonId: 'mastery.voice-stt',
         reducedMotion: false,
       ),
       (
@@ -346,7 +346,7 @@ void main() {
         kind: _SceneKind.guide,
         size: const Size(390, 844),
         textScale: 1,
-        lessonId: 'advanced.voice-tts-stt',
+        lessonId: 'mastery.voice-tts',
         reducedMotion: false,
       ),
       (
@@ -354,7 +354,7 @@ void main() {
         kind: _SceneKind.guide,
         size: const Size(320, 640),
         textScale: 1.5,
-        lessonId: 'mastery.troubleshooting',
+        lessonId: 'mastery.diagnostic-layers',
         reducedMotion: false,
       ),
       (
@@ -370,7 +370,7 @@ void main() {
         kind: _SceneKind.guide,
         size: const Size(390, 844),
         textScale: 1.5,
-        lessonId: 'essential.what-is-mobile',
+        lessonId: 'essential.ready',
         reducedMotion: true,
       ),
     ]) {

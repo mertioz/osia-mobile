@@ -84,7 +84,8 @@ class _ConnectionScreenState extends State<ConnectionScreen>
 
   // No verdict from the server within this window → give up and tell the
   // user to check their token.
-  static const Duration _verifyTimeout = Duration(seconds: 10);
+  // The relay may establish WebRTC (up to 20s) before E2E auth can complete.
+  static const Duration _verifyTimeout = Duration(seconds: 40);
   // How long the socket must stay open after auth (with no rejecting close)
   // before we treat a silent server as a valid token.
   static const Duration _verifyGrace = Duration(milliseconds: 1500);

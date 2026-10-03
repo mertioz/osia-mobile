@@ -97,15 +97,7 @@ void main() {
       );
       await tester.pump();
 
-      for (final palette in <OsiaPalette>[
-        osiaPaletteRed,
-        osiaPaletteGreen,
-        osiaPaletteRose,
-        osiaPaletteViolet,
-        osiaPaletteNoir,
-        osiaPaletteBlanc,
-        osiaPaletteDore,
-      ]) {
+      for (final palette in osiaPalettes) {
         controller.setPaletteByKey(palette.key);
         await tester.pump();
         _expectAccentSurfaces(tester, palette);
@@ -149,10 +141,10 @@ void main() {
     final logoElement = tester.element(find.byType(AccentLogo));
 
     for (final palette in <OsiaPalette>[
-      osiaPaletteRed,
-      osiaPaletteGreen,
+      osiaPaletteAzure,
+      osiaPaletteEmerald,
       osiaPaletteRose,
-      osiaPaletteViolet,
+      osiaPalette,
     ]) {
       controller.setPaletteByKey(palette.key);
       await tester.pump();

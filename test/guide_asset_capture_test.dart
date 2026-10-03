@@ -126,9 +126,9 @@ class _DemoChat extends StatelessWidget {
             ),
           ),
           IconButton(
-            tooltip: 'Autonomous',
+            tooltip: 'Conversations',
             onPressed: () {},
-            icon: const Icon(Icons.rocket_launch_rounded),
+            icon: const Icon(Icons.chat_bubble_outline_rounded),
           ),
           IconButton(
             tooltip: 'Settings',

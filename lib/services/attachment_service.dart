@@ -462,26 +462,6 @@ typedef AttachmentSendFrame =
       String expectedTransportSession,
     );
 
-/// Opaque Autonomous source authority plus display-safe metadata.
-///
-/// Instances are runtime-only. The capability is submitted to the PC but is
-/// never persisted, displayed, or included in diagnostics.
-class AutonomousSourceCapability {
-  final String sourceRef;
-  final String typeLabel;
-  final String documentFamily;
-  final String state;
-  final List<String> warnings;
-
-  const AutonomousSourceCapability({
-    required this.sourceRef,
-    required this.typeLabel,
-    required this.documentFamily,
-    required this.state,
-    this.warnings = const [],
-  });
-}
-
 class AttachmentUploadResult {
   final String batchId;
   final String clientRequestId;
@@ -489,9 +469,6 @@ class AttachmentUploadResult {
   final int aggregateSize;
   final String transportSession;
   final int finalSequence;
-  final String attachmentPurpose;
-  final List<AutonomousSourceCapability> autonomousSources;
-
   const AttachmentUploadResult({
     required this.batchId,
     required this.clientRequestId,
@@ -499,8 +476,6 @@ class AttachmentUploadResult {
     required this.aggregateSize,
     required this.transportSession,
     required this.finalSequence,
-    this.attachmentPurpose = 'chat',
-    this.autonomousSources = const [],
   });
 }
 
@@ -523,14 +498,9 @@ class AttachmentTransferClient {
     required List<PreparedAttachment> files,
     required String conversationId,
     required String clientRequestId,
-    String attachmentPurpose = 'chat',
     AttachmentCancellation? cancellation,
     void Function(AttachmentProgress progress)? onProgress,
   }) async {
-    if (!const {'chat', 'autonomous'}.contains(attachmentPurpose) ||
-        (attachmentPurpose == 'autonomous' && conversationId.isNotEmpty)) {
-      throw const AttachmentException('invalid_attachment_purpose');
-    }
     _validatePrepared(files);
     final batchId = _newProtocolId('batch');
     final expectedSession = transportSession();
@@ -550,7 +520,7 @@ class AttachmentTransferClient {
       'request_id': clientRequestId,
       'event_id': _newProtocolId('event'),
       'sequence': ++sequence,
-      'attachment_purpose': attachmentPurpose,
+      'attachment_purpose': 'chat',
     };
 
     final accept = Completer<Map<String, dynamic>>();
@@ -743,62 +713,6 @@ class AttachmentTransferClient {
           throw const AttachmentException('commit_ack_mismatch');
         }
       }
-      final autonomousSources = <AutonomousSourceCapability>[];
-      final rawSources = ack['autonomous_sources'];
-      if (attachmentPurpose == 'autonomous') {
-        if (rawSources is! List || rawSources.length != files.length) {
-          throw const AttachmentException('commit_ack_mismatch');
-        }
-        const allowedKeys = <String>{
-          'source_ref',
-          'type_label',
-          'document_family',
-          'state',
-          'warnings',
-          'logical_order',
-        };
-        final sourcePattern = RegExp(r'^src_[0-9a-f]{32}$');
-        final safeLabelPattern = RegExp(r'^[a-z0-9][a-z0-9.+_-]{0,63}$');
-        for (var index = 0; index < rawSources.length; index++) {
-          final raw = rawSources[index];
-          if (raw is! Map ||
-              raw.keys.any(
-                (key) => key is! String || !allowedKeys.contains(key),
-              ) ||
-              raw.length != allowedKeys.length ||
-              raw['logical_order'] != index) {
-            throw const AttachmentException('commit_ack_mismatch');
-          }
-          final sourceRef = raw['source_ref']?.toString() ?? '';
-          final typeLabel = raw['type_label']?.toString() ?? '';
-          final family = raw['document_family']?.toString() ?? '';
-          final state = raw['state']?.toString() ?? '';
-          final rawWarnings = raw['warnings'];
-          if (!sourcePattern.hasMatch(sourceRef) ||
-              !safeLabelPattern.hasMatch(typeLabel) ||
-              !safeLabelPattern.hasMatch(family) ||
-              state != 'ready' ||
-              rawWarnings is! List ||
-              rawWarnings.length > 8 ||
-              rawWarnings.any(
-                (warning) =>
-                    warning is! String || !safeLabelPattern.hasMatch(warning),
-              )) {
-            throw const AttachmentException('commit_ack_mismatch');
-          }
-          autonomousSources.add(
-            AutonomousSourceCapability(
-              sourceRef: sourceRef,
-              typeLabel: typeLabel,
-              documentFamily: family,
-              state: state,
-              warnings: List<String>.unmodifiable(rawWarnings.cast<String>()),
-            ),
-          );
-        }
-      } else if (rawSources != null) {
-        throw const AttachmentException('commit_ack_mismatch');
-      }
       committedSuccessfully = true;
       onProgress?.call(
         AttachmentProgress(
@@ -816,10 +730,6 @@ class AttachmentTransferClient {
         aggregateSize: aggregateSize,
         transportSession: expectedSession,
         finalSequence: sequence,
-        attachmentPurpose: attachmentPurpose,
-        autonomousSources: List<AutonomousSourceCapability>.unmodifiable(
-          autonomousSources,
-        ),
       );
     } on AttachmentException catch (error) {
       onProgress?.call(
@@ -868,7 +778,7 @@ class AttachmentTransferClient {
         'request_id': result.clientRequestId,
         'event_id': _newProtocolId('event'),
         'sequence': result.finalSequence + 1,
-        'attachment_purpose': result.attachmentPurpose,
+        'attachment_purpose': 'chat',
         'category': category,
       }, result.transportSession);
     } on Object {

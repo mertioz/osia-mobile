@@ -276,25 +276,41 @@ void main() {
     },
   );
 
-  testWidgets(
-    'permissions remains one compact Settings entry and opens its screen',
-    (tester) async {
-      await pumpSettings(tester);
-      final entry = find.byKey(const Key('settings-permissions-entry'));
-      await tester.scrollUntilVisible(
-        entry,
-        260,
-        scrollable: find.byType(Scrollable).first,
-      );
-      expect(entry, findsOneWidget);
-      expect(find.byKey(const Key('permissions-screen')), findsNothing);
-      expect(find.byKey(const Key('permission-history')), findsNothing);
+  testWidgets('legacy permission center is absent from canonical Settings', (
+    tester,
+  ) async {
+    await pumpSettings(tester);
+    expect(find.byKey(const Key('settings-permissions-entry')), findsNothing);
+    expect(find.byKey(const Key('permissions-screen')), findsNothing);
+  });
 
-      await tester.tap(entry);
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('permissions-screen')), findsOneWidget);
-    },
-  );
+  testWidgets('Settings keeps one bounded scroll viewport below its app bar', (
+    tester,
+  ) async {
+    final harness = await pumpSettings(tester);
+    harness.wsService.emitConfig();
+    await tester.pump();
+
+    final scrollView = find.byType(SingleChildScrollView);
+    expect(scrollView, findsOneWidget);
+    final scrollable = find.descendant(
+      of: scrollView,
+      matching: find.byType(Scrollable),
+    );
+    final position = tester.state<ScrollableState>(scrollable.first).position;
+    expect(position.maxScrollExtent, greaterThan(0));
+    final appBar = find.byType(AppBar).first;
+    final appBarTop = tester.getTopLeft(appBar).dy;
+
+    await tester.drag(
+      find.byKey(const Key('settings-sections')),
+      const Offset(0, -5000),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.getTopLeft(appBar).dy, appBarTop);
+    expect(position.pixels, lessThanOrEqualTo(position.maxScrollExtent));
+  });
 
   testWidgets('shows notification toggle in the requested Settings order', (
     tester,

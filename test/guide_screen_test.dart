@@ -224,7 +224,7 @@ void main() {
       find.byKey(const Key('guide-toc-mastery.provider-routes')),
       findsOneWidget,
     );
-    expect(find.textContaining('46 slides'), findsWidgets);
+    expect(find.textContaining('45 slides'), findsWidgets);
   });
 
   testWidgets(
@@ -244,7 +244,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('guide-resume')));
       await tester.pumpAndSettle();
-      expect(find.text('Slide 8 of 46'), findsOneWidget);
+      expect(find.text('Slide 8 of 45'), findsOneWidget);
       expect(find.text('Manual model selection'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('guide-close')));

@@ -88,21 +88,28 @@ Widget _host(Widget child) => OsiaTheme(
 );
 
 void main() {
-  test('mobile navigation keeps Autonomous out of the user-facing Chat', () {
-    final mainSource = File('lib/main.dart').readAsStringSync();
-    final chatSource = File('lib/screens/chat_screen.dart').readAsStringSync();
+  test(
+    'Mobile has one canonical Chat surface with PC-owned status streams',
+    () {
+      final mainSource = File('lib/main.dart').readAsStringSync();
+      final chatSource = File(
+        'lib/screens/chat_screen.dart',
+      ).readAsStringSync();
 
-    expect(mainSource, isNot(contains('AutonomousScreen(')));
-    expect(mainSource, isNot(contains("case '/autonomous'")));
-    expect(chatSource, isNot(contains('AutonomousScreen(')));
-    expect(chatSource, isNot(contains('autonomousTitle')));
-    expect(chatSource, isNot(contains('sendAutonomousStart')));
-    expect(chatSource, isNot(contains('Agent activity')));
-    expect(chatSource, isNot(contains('0/2 steps')));
-    expect(chatSource, isNot(contains('Reste à faire')));
-    expect(chatSource, contains('_LegacyRunProjection'));
-    expect(chatSource, contains('requestLegacyAutonomousResume'));
-  });
+      expect(mainSource, isNot(contains('AutonomousScreen(')));
+      expect(mainSource, isNot(contains("case '/autonomous'")));
+      expect(chatSource, isNot(contains('AutonomousScreen(')));
+      expect(chatSource, isNot(contains('autonomousTitle')));
+      expect(chatSource, isNot(contains('sendAutonomousStart')));
+      expect(chatSource, isNot(contains('Agent activity')));
+      expect(chatSource, isNot(contains('0/2 steps')));
+      expect(chatSource, isNot(contains('Reste à faire')));
+      expect(chatSource, isNot(contains('_LegacyRunProjection')));
+      expect(chatSource, isNot(contains('autonomousStream')));
+      expect(chatSource, contains('browserProgressStream'));
+      expect(chatSource, contains('documentProgressStream'));
+    },
+  );
 
   test('mobile transport preserves the correlated provider public summary', () {
     final eventJson = _publicSummaryTrace().events.single.toJson();

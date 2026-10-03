@@ -8,7 +8,6 @@ import '../l10n.dart';
 import '../legal_manifest.dart';
 import '../motion.dart';
 import '../nav.dart';
-import '../permissions_settings_section.dart';
 import '../services/background_connection_service.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
@@ -131,6 +130,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _onPickTheme(String key) {
     widget.themeController.setPaletteByKey(key);
     widget.storage.setThemeKey(key);
+    // The PC owns the canonical theme setting; the local value is only a
+    // startup cache for the Mobile surface while it reconnects.
+    widget.wsService.sendSetSetting('ui_theme', key);
     setState(() {});
   }
 
@@ -204,7 +206,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.wsService.sendGetModels();
     widget.wsService.sendGetChatGptAccount();
     widget.wsService.sendMcpStatus();
-    widget.wsService.requestPermissionSnapshot();
   }
 
   void _openProviders() {
@@ -217,12 +218,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Navigator.of(
       context,
     ).push(slideFadeRoute(MemoryScreen(wsService: widget.wsService)));
-  }
-
-  void _openPermissions() {
-    Navigator.of(
-      context,
-    ).push(slideFadeRoute(PermissionsScreen(wsService: widget.wsService)));
   }
 
   void _openGuide() {
@@ -437,11 +432,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               SystemSettingsSection(
                 wsService: widget.wsService,
                 showHeader: false,
-              ),
-
-              PermissionsSettingsEntry(
-                wsService: widget.wsService,
-                onTap: _openPermissions,
               ),
 
               // ── Memory ───────────────────────────────────────────────

@@ -209,4 +209,73 @@ void main() {
       service.dispose();
     },
   );
+
+  test('historical media cleanup releases only the owned completed turn', () async {
+    final sent = <Map<String, dynamic>>[];
+    final service = _service(sent);
+    expect(
+      service.sendText(
+        'first',
+        conversationId: _conversationId,
+        clientRequestId: _requestId,
+      ),
+      isTrue,
+    );
+    service.handleIncomingFrameForTest(_event('turn_accepted', 1));
+    service.handleIncomingFrameForTest(
+      _event('turn_status', 2, status: 'working'),
+    );
+    final done = _event('turn_status', 3, status: 'done', terminal: true)
+      ..['message_id'] = 'message-owned';
+    service.handleIncomingFrameForTest(done);
+    expect(service.isConversationBusy(_conversationId), isTrue);
+    expect(service.isConversationWorkActive(_conversationId), isFalse);
+
+    service.handleIncomingFrameForTest(
+      _event(
+        'media_status',
+        1,
+        requestId: 'request-stale-wor269-mobile',
+        turnId: 'turn-stale-wor269-mobile',
+        runId: 'run-stale-wor269-mobile',
+        replayed: true,
+        historical: true,
+      )
+        ..['stream_id'] = 'stream-stale-wor269-mobile'
+        ..['message_id'] = 'message-owned'
+        ..['media_terminal'] = true,
+    );
+    expect(service.isConversationBusy(_conversationId), isTrue);
+
+    final media = _event(
+      'media_status',
+      4,
+      replayed: true,
+      historical: true,
+    )
+      ..['message_id'] = 'message-owned'
+      ..['media_terminal'] = true
+      ..['status'] = 'done';
+    service.handleIncomingFrameForTest(media);
+    service.handleIncomingFrameForTest(
+      _event('conversation_busy_changed', 5, replayed: true, historical: true)
+        ..['busy'] = false,
+    );
+    await _flushAcks();
+
+    expect(service.isConversationBusy(_conversationId), isFalse);
+    expect(
+      service.sendText(
+        'next',
+        conversationId: _conversationId,
+        clientRequestId: 'request-next-wor269-mobile',
+      ),
+      isTrue,
+    );
+    expect(
+      sent.where((frame) => frame['type'] == 'event_ack'),
+      hasLength(5),
+    );
+    service.dispose();
+  });
 }
