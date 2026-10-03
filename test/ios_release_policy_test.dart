@@ -268,12 +268,12 @@ void main() {
   });
 
   test(
-    'Codemagic starts at build 3 and preserves monotonic App Store bumps',
+    'Codemagic uses the canonical version and preserves monotonic App Store bumps',
     () {
       final pubspec = _read('pubspec.yaml');
       final workflow = _read('codemagic.yaml');
 
-      expect(pubspec, contains('version: 1.1.1+5'));
+      expect(pubspec, contains('version: 1.1.1+14'));
       expect(pubspec, isNot(contains('version: 1.0.1+2')));
       expect(workflow, contains(r'configured="$(sed -nE'));
       expect(workflow, contains(r'if [ "$latest" -ge "$configured" ]; then'));
