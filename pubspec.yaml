@@ -58,3 +58,4 @@ flutter:
     - assets/production_capabilities.json
     - assets/slash_commands/catalog.v1.json
     - assets/guide/
+    - assets/legal/

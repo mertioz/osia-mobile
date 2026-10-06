@@ -132,12 +132,10 @@ class _OsiaAppState extends State<OsiaApp> {
         ),
       );
     } catch (_) {
-      // Safe offline fallback: an approved manifest would require the gate;
-      // the bundled review draft intentionally requires no acceptance.
+      // The acceptance decision is independent of legal publication status.
+      // If local state is unavailable, follow only the explicit manifest flags.
       _legalDecision = LegalStartupDecision(
-        requiresTermsAcceptance:
-            currentLegalManifest.isApproved &&
-            currentLegalManifest.termsAcceptanceRequired,
+        requiresTermsAcceptance: currentLegalManifest.termsAcceptanceRequired,
         showsPrivacyUpdate: false,
       );
     }

@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n.dart';
@@ -7,23 +10,48 @@ import '../theme.dart';
 
 enum LegalDocument { termsOfService, privacyPolicy }
 
-class LegalScreen extends StatelessWidget {
+class LegalScreen extends StatefulWidget {
   const LegalScreen({super.key, required this.document});
 
   final LegalDocument document;
 
   @override
+  State<LegalScreen> createState() => _LegalScreenState();
+}
+
+class _LegalScreenState extends State<LegalScreen> {
+  late final Future<Map<String, dynamic>> _source;
+  String? _legalLocale;
+
+  @override
+  void initState() {
+    super.initState();
+    _source = _loadSource();
+  }
+
+  Future<Map<String, dynamic>> _loadSource() async {
+    final encoded = await rootBundle.loadString(
+      'assets/legal/legal-source.json',
+    );
+    return jsonDecode(encoded) as Map<String, dynamic>;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _legalLocale ??= OsiaL10n.of(context).languageCode == 'fr' ? 'fr' : 'en';
+  }
+
+  @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
     final strings = OsiaL10n.of(context);
-    final isTerms = document == LegalDocument.termsOfService;
+    final isTerms = widget.document == LegalDocument.termsOfService;
     final title = isTerms ? strings.termsOfService : strings.privacyPolicy;
-    final version = isTerms
-        ? currentLegalManifest.termsVersion
-        : currentLegalManifest.privacyVersion;
-    final url = isTerms
-        ? currentLegalManifest.termsUrl
-        : currentLegalManifest.privacyUrl;
+    final locale = _legalLocale ?? 'en';
+    final onlineUrl = isTerms
+        ? currentLegalManifest.termsUrlFor(locale)
+        : currentLegalManifest.privacyUrlFor(locale);
 
     return Scaffold(
       backgroundColor: palette.background,
@@ -31,88 +59,145 @@ class LegalScreen extends StatelessWidget {
         title: Text(title),
         backgroundColor: palette.background,
         iconTheme: IconThemeData(color: palette.accent),
+        actions: [
+          PopupMenuButton<String>(
+            tooltip: 'Legal language',
+            initialValue: locale,
+            onSelected: (value) => setState(() => _legalLocale = value),
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'en', child: Text('English')),
+              PopupMenuItem(value: 'fr', child: Text('Français')),
+            ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Center(
+                child: Text(
+                  locale.toUpperCase(),
+                  style: TextStyle(
+                    color: palette.accent,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: palette.surface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: palette.border),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    currentLegalManifest.isApproved
-                        ? 'Version en vigueur'
-                        : 'Projet pour revue juridique — non en vigueur',
-                    style: TextStyle(
-                      color: currentLegalManifest.isApproved
-                          ? palette.accent
-                          : palette.textMuted,
-                      fontWeight: FontWeight.w700,
-                    ),
+        child: FutureBuilder<Map<String, dynamic>>(
+          future: _source,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return Center(
+                child: CircularProgressIndicator(color: palette.accent),
+              );
+            }
+            if (snapshot.hasError || !snapshot.hasData) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    'The bundled legal text could not be opened.',
+                    style: TextStyle(color: palette.textMuted),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Version $version · mise à jour ${currentLegalManifest.lastUpdated}',
-                    style: TextStyle(color: palette.textMuted, fontSize: 13),
+                ),
+              );
+            }
+
+            final source = snapshot.data!;
+            final documents =
+                (source['documents'] as Map<String, dynamic>)[locale]
+                    as Map<String, dynamic>;
+            final document = documents[isTerms ? 'terms' : 'privacy']
+                as Map<String, dynamic>;
+            final markdown = document['markdown'] as String;
+            final readableText = markdown
+                .replaceAll(RegExp(r'^##\s+', multiLine: true), '')
+                .replaceAll(RegExp(r'^-\s+', multiLine: true), '•  ');
+            final updated = source['lastUpdated'] as String;
+
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: palette.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: palette.border),
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Entrée en vigueur prévue en ${currentLegalManifest.plannedEffectiveYear} · date exacte non fixée',
-                    style: TextStyle(color: palette.textMuted, fontSize: 13),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        [
+                          'Version ',
+                          currentLegalManifest.version,
+                          ' · ',
+                          locale == 'fr' ? 'mise à jour ' : 'updated ',
+                          updated,
+                        ].join(),
+                        style: TextStyle(color: palette.textMuted, fontSize: 13),
+                      ),
+                      if (isTerms) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          locale == 'fr'
+                              ? 'Entrée en vigueur à la publication.'
+                              : 'Effective on publication.',
+                          style: TextStyle(color: palette.textMuted, fontSize: 13),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          locale == 'fr'
+                              ? 'Droit français, sous réserve des protections impératives des consommateurs.'
+                              : 'French law, subject to mandatory consumer protections.',
+                          style: TextStyle(color: palette.textMuted, fontSize: 13),
+                        ),
+                      ],
+                      const SizedBox(height: 6),
+                      Text(
+                        [
+                          locale == 'fr' ? 'Contact : ' : 'Contact: ',
+                          currentLegalManifest.publicContactEmail,
+                        ].join(),
+                        style: TextStyle(color: palette.textMuted, fontSize: 13),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Contact : ${currentLegalManifest.publicContactEmail}',
-                    style: TextStyle(color: palette.textMuted, fontSize: 13),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  document['title'] as String,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Public visé : B2C et B2B · âge minimal prévu : ${currentLegalManifest.minimumAge} ans',
-                    style: TextStyle(color: palette.textMuted, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                SelectableText(
+                  readableText,
+                  style: TextStyle(
+                    color: palette.textPrimary.withValues(alpha: 0.88),
+                    fontSize: 14,
+                    height: 1.65,
                   ),
-                  if (isTerms) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      'Droit applicable : ${currentLegalManifest.governingLaw}, sous réserve des protections impératives des consommateurs.',
-                      style: TextStyle(color: palette.textMuted, fontSize: 13),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              isTerms
-                  ? 'Le document complet couvre les actions agentiques, Gmail REST, Browser, les fournisseurs et coûts tiers, les tâches planifiées et les contrôles d’exécution. OSIA ne réserve jamais une capacité fonctionnelle à un paiement ; aucun achat, abonnement ou élément cosmétique OSIA n’existe dans ce brouillon.'
-                  : 'Le document complet décrit les données locales, les contenus nécessaires envoyés au fournisseur choisi, Gmail REST, les endpoints personnalisés, Browser, les artefacts temporaires, l’anti-rejeu et Adaptive Intelligence. Le transport suit LAN, puis WebRTC, puis relais chiffré de repli, sans masquer toutes les métadonnées réseau.',
-              style: TextStyle(
-                color: palette.textPrimary.withValues(alpha: 0.86),
-                fontSize: 15,
-                height: 1.55,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Cette copie intégrée fournit un résumé et les métadonnées de version hors ligne. Le texte canonique complet reste accessible en brouillon non approuvé et non en vigueur sur osia.space.',
-              style: TextStyle(color: palette.textMuted, height: 1.5),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: () => launchUrl(
-                Uri.parse(url),
-                mode: LaunchMode.externalApplication,
-              ),
-              icon: const Icon(Icons.open_in_new_rounded),
-              label: const Text('Ouvrir le texte canonique'),
-            ),
-          ],
+                ),
+                const SizedBox(height: 22),
+                OutlinedButton.icon(
+                  onPressed: () => launchUrl(
+                    Uri.parse(onlineUrl),
+                    mode: LaunchMode.externalApplication,
+                  ),
+                  icon: const Icon(Icons.open_in_new_rounded),
+                  label: Text(
+                    locale == 'fr' ? 'Voir en ligne' : 'View online',
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -153,6 +238,7 @@ class _LegalGateScreenState extends State<LegalGateScreen> {
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
+    final strings = OsiaL10n.of(context);
     return Scaffold(
       backgroundColor: palette.background,
       body: SafeArea(
@@ -184,11 +270,11 @@ class _LegalGateScreenState extends State<LegalGateScreen> {
                   const SizedBox(height: 20),
                   OutlinedButton(
                     onPressed: () => _open(LegalDocument.termsOfService),
-                    child: const Text('Conditions d’utilisation'),
+                    child: Text(strings.termsOfService),
                   ),
                   OutlinedButton(
                     onPressed: () => _open(LegalDocument.privacyPolicy),
-                    child: const Text('Politique de confidentialité'),
+                    child: Text(strings.privacyPolicy),
                   ),
                   if (!widget.privacyUpdateOnly) ...[
                     const SizedBox(height: 12),
@@ -202,7 +288,10 @@ class _LegalGateScreenState extends State<LegalGateScreen> {
                           : (value) =>
                                 setState(() => _accepted = value == true),
                       title: Text(
-                        'J’accepte les Conditions d’utilisation ${currentLegalManifest.termsVersion}',
+                        [
+                          'J’accepte les Conditions ',
+                          currentLegalManifest.termsVersion,
+                        ].join(),
                         style: TextStyle(color: palette.textPrimary),
                       ),
                     ),

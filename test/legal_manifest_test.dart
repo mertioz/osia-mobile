@@ -1,133 +1,234 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:osia_mobile/legal_manifest.dart';
 import 'package:osia_mobile/screens/legal_screen.dart';
 import 'package:osia_mobile/theme.dart';
 
-const approvedManifest = OsiaLegalManifest(
-  publicationState: 'approved',
-  termsVersion: '2026-08-01.1',
-  privacyVersion: '2026-08-01.1',
-  lastUpdated: '2026-08-01',
+const acceptanceManifest = OsiaLegalManifest(
+  version: '2026-10-04.1',
+  termsVersion: '2026-10-04.1',
+  privacyVersion: '2026-10-04.1',
+  lastUpdated: '2026-10-04',
+  effectiveDate: null,
   publicContactEmail: 'contact@osia.space',
   governingLaw: 'France',
-  plannedEffectiveYear: 2026,
-  effectiveDate: '2026-08-01',
+  agePolicy:
+      'OSIA is not specifically directed at children. Minors may use it subject to applicable law.',
+  minimumAge: null,
   materialChange: true,
   termsAcceptanceRequired: true,
-  termsUrl: 'https://osia.space/legal/terms',
-  privacyUrl: 'https://osia.space/legal/privacy',
-  minimumAge: 16,
+  privacyNoticeRequired: true,
+  contentSha256: 'test-hash',
+  termsUrls: {
+    'en': 'https://osia.space/en/legal/terms',
+    'fr': 'https://osia.space/legal/terms',
+  },
+  privacyUrls: {
+    'en': 'https://osia.space/en/legal/privacy',
+    'fr': 'https://osia.space/legal/privacy',
+  },
+  legalNoticeUrls: {
+    'en': 'https://osia.space/en/legal/legal-notice',
+    'fr': 'https://osia.space/legal/mentions-legales',
+  },
+  thirdPartyUrls: {
+    'en': 'https://osia.space/en/legal/third-party',
+    'fr': 'https://osia.space/legal/third-party',
+  },
+  licensesUrls: {
+    'en': 'https://osia.space/en/legal/licenses',
+    'fr': 'https://osia.space/legal/licenses',
+  },
 );
 
 void main() {
-  test('bundled manifest matches canonical site links and review state', () {
-    expect(currentLegalManifest.termsUrl, 'https://osia.space/legal/terms');
-    expect(currentLegalManifest.privacyUrl, 'https://osia.space/legal/privacy');
-    expect(currentLegalManifest.publicationState, 'draftForLegalReview');
-    expect(currentLegalManifest.termsVersion, '2026-08-18-draft.3');
-    expect(currentLegalManifest.privacyVersion, '2026-08-18-draft.3');
-    expect(currentLegalManifest.lastUpdated, '2026-08-18');
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('bundled legal manifest matches the canonical version and hash', () async {
+    expect(currentLegalManifest.version, '2026-10-05.4');
+    expect(currentLegalManifest.termsVersion, currentLegalManifest.version);
+    expect(currentLegalManifest.privacyVersion, currentLegalManifest.version);
+    expect(currentLegalManifest.lastUpdated, '2026-10-05');
+    expect(currentLegalManifest.effectiveDate, '2026-10-06');
     expect(currentLegalManifest.publicContactEmail, 'contact@osia.space');
     expect(currentLegalManifest.governingLaw, 'France');
-    expect(currentLegalManifest.plannedEffectiveYear, 2026);
-    expect(currentLegalManifest.effectiveDate, isNull);
-    expect(currentLegalManifest.materialChange, isTrue);
+    expect(currentLegalManifest.minimumAge, isNull);
     expect(currentLegalManifest.termsAcceptanceRequired, isFalse);
-    expect(currentLegalManifest.minimumAge, 18);
+    expect(currentLegalManifest.privacyNoticeRequired, isFalse);
+    expect(
+      currentLegalManifest.termsUrlFor('en'),
+      'https://osia.space/en/legal/terms',
+    );
+    expect(
+      currentLegalManifest.privacyUrlFor('fr'),
+      'https://osia.space/legal/privacy',
+    );
+
+    final bytes = (await rootBundle.load('assets/legal/legal-source.json'))
+        .buffer
+        .asUint8List();
+    expect(sha256.convert(bytes).toString(), currentLegalManifest.contentSha256);
+    expect(
+      currentLegalManifest.contentSha256,
+      '80a13b01fad30ce9ef8b7974f4452fd0a2f653f78dc49ed75db54a7e921427a6',
+    );
   });
 
-  test('review draft is safe offline and never forces acceptance', () {
-    final decision = legalStartupDecision(
+  test('offline Legal Notice exposes only the operator-approved minimum identity block', () async {
+    final source = jsonDecode(
+      await rootBundle.loadString('assets/legal/legal-source.json'),
+    ) as Map<String, dynamic>;
+    final documents = source['documents'] as Map<String, dynamic>;
+    final allDocuments = jsonEncode(documents);
+    expect(allDocuments, contains('SIREN: 101 523 215'));
+    expect(allDocuments, contains('SIREN : 101 523 215'));
+    expect(allDocuments, contains('Cloudflare, Inc.'));
+    expect(allDocuments, contains('+1 (650) 319-8930'));
+    expect(allDocuments, contains('Téléphone professionnel : 07 59 54 40 53'));
+    expect(allDocuments, contains('Professional telephone: +33 7 59 54 40 53'));
+    expect(
+      RegExp(r'\bSIRET\b|\b(?:APE|NAF|RCS|RNE)\b|\bDPO\b', caseSensitive: false)
+          .hasMatch(allDocuments),
+      isFalse,
+    );
+    for (final locale in ['en', 'fr']) {
+      final pages = documents[locale] as Map<String, dynamic>;
+      final legalNotice = (pages['legalNotice'] as Map<String, dynamic>)['markdown'] as String;
+      expect(
+        RegExp(r'\b\d{5}\s+[A-Za-zÀ-ÿ-]+')
+            .allMatches(legalNotice.replaceAll(RegExp(r'\n-\s+'), ' '))
+            .map((match) => match.group(0))
+            .toSet(),
+        {'69008 Lyon', locale == 'en' ? '94107 USA' : '94107 États-Unis'},
+      );
+      expect(legalNotice, contains('86 rue de Montagny'));
+      expect(legalNotice, contains('69008 Lyon'));
+      expect(
+        legalNotice,
+        contains(locale == 'en'
+            ? 'Professional telephone: +33 7 59 54 40 53'
+            : 'Téléphone professionnel : 07 59 54 40 53'),
+      );
+      for (final key in ['terms', 'privacy', 'thirdParty', 'licenses']) {
+        final markdown = (pages[key] as Map<String, dynamic>)['markdown'] as String;
+        expect(markdown, isNot(contains('07 59 54 40 53')));
+        expect(markdown, isNot(contains('+33 7 59 54 40 53')));
+        expect(markdown, isNot(contains('86 rue de Montagny')));
+        expect(markdown, isNot(contains('69008 Lyon')));
+      }
+    }
+  });
+
+  test('both offline locales contain complete Terms and Privacy text', () async {
+    final source = jsonDecode(
+      await rootBundle.loadString('assets/legal/legal-source.json'),
+    ) as Map<String, dynamic>;
+    final documents = source['documents'] as Map<String, dynamic>;
+    for (final locale in ['en', 'fr']) {
+      final pages = documents[locale] as Map<String, dynamic>;
+      for (final key in ['terms', 'privacy']) {
+        final page = pages[key] as Map<String, dynamic>;
+        final markdown = page['markdown'] as String;
+        expect(markdown.length, greaterThan(7000));
+        expect(
+          RegExp(r'^## ', multiLine: true).allMatches(markdown).length,
+          greaterThan(30),
+        );
+        expect(
+          RegExp(
+            r'draft|brouillon|legal review|revue juridique|not in force|non en vigueur',
+            caseSensitive: false,
+          ).hasMatch(markdown),
+          isFalse,
+        );
+        expect(
+          RegExp(
+            r'Autonomous|GoalContract|WorldState|permission broker|anti-replay|semantic equivalence',
+            caseSensitive: false,
+          ).hasMatch(markdown),
+          isFalse,
+        );
+      }
+    }
+  });
+
+  test('startup shows no gate unless a manifest explicitly requires it', () {
+    final noAcceptance = legalStartupDecision(
       currentLegalManifest,
       const LegalAcceptanceState(),
     );
-    expect(decision.requiresTermsAcceptance, isFalse);
-    expect(decision.showsPrivacyUpdate, isFalse);
-  });
+    expect(noAcceptance.requiresTermsAcceptance, isFalse);
+    expect(noAcceptance.showsPrivacyUpdate, isFalse);
 
-  test('older accepted material terms version triggers one new prompt', () {
-    final outdated = legalStartupDecision(
-      approvedManifest,
+    final required = legalStartupDecision(
+      acceptanceManifest,
+      const LegalAcceptanceState(),
+    );
+    expect(required.requiresTermsAcceptance, isTrue);
+    expect(required.showsPrivacyUpdate, isFalse);
+
+    final seen = legalStartupDecision(
+      acceptanceManifest,
       LegalAcceptanceState(
-        acceptedTermsVersion: '2026-07-01.1',
-        acceptedTermsAt: DateTime.utc(2026, 7, 1),
-        seenPrivacyVersion: approvedManifest.privacyVersion,
+        acceptedTermsVersion: acceptanceManifest.termsVersion,
+        acceptedTermsAt: DateTime.utc(2026, 10, 4),
+        seenPrivacyVersion: acceptanceManifest.privacyVersion,
       ),
     );
-    final current = legalStartupDecision(
-      approvedManifest,
-      LegalAcceptanceState(
-        acceptedTermsVersion: approvedManifest.termsVersion,
-        acceptedTermsAt: DateTime.utc(2026, 8, 1),
-        seenPrivacyVersion: approvedManifest.privacyVersion,
-      ),
-    );
-    expect(outdated.requiresTermsAcceptance, isTrue);
-    expect(current.requiresTermsAcceptance, isFalse);
-    expect(current.showsPrivacyUpdate, isFalse);
+    expect(seen.requiresTermsAcceptance, isFalse);
+    expect(seen.showsPrivacyUpdate, isFalse);
   });
 
-  test('privacy change is an information notice, not terms consent', () {
-    final decision = legalStartupDecision(
-      approvedManifest,
-      LegalAcceptanceState(
-        acceptedTermsVersion: approvedManifest.termsVersion,
-        acceptedTermsAt: DateTime.utc(2026, 8, 1),
-        seenPrivacyVersion: '2026-07-01.1',
-      ),
-    );
-    expect(decision.requiresTermsAcceptance, isFalse);
-    expect(decision.showsPrivacyUpdate, isTrue);
-  });
-
-  testWidgets('terms acceptance starts unchecked and blocks continue', (
-    tester,
-  ) async {
+  testWidgets('Terms screen displays the complete offline copy', (tester) async {
     await tester.pumpWidget(
       OsiaTheme(
         palette: osiaPaletteViolet,
-        child: MaterialApp(
-          home: LegalGateScreen(
-            privacyUpdateOnly: false,
-            onAccepted: () async {},
-          ),
+        child: const MaterialApp(
+          home: LegalScreen(document: LegalDocument.termsOfService),
         ),
       ),
     );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump();
 
-    final checkbox = tester.widget<CheckboxListTile>(
-      find.byKey(const Key('terms-acceptance-checkbox')),
-    );
-    final button = tester.widget<FilledButton>(
-      find.byKey(const Key('legal-continue-button')),
-    );
-    expect(checkbox.value, isFalse);
-    expect(button.onPressed, isNull);
+    final body = tester.widget<SelectableText>(find.byType(SelectableText));
+    expect(body.data, contains('1. Operator and scope'));
+    expect(body.data, contains('35. Contact'));
+    expect(body.data, contains('Aymen Gherbi'));
+    expect(find.text('Version 2026-10-05.4 · updated 2026-10-05'), findsOneWidget);
+    expect(find.textContaining('18 years old'), findsNothing);
+    expect(find.textContaining('Draft'), findsNothing);
+    expect(find.textContaining('Brouillon'), findsNothing);
   });
 
-  testWidgets(
-    'bundled legal screen exposes approved contact and planned year',
-    (tester) async {
-      await tester.pumpWidget(
-        OsiaTheme(
-          palette: osiaPaletteViolet,
-          child: const MaterialApp(
-            home: LegalScreen(document: LegalDocument.termsOfService),
-          ),
+  testWidgets('Privacy screen can switch to the full French copy', (tester) async {
+    await tester.pumpWidget(
+      OsiaTheme(
+        palette: osiaPaletteViolet,
+        child: const MaterialApp(
+          home: LegalScreen(document: LegalDocument.privacyPolicy),
         ),
-      );
+      ),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump();
+    expect(find.byType(SelectableText), findsOneWidget);
+    await tester.tap(find.byTooltip('Legal language'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Français').last);
+    await tester.pumpAndSettle();
 
-      expect(find.textContaining('contact@osia.space'), findsOneWidget);
-      expect(
-        find.textContaining('B2C et B2B · âge minimal prévu : 18 ans'),
-        findsOneWidget,
-      );
-      expect(
-        find.textContaining('Entrée en vigueur prévue en 2026'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('Droit applicable : France'), findsOneWidget);
-    },
-  );
+    final body = tester.widget<SelectableText>(find.byType(SelectableText));
+    expect(body.data, contains('1. Champ d’application'));
+    expect(body.data, contains('38. Contact'));
+    expect(body.data, contains('Les mineurs peuvent l’utiliser sous réserve du droit applicable'));
+  });
 }
