@@ -35,6 +35,18 @@ void _expectPurposeString(
 }
 
 void main() {
+  test('iOS export compliance metadata matches operator approval', () {
+    final info = _read('ios/Runner/Info.plist');
+    expect(
+      info,
+      contains('<key>ITSAppUsesNonExemptEncryption</key>\n\t<true/>'),
+    );
+    expect(
+      _plistString(info, 'ITSEncryptionExportComplianceCode'),
+      '1030850b-a772-4efa-bb8d-1f07a1c65030',
+    );
+  });
+
   test('iOS bundle identifier and multicast entitlement stay wired', () {
     final project = _read('ios/Runner.xcodeproj/project.pbxproj');
     final entitlements = _read('ios/Runner/Runner.entitlements');
@@ -123,21 +135,36 @@ void main() {
       'NSMicrophoneUsageDescription',
       requiredPhrases: <String>['microphone', 'osia'],
     );
-    _expectPurposeString(
-      info,
-      'NSLocationWhenInUseUsageDescription',
-      requiredPhrases: <String>[
-        'does not track',
-        'location',
-        'metadata',
-        'image',
-        'explicitly',
-        'attachment',
-      ],
-    );
-
     expect(chat, contains('FilePicker.platform.pickFiles('));
     expect(chat, contains('type: FileType.any'));
+  });
+
+  test('iOS location permission is not declared or enabled', () {
+    final info = _read('ios/Runner/Info.plist');
+    final podfile = _read('ios/Podfile');
+    final androidManifest = _read('android/app/src/main/AndroidManifest.xml');
+    final appSource = Directory('lib')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((file) => file.path.endsWith('.dart'))
+        .map((file) => file.readAsStringSync())
+        .join('\n');
+
+    expect(info, isNot(contains('NSLocationWhenInUseUsageDescription')));
+    expect(podfile, isNot(contains('PERMISSION_LOCATION=1')));
+    expect(podfile, isNot(contains('PERMISSION_LOCATION_WHENINUSE=1')));
+    expect(androidManifest, isNot(contains('ACCESS_FINE_LOCATION')));
+    expect(androidManifest, isNot(contains('ACCESS_COARSE_LOCATION')));
+    expect(
+      appSource,
+      isNot(
+        matches(
+          RegExp(
+            r'Permission\.(?:location|locationWhenInUse|locationAlways)\b',
+          ),
+        ),
+      ),
+    );
   });
 
   test('Codemagic uses scripted signing and TestFlight internal only', () {
@@ -206,12 +233,13 @@ void main() {
     expect(testStep, isNotNull);
     final testCommand = testStep!.group(1)!.trim();
     expect(testCommand, 'flutter test --exclude-tags guide-golden');
-    expect(
-      RegExp(
-        r'--exclude-tags(?:=|\s+)([^\s]+)',
-      ).allMatches(workflow).map((match) => match.group(1)),
-      <String?>['guide-golden'],
-    );
+    final excludedTagMatches = RegExp(
+      r'--exclude-tags(?:=|\s+)([^\s]+)',
+    ).allMatches(workflow);
+    expect(excludedTagMatches, hasLength(2));
+    expect(excludedTagMatches.map((match) => match.group(1)).toSet(), <String?>{
+      'guide-golden',
+    });
     expect(workflow, isNot(contains('|| true')));
     expect(workflow, isNot(contains('continue_on_error')));
     expect(workflow, isNot(contains('ignore_failure')));
@@ -268,19 +296,30 @@ void main() {
   });
 
   test(
-    'Codemagic uses the canonical version and preserves monotonic App Store bumps',
+    'release candidate uses the canonical Flutter version without an override',
     () {
       final pubspec = _read('pubspec.yaml');
       final workflow = _read('codemagic.yaml');
 
-      expect(pubspec, contains('version: 1.1.1+14'));
+      expect(pubspec, contains('version: 1.1.2+15'));
       expect(pubspec, isNot(contains('version: 1.0.1+2')));
-      expect(workflow, contains(r'configured="$(sed -nE'));
-      expect(workflow, contains(r'if [ "$latest" -ge "$configured" ]; then'));
-      expect(workflow, contains(r'selected=$((latest + 1))'));
-      expect(workflow, contains(r'selected="$configured"'));
-      expect(workflow, contains(r'--build-number="$IOS_BUILD_NUMBER"'));
-      expect(workflow, isNot(contains('--build-name=')));
+      final candidateStart = workflow.indexOf('  ios-release-candidate:\n');
+      final internalStart = workflow.indexOf('  ios-testflight-internal:\n');
+      expect(candidateStart, greaterThanOrEqualTo(0));
+      expect(internalStart, greaterThan(candidateStart));
+      final candidate = workflow.substring(candidateStart, internalStart);
+
+      expect(candidate, contains('1.1.2+15'));
+      expect(candidate, contains('--type IOS_APP_STORE'));
+      expect(candidate, contains('xcode-project use-profiles'));
+      expect(candidate, contains('flutter build ipa --release'));
+      expect(candidate, isNot(contains('get-latest-testflight-build-number')));
+      expect(candidate, isNot(contains('--build-number=')));
+      expect(candidate, isNot(contains('--build-name=')));
+      expect(candidate, isNot(contains('testFlightInternalTestingOnly')));
+      expect(candidate, isNot(contains('triggering:')));
+      expect(candidate, contains('submit_to_testflight: true'));
+      expect(candidate, contains('submit_to_app_store: false'));
     },
   );
 }

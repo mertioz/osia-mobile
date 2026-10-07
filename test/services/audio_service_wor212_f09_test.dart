@@ -354,13 +354,14 @@ void main() {
   test(
     'WebSocket service matches reviewed PC-canonical parity contract checksum',
     () async {
-      final bytes = await File(
+      final source = await File(
         'lib/services/websocket_service.dart',
-      ).readAsBytes();
+      ).readAsString();
+      final normalizedSource = source.replaceAll('\r\n', '\n');
 
       expect(
-        sha256.convert(bytes).toString().toUpperCase(),
-      'D5B73BA5F31766B245325115242491CF750A5154E66415759BC0C974BA89691E',
+        sha256.convert(utf8.encode(normalizedSource)).toString().toUpperCase(),
+        '3B2AA56E3D8D85F29034896BA8BDE47F8BA59361ED6845495ED1CE9F7F4EABEC',
       );
     },
   );

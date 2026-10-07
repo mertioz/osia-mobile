@@ -22,6 +22,10 @@
 	<string>$(FLUTTER_BUILD_NAME)</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<true/>
+	<key>ITSEncryptionExportComplianceCode</key>
+	<string>1030850b-a772-4efa-bb8d-1f07a1c65030</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
@@ -32,8 +36,6 @@
 	<string>OSIA accesses your photo library only when you explicitly select an image to attach to a conversation.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>OSIA accesses the camera only when you explicitly capture an image to attach to a conversation or scan an OSIA pairing QR code.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>OSIA does not track your location. It may access location metadata only in an image you explicitly select for a conversation attachment.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>OSIA utilise votre réseau local pour se connecter directement et de manière chiffrée à votre PC associé.</string>
 	<key>NSBonjourServices</key>

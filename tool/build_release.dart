@@ -108,18 +108,41 @@ void _verifyAuthenticatedIceContract() {
   }
 }
 
+String productionBuildTarget(String platform, {bool androidAppBundle = false}) {
+  if (platform == 'ios') {
+    if (androidAppBundle) {
+      throw const FormatException('--artifact=appbundle is Android-only.');
+    }
+    return 'ios';
+  }
+  if (platform == 'android') {
+    return androidAppBundle ? 'appbundle' : 'apk';
+  }
+  throw FormatException('Unsupported release platform: $platform');
+}
+
+String productionAndroidArtifactPath({bool appBundle = false}) => appBundle
+    ? 'build/app/outputs/bundle/release/app-release.aab'
+    : 'build/app/outputs/flutter-apk/app-release.apk';
+
 Future<void> main(List<String> arguments) async {
   var platform = 'android';
   var validateOnly = false;
+  var androidAppBundle = false;
   for (final argument in arguments) {
     if (argument == '--validate-only') {
       validateOnly = true;
     } else if (argument == '--platform=android' ||
         argument == '--platform=ios') {
       platform = argument.substring('--platform='.length);
+    } else if (argument == '--artifact=appbundle') {
+      androidAppBundle = true;
     } else {
       _fail('Unknown release build argument: $argument', 64);
     }
+  }
+  if (platform == 'ios' && androidAppBundle) {
+    _fail('--artifact=appbundle is Android-only.', 64);
   }
   if (platform == 'ios' && !Platform.isMacOS && !validateOnly) {
     _fail('Official iOS releases must be built on macOS.', 69);
@@ -136,9 +159,13 @@ Future<void> main(List<String> arguments) async {
     return;
   }
 
+  final target = productionBuildTarget(
+    platform,
+    androidAppBundle: androidAppBundle,
+  );
   final command = <String>[
     'build',
-    platform == 'android' ? 'apk' : 'ios',
+    target,
     '--release',
     '--dart-define=osia_build_type=production',
     '--dart-define=lan_direct_v1=true',
@@ -146,6 +173,11 @@ Future<void> main(List<String> arguments) async {
     '--dart-define=relay_fallback_v1=true',
   ];
   stdout.writeln('Building the official OSIA $platform release.');
+  if (platform == 'android') {
+    stdout.writeln(
+      'Expected artifact: ${productionAndroidArtifactPath(appBundle: androidAppBundle)}',
+    );
+  }
   final process = await Process.start(
     'flutter',
     command,

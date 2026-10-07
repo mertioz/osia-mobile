@@ -126,6 +126,33 @@ void main() {
     expect(service, isNot(contains('WakeLock')));
   });
 
+  test('production release helper supports APK and signed AAB targets', () {
+    expect(release.productionBuildTarget('android'), 'apk');
+    expect(
+      release.productionAndroidArtifactPath(),
+      'build/app/outputs/flutter-apk/app-release.apk',
+    );
+    expect(
+      release.productionBuildTarget('android', androidAppBundle: true),
+      'appbundle',
+    );
+    expect(
+      release.productionAndroidArtifactPath(appBundle: true),
+      'build/app/outputs/bundle/release/app-release.aab',
+    );
+    expect(release.productionBuildTarget('ios'), 'ios');
+    expect(
+      () => release.productionBuildTarget('ios', androidAppBundle: true),
+      throwsFormatException,
+    );
+    expect(() => release.productionBuildTarget('other'), throwsFormatException);
+
+    final gradle = File('android/app/build.gradle.kts').readAsStringSync();
+    expect(gradle, contains('applicationId = "space.osia.app"'));
+    expect(gradle, contains('versionCode = flutter.versionCode'));
+    expect(gradle, contains('versionName = flutter.versionName'));
+  });
+
   test(
     'official production capability manifest is direct-first and secret-free',
     () {

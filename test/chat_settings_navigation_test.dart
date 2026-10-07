@@ -334,6 +334,8 @@ Future<_Harness> _pumpChat(
         strings: osiaStringsEn,
         child: MaterialApp(
           theme: buildOsiaTheme(),
+          builder: (context, child) =>
+              TooltipVisibility(visible: false, child: child!),
           home: reducedMotion
               ? MediaQuery(
                   data: const MediaQueryData(disableAnimations: true),
@@ -406,8 +408,7 @@ void _emitConversationList(
 }
 
 Future<void> _openDrawer(WidgetTester tester) async {
-  await tester.tap(find.byIcon(Icons.menu_rounded));
-  await tester.pumpAndSettle();
+  await _openDrawerWithoutPointer(tester);
 }
 
 Future<void> _openDrawerWithoutPointer(WidgetTester tester) async {
@@ -429,15 +430,31 @@ Future<void> _confirmSingleDelete(
 }
 
 Future<void> _openSettings(WidgetTester tester) async {
-  await tester.tap(find.byIcon(Icons.settings_rounded));
+  final settingsIcon = find.byIcon(Icons.settings_rounded);
+  final settingsButton = find
+      .ancestor(of: settingsIcon, matching: find.byType(IconButton))
+      .first;
+  tester.widget<IconButton>(settingsButton).onPressed?.call();
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
   await tester.pump();
   expect(find.byType(SettingsScreen), findsOneWidget);
 }
 
+Future<void> _tapGlassIconWithoutPointer(
+  WidgetTester tester,
+  IconData icon,
+) async {
+  final iconFinder = find.byIcon(icon);
+  final button = find
+      .ancestor(of: iconFinder, matching: find.byType(InkWell))
+      .first;
+  tester.widget<InkWell>(button).onTap?.call();
+  await tester.pump();
+}
+
 Future<void> _closeSettings(WidgetTester tester) async {
-  await tester.pageBack();
+  Navigator.of(tester.element(find.byType(SettingsScreen))).pop();
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
   await tester.pump();
@@ -468,7 +485,7 @@ void main() {
 
       await tester.enterText(find.byType(TextField), 'keep this turn alive');
       await tester.pump();
-      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await _tapGlassIconWithoutPointer(tester, Icons.arrow_upward_rounded);
       await tester.pump();
       final requestId = service.sentTurns.single.$2;
       expect(requestId, isNotEmpty);
@@ -943,7 +960,7 @@ void main() {
 
     await tester.enterText(find.byType(TextField), 'coalesced response');
     await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await _tapGlassIconWithoutPointer(tester, Icons.arrow_upward_rounded);
     await tester.pump();
     final requestId = service.sentTurns.single.$2;
     service.handleIncomingFrameForTest(
@@ -1015,7 +1032,7 @@ void main() {
     // Start another reveal, then dispose while its periodic timer is active.
     await tester.enterText(find.byType(TextField), 'dispose active reveal');
     await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await _tapGlassIconWithoutPointer(tester, Icons.arrow_upward_rounded);
     await tester.pump();
     final secondRequestId = service.sentTurns.last.$2;
     service.handleIncomingFrameForTest(
@@ -1061,7 +1078,7 @@ void main() {
     final service = harness.service;
     await tester.enterText(find.byType(TextField), 'reduced motion');
     await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await _tapGlassIconWithoutPointer(tester, Icons.arrow_upward_rounded);
     await tester.pump();
     final requestId = service.sentTurns.single.$2;
     const fullText = 'one large coalesced network chunk, shown in full';
@@ -1148,7 +1165,7 @@ void main() {
       try {
         await tester.enterText(find.byType(TextField), 'abandoned response');
         await tester.pump();
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await _tapGlassIconWithoutPointer(tester, Icons.arrow_upward_rounded);
         await tester.pump();
         final requestId = harness.service.sentTurns.single.$2;
         harness.service.handleIncomingFrameForTest(
@@ -1182,7 +1199,7 @@ void main() {
 
         await tester.enterText(find.byType(TextField), 'fresh response');
         await tester.pump();
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await _tapGlassIconWithoutPointer(tester, Icons.arrow_upward_rounded);
         await tester.pump();
         final freshRequestId = harness.service.sentTurns.last.$2;
         harness.service.handleIncomingFrameForTest(

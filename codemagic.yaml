@@ -1,4 +1,81 @@
 workflows:
+  ios-release-candidate:
+    name: OSIA iOS - App Store / TestFlight release candidate
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    integrations:
+      app_store_connect: osia-testflight
+    environment:
+      groups:
+        - osia_app_store
+      vars:
+        BUNDLE_ID: space.osia.app
+      flutter: 3.44.1
+      xcode: 26.4
+      cocoapods: 1.16.2
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - name: Verify pinned Apple toolchain
+        script: |
+          set -e
+          flutter --version
+          xcodebuild -version
+          echo "iOS SDK $(xcrun --sdk iphoneos --show-sdk-version)"
+          pod --version
+      - name: Configure Flutter dependencies
+        script: |
+          set -e
+          flutter config --enable-swift-package-manager
+          flutter pub get
+      - name: Analyze Flutter source
+        script: flutter analyze
+      - name: Run Flutter tests
+        script: flutter test --exclude-tags guide-golden
+      - name: Install CocoaPods dependencies
+        script: |
+          set -e
+          cd ios
+          pod install --repo-update
+      - name: Initialize signing keychain
+        script: keychain initialize
+      - name: Fetch fresh App Store signing files
+        script: |
+          set -e
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+      - name: Add signing certificate to keychain
+        script: keychain add-certificates
+      - name: Verify canonical release version
+        script: |
+          set -e
+          configured="$(sed -nE 's/^version:[[:space:]]+([^[:space:]]+)[[:space:]]*$/\1/p' pubspec.yaml)"
+          if [ "$configured" != "1.1.2+15" ]; then
+            echo "Expected canonical version 1.1.2+15, found $configured"
+            exit 1
+          fi
+      - name: Apply standard App Store distribution profile
+        script: xcode-project use-profiles
+      - name: Build signed App Store IPA with canonical pubspec version
+        script: |
+          set -e
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/Runner.xcarchive/dSYMs/*.dSYM
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        beta_groups:
+          - OSIA Internal
+        submit_to_app_store: false
+
   ios-testflight-internal:
     name: OSIA iOS - TestFlight internal
     instance_type: mac_mini_m2
