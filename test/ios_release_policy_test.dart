@@ -301,7 +301,7 @@ void main() {
       final pubspec = _read('pubspec.yaml');
       final workflow = _read('codemagic.yaml');
 
-      expect(pubspec, contains('version: 1.1.2+15'));
+      expect(pubspec, contains('version: 1.1.2+16'));
       expect(pubspec, isNot(contains('version: 1.0.1+2')));
       final candidateStart = workflow.indexOf('  ios-release-candidate:\n');
       final internalStart = workflow.indexOf('  ios-testflight-internal:\n');
@@ -309,7 +309,7 @@ void main() {
       expect(internalStart, greaterThan(candidateStart));
       final candidate = workflow.substring(candidateStart, internalStart);
 
-      expect(candidate, contains('1.1.2+15'));
+      expect(candidate, contains('1.1.2+16'));
       expect(candidate, contains('--type IOS_APP_STORE'));
       expect(candidate, contains('xcode-project use-profiles'));
       expect(candidate, contains('flutter build ipa --release'));

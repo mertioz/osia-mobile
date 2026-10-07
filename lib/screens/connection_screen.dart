@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../l10n.dart';
 import '../motion.dart';
 import '../pairing_token.dart';
+import 'review_mode_screen.dart';
 import '../services/rendezvous_service.dart';
 import '../services/relay_service.dart';
 import '../services/storage_service.dart';
@@ -402,60 +403,112 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     return Scaffold(
       backgroundColor: palette.background,
       body: SafeArea(
-        child: FadeTransition(
-          opacity: _fade,
-          child: SlideTransition(
-            position: _slide,
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 32),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 420),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildLogo(palette),
-                      const SizedBox(height: 48),
-                      _buildTokenField(palette, strings),
-                      const SizedBox(height: 10),
-                      _buildTokenHint(palette, strings),
-                      const SizedBox(height: 8),
-                      _buildScanButton(palette, strings),
-                      const SizedBox(height: 12),
-                      _buildError(palette),
-                      const SizedBox(height: 12),
-                      _buildConnectButton(palette, strings),
-                      const SizedBox(height: 18),
-                      Wrap(
-                        alignment: WrapAlignment.center,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        spacing: 4,
-                        children: [
-                          TextButton(
-                            key: const Key('onboarding-terms-link'),
-                            onPressed: () =>
-                                _openLegal(LegalDocument.termsOfService),
-                            child: Text(strings.termsOfService),
-                          ),
-                          Text('·', style: TextStyle(color: palette.textMuted)),
-                          TextButton(
-                            key: const Key('onboarding-privacy-link'),
-                            onPressed: () =>
-                                _openLegal(LegalDocument.privacyPolicy),
-                            child: Text(strings.privacyPolicy),
-                          ),
-                        ],
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: FadeTransition(
+                opacity: _fade,
+                child: SlideTransition(
+                  position: _slide,
+                  child: Center(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(32, 12, 32, 68),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _buildLogo(palette),
+                            const SizedBox(height: 48),
+                            _buildTokenField(palette, strings),
+                            const SizedBox(height: 10),
+                            _buildTokenHint(palette, strings),
+                            const SizedBox(height: 8),
+                            _buildScanButton(palette, strings),
+                            const SizedBox(height: 12),
+                            _buildError(palette),
+                            const SizedBox(height: 12),
+                            _buildConnectButton(palette, strings),
+                            const SizedBox(height: 18),
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              spacing: 4,
+                              children: [
+                                TextButton(
+                                  key: const Key('onboarding-terms-link'),
+                                  onPressed: () =>
+                                      _openLegal(LegalDocument.termsOfService),
+                                  child: Text(strings.termsOfService),
+                                ),
+                                Text(
+                                  '·',
+                                  style: TextStyle(color: palette.textMuted),
+                                ),
+                                TextButton(
+                                  key: const Key('onboarding-privacy-link'),
+                                  onPressed: () =>
+                                      _openLegal(LegalDocument.privacyPolicy),
+                                  child: Text(strings.privacyPolicy),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+            Align(
+              alignment: Alignment.bottomLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Semantics(
+                  button: true,
+                  label: 'test(review)',
+                  hint: strings.reviewModeEntryHint,
+                  child: InkWell(
+                    key: const Key('review-mode-entry-tap-target'),
+                    onTap: _enterReviewMode,
+                    canRequestFocus: true,
+                    splashColor: Colors.transparent,
+                    highlightColor: Colors.transparent,
+                    hoverColor: Colors.transparent,
+                    focusColor: Colors.transparent,
+                    child: SizedBox(
+                      width: 152,
+                      height: 48,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'test(review)',
+                          style: TextStyle(
+                            color: palette.textMuted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  void _enterReviewMode() {
+    if (_connecting) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const ReviewModeScreen()));
   }
 
   void _openLegal(LegalDocument document) {

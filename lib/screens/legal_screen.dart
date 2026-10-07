@@ -11,9 +11,14 @@ import '../theme.dart';
 enum LegalDocument { termsOfService, privacyPolicy }
 
 class LegalScreen extends StatefulWidget {
-  const LegalScreen({super.key, required this.document});
+  const LegalScreen({
+    super.key,
+    required this.document,
+    this.allowExternalLinks = true,
+  });
 
   final LegalDocument document;
+  final bool allowExternalLinks;
 
   @override
   State<LegalScreen> createState() => _LegalScreenState();
@@ -108,8 +113,9 @@ class _LegalScreenState extends State<LegalScreen> {
             final documents =
                 (source['documents'] as Map<String, dynamic>)[locale]
                     as Map<String, dynamic>;
-            final document = documents[isTerms ? 'terms' : 'privacy']
-                as Map<String, dynamic>;
+            final document =
+                documents[isTerms ? 'terms' : 'privacy']
+                    as Map<String, dynamic>;
             final markdown = document['markdown'] as String;
             final readableText = markdown
                 .replaceAll(RegExp(r'^##\s+', multiLine: true), '')
@@ -137,7 +143,10 @@ class _LegalScreenState extends State<LegalScreen> {
                           locale == 'fr' ? 'mise à jour ' : 'updated ',
                           updated,
                         ].join(),
-                        style: TextStyle(color: palette.textMuted, fontSize: 13),
+                        style: TextStyle(
+                          color: palette.textMuted,
+                          fontSize: 13,
+                        ),
                       ),
                       if (isTerms) ...[
                         const SizedBox(height: 6),
@@ -145,14 +154,20 @@ class _LegalScreenState extends State<LegalScreen> {
                           locale == 'fr'
                               ? 'Entrée en vigueur à la publication.'
                               : 'Effective on publication.',
-                          style: TextStyle(color: palette.textMuted, fontSize: 13),
+                          style: TextStyle(
+                            color: palette.textMuted,
+                            fontSize: 13,
+                          ),
                         ),
                         const SizedBox(height: 6),
                         Text(
                           locale == 'fr'
                               ? 'Droit français, sous réserve des protections impératives des consommateurs.'
                               : 'French law, subject to mandatory consumer protections.',
-                          style: TextStyle(color: palette.textMuted, fontSize: 13),
+                          style: TextStyle(
+                            color: palette.textMuted,
+                            fontSize: 13,
+                          ),
                         ),
                       ],
                       const SizedBox(height: 6),
@@ -161,7 +176,10 @@ class _LegalScreenState extends State<LegalScreen> {
                           locale == 'fr' ? 'Contact : ' : 'Contact: ',
                           currentLegalManifest.publicContactEmail,
                         ].join(),
-                        style: TextStyle(color: palette.textMuted, fontSize: 13),
+                        style: TextStyle(
+                          color: palette.textMuted,
+                          fontSize: 13,
+                        ),
                       ),
                     ],
                   ),
@@ -184,17 +202,20 @@ class _LegalScreenState extends State<LegalScreen> {
                     height: 1.65,
                   ),
                 ),
-                const SizedBox(height: 22),
-                OutlinedButton.icon(
-                  onPressed: () => launchUrl(
-                    Uri.parse(onlineUrl),
-                    mode: LaunchMode.externalApplication,
+                if (widget.allowExternalLinks) ...[
+                  const SizedBox(height: 22),
+                  OutlinedButton.icon(
+                    key: const Key('legal-online-link'),
+                    onPressed: () => launchUrl(
+                      Uri.parse(onlineUrl),
+                      mode: LaunchMode.externalApplication,
+                    ),
+                    icon: const Icon(Icons.open_in_new_rounded),
+                    label: Text(
+                      locale == 'fr' ? 'Voir en ligne' : 'View online',
+                    ),
                   ),
-                  icon: const Icon(Icons.open_in_new_rounded),
-                  label: Text(
-                    locale == 'fr' ? 'Voir en ligne' : 'View online',
-                  ),
-                ),
+                ],
               ],
             );
           },

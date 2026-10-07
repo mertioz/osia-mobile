@@ -54,6 +54,24 @@ class OsiaStrings {
   final String cameraPermissionDeniedForPairing;
   final String cameraUnavailableForPairing;
 
+  // ── Isolated reviewer mode ──
+  final String reviewModeLabel;
+  final String reviewModeEntryHint;
+  final String reviewModeDescription;
+  final String reviewModeDemoData;
+  final String reviewModeLocalReply;
+  final String reviewModeUnavailable;
+  final String reviewModeInputHint;
+  final String reviewModeConnectionStatus;
+  final String reviewModeExit;
+  final String reviewModeSendMessage;
+  final String reviewModeWelcome;
+  final String reviewModeSecondConversation;
+  final String reviewModeSampleQuestion;
+  final String reviewModeSampleAnswer;
+  final String reviewModePlanQuestion;
+  final String reviewModePlanAnswer;
+
   // ── Chat screen ──
   final String conversations;
   final String newChat;
@@ -454,6 +472,22 @@ class OsiaStrings {
     required this.invalidPairingQr,
     required this.cameraPermissionDeniedForPairing,
     required this.cameraUnavailableForPairing,
+    required this.reviewModeLabel,
+    required this.reviewModeEntryHint,
+    required this.reviewModeDescription,
+    required this.reviewModeDemoData,
+    required this.reviewModeLocalReply,
+    required this.reviewModeUnavailable,
+    required this.reviewModeInputHint,
+    required this.reviewModeConnectionStatus,
+    required this.reviewModeExit,
+    required this.reviewModeSendMessage,
+    required this.reviewModeWelcome,
+    required this.reviewModeSecondConversation,
+    required this.reviewModeSampleQuestion,
+    required this.reviewModeSampleAnswer,
+    required this.reviewModePlanQuestion,
+    required this.reviewModePlanAnswer,
     required this.conversations,
     required this.newChat,
     required this.noConversationsYet,
@@ -2717,6 +2751,26 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
       'Camera access was denied. You can cancel and enter the token manually.',
   cameraUnavailableForPairing:
       'The camera is unavailable. Try again or enter the token manually.',
+  reviewModeLabel: 'Review mode',
+  reviewModeEntryHint: 'Open the isolated local review mode.',
+  reviewModeDescription:
+      'Explore OSIA with synthetic data. No PC or online service is contacted.',
+  reviewModeDemoData: 'Synthetic demo data',
+  reviewModeLocalReply:
+      'This local demo reply was generated on this device. No provider or PC was contacted, and no external action was performed.',
+  reviewModeUnavailable: 'Unavailable in review mode.',
+  reviewModeInputHint: 'Try a message (it stays on this device)',
+  reviewModeConnectionStatus: 'No PC connection',
+  reviewModeExit: 'Exit review mode',
+  reviewModeSendMessage: 'Send message',
+  reviewModeWelcome: 'Getting started',
+  reviewModeSecondConversation: 'Planning a weekend walk',
+  reviewModeSampleQuestion: 'What can I explore in OSIA Mobile?',
+  reviewModeSampleAnswer:
+      'This synthetic conversation previews the Chat interface. Its messages are sample data.',
+  reviewModePlanQuestion: 'Can you help me plan a short walk?',
+  reviewModePlanAnswer:
+      'This is a sample response. No location, route service, or external action was used.',
   conversations: 'Conversations',
   newChat: 'New chat',
   noConversationsYet: 'No conversations yet',
@@ -3112,6 +3166,26 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
       'L’accès à la caméra a été refusé. Vous pouvez annuler et saisir le jeton manuellement.',
   cameraUnavailableForPairing:
       'La caméra est indisponible. Réessayez ou saisissez le jeton manuellement.',
+  reviewModeLabel: 'Mode d’évaluation',
+  reviewModeEntryHint: 'Ouvrir le mode d’évaluation local et isolé.',
+  reviewModeDescription:
+      'Explorez OSIA avec des données synthétiques. Aucun PC ni service en ligne ne sera contacté.',
+  reviewModeDemoData: 'Données de démonstration synthétiques',
+  reviewModeLocalReply:
+      'Cette réponse de démonstration a été générée localement sur cet appareil. Aucun fournisseur ni PC n’a été contacté et aucune action externe n’a été effectuée.',
+  reviewModeUnavailable: 'Indisponible en mode d’évaluation.',
+  reviewModeInputHint: 'Essayez un message (il reste sur cet appareil)',
+  reviewModeConnectionStatus: 'Aucune connexion à un PC',
+  reviewModeExit: 'Quitter le mode d’évaluation',
+  reviewModeSendMessage: 'Envoyer le message',
+  reviewModeWelcome: 'Bien démarrer',
+  reviewModeSecondConversation: 'Préparer une promenade',
+  reviewModeSampleQuestion: 'Que puis-je découvrir dans OSIA Mobile ?',
+  reviewModeSampleAnswer:
+      'Cette conversation synthétique présente l’interface de chat. Ses messages sont des données d’exemple.',
+  reviewModePlanQuestion: 'Peux-tu m’aider à prévoir une courte promenade ?',
+  reviewModePlanAnswer:
+      'Ceci est une réponse d’exemple. Aucune position, aucun service d’itinéraire ni aucune action externe n’a été utilisé.',
   conversations: 'Conversations',
   newChat: 'Nouveau chat',
   noConversationsYet: 'Aucune conversation pour le moment',
@@ -3508,6 +3582,22 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   invalidPairingQr: '这不是有效的 OSIA 配对二维码。请扫描其他代码。',
   cameraPermissionDeniedForPairing: '摄像头权限已被拒绝。您可以取消并手动输入令牌。',
   cameraUnavailableForPairing: '摄像头不可用。请重试或手动输入令牌。',
+  reviewModeLabel: '审核模式',
+  reviewModeEntryHint: '打开隔离的本地审核模式。',
+  reviewModeDescription: '使用合成数据探索 OSIA。不会连接电脑或在线服务。',
+  reviewModeDemoData: '合成演示数据',
+  reviewModeLocalReply: '此演示回复在本机生成。未联系任何模型服务或电脑，也未执行任何外部操作。',
+  reviewModeUnavailable: '审核模式下不可用。',
+  reviewModeInputHint: '试着发送消息（仅保留在本机）',
+  reviewModeConnectionStatus: '未连接电脑',
+  reviewModeExit: '退出审核模式',
+  reviewModeSendMessage: '发送消息',
+  reviewModeWelcome: '开始使用',
+  reviewModeSecondConversation: '计划周末散步',
+  reviewModeSampleQuestion: '我可以在 OSIA Mobile 中查看哪些内容？',
+  reviewModeSampleAnswer: '此合成对话展示聊天界面。消息均为示例数据。',
+  reviewModePlanQuestion: '可以帮我规划一段短途散步吗？',
+  reviewModePlanAnswer: '这是示例回复。未使用位置、路线服务或任何外部操作。',
   conversations: '对话',
   newChat: '新对话',
   noConversationsYet: '暂无对话',
@@ -3876,6 +3966,23 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   invalidPairingQr: '有効な OSIA ペアリング QR コードではありません。別のコードをお試しください。',
   cameraPermissionDeniedForPairing: 'カメラへのアクセスが拒否されました。キャンセルしてトークンを手動入力できます。',
   cameraUnavailableForPairing: 'カメラを使用できません。再試行するか、トークンを手動入力してください。',
+  reviewModeLabel: 'レビューモード',
+  reviewModeEntryHint: '隔離されたローカルレビューモードを開きます。',
+  reviewModeDescription: '合成データで OSIA を確認できます。PC やオンラインサービスには接続しません。',
+  reviewModeDemoData: '合成デモデータ',
+  reviewModeLocalReply:
+      'このデモ返信はこの端末でローカル生成されました。プロバイダーや PC には接続せず、外部操作も行っていません。',
+  reviewModeUnavailable: 'レビューモードでは利用できません。',
+  reviewModeInputHint: 'メッセージを試してください（この端末内に留まります）',
+  reviewModeConnectionStatus: 'PC 未接続',
+  reviewModeExit: 'レビューモードを終了',
+  reviewModeSendMessage: 'メッセージを送信',
+  reviewModeWelcome: 'はじめに',
+  reviewModeSecondConversation: '週末の散歩を計画',
+  reviewModeSampleQuestion: 'OSIA Mobile では何を確認できますか？',
+  reviewModeSampleAnswer: 'この合成会話はチャット画面のプレビューです。すべてサンプルデータです。',
+  reviewModePlanQuestion: '短い散歩の計画を手伝ってくれますか？',
+  reviewModePlanAnswer: 'これはサンプル返信です。位置情報やルートサービス、外部操作は使用していません。',
   conversations: '会話',
   newChat: '新しいチャット',
   noConversationsYet: 'まだ会話がありません',
@@ -4260,6 +4367,26 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
       'Der Kamerazugriff wurde verweigert. Sie können abbrechen und das Token manuell eingeben.',
   cameraUnavailableForPairing:
       'Die Kamera ist nicht verfügbar. Versuchen Sie es erneut oder geben Sie das Token manuell ein.',
+  reviewModeLabel: 'Prüfmodus',
+  reviewModeEntryHint: 'Den isolierten lokalen Prüfmodus öffnen.',
+  reviewModeDescription:
+      'OSIA mit synthetischen Daten erkunden. Es wird kein PC und kein Online-Dienst kontaktiert.',
+  reviewModeDemoData: 'Synthetische Demodaten',
+  reviewModeLocalReply:
+      'Diese lokale Demoantwort wurde auf diesem Gerät erstellt. Es wurde kein Anbieter oder PC kontaktiert und keine externe Aktion ausgeführt.',
+  reviewModeUnavailable: 'Im Prüfmodus nicht verfügbar.',
+  reviewModeInputHint: 'Nachricht testen (bleibt auf diesem Gerät)',
+  reviewModeConnectionStatus: 'Keine PC-Verbindung',
+  reviewModeExit: 'Prüfmodus verlassen',
+  reviewModeSendMessage: 'Nachricht senden',
+  reviewModeWelcome: 'Erste Schritte',
+  reviewModeSecondConversation: 'Einen Wochenendspaziergang planen',
+  reviewModeSampleQuestion: 'Was kann ich in OSIA Mobile ansehen?',
+  reviewModeSampleAnswer:
+      'Diese synthetische Unterhaltung zeigt die Chat-Oberfläche. Die Nachrichten sind Beispieldaten.',
+  reviewModePlanQuestion: 'Kannst du mir bei einem kurzen Spaziergang helfen?',
+  reviewModePlanAnswer:
+      'Dies ist eine Beispielantwort. Es wurden weder Standort- noch Routendienste oder externe Aktionen verwendet.',
   conversations: 'Unterhaltungen',
   newChat: 'Neuer Chat',
   noConversationsYet: 'Noch keine Unterhaltungen',
@@ -4668,6 +4795,26 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
       'Se denegó el acceso a la cámara. Puedes cancelar e introducir el token manualmente.',
   cameraUnavailableForPairing:
       'La cámara no está disponible. Inténtalo de nuevo o introduce el token manualmente.',
+  reviewModeLabel: 'Modo de revisión',
+  reviewModeEntryHint: 'Abrir el modo de revisión local y aislado.',
+  reviewModeDescription:
+      'Explora OSIA con datos sintéticos. No se contactará con ningún PC ni servicio en línea.',
+  reviewModeDemoData: 'Datos sintéticos de demostración',
+  reviewModeLocalReply:
+      'Esta respuesta de demostración se generó localmente en este dispositivo. No se contactó con ningún proveedor ni PC y no se realizó ninguna acción externa.',
+  reviewModeUnavailable: 'No disponible en el modo de revisión.',
+  reviewModeInputHint: 'Prueba un mensaje (permanece en este dispositivo)',
+  reviewModeConnectionStatus: 'Sin conexión a un PC',
+  reviewModeExit: 'Salir del modo de revisión',
+  reviewModeSendMessage: 'Enviar mensaje',
+  reviewModeWelcome: 'Primeros pasos',
+  reviewModeSecondConversation: 'Planear un paseo de fin de semana',
+  reviewModeSampleQuestion: '¿Qué puedo explorar en OSIA Mobile?',
+  reviewModeSampleAnswer:
+      'Esta conversación sintética muestra la interfaz de chat. Sus mensajes son datos de ejemplo.',
+  reviewModePlanQuestion: '¿Puedes ayudarme a planear un paseo corto?',
+  reviewModePlanAnswer:
+      'Esta es una respuesta de ejemplo. No se usaron ubicación, servicios de rutas ni acciones externas.',
   conversations: 'Conversaciones',
   newChat: 'Nuevo chat',
   noConversationsYet: 'Aún no hay conversaciones',
