@@ -156,35 +156,7 @@ class _ThinkingOrbsPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    const speeds = <double>[0.82, 1.06, 1.19, 0.91, 1.13, 0.76];
-    const offsets = <double>[0, 1.05, 2.20, 3.18, 4.17, 5.23];
-    final points =
-        <({double depth, Offset center, double radius, int index})>[];
-    for (var index = 0; index < ThinkingOrbs.orbCount; index++) {
-      if (!active) {
-        final y = size.height / 2 + (index.isEven ? -0.7 : 0.7);
-        points.add((
-          depth: y,
-          center: Offset(5 + index * 8.8, y),
-          radius: 3.2,
-          index: index,
-        ));
-        continue;
-      }
-      final angle = phase * math.pi * 2 * speeds[index] + offsets[index];
-      final x = size.width / 2 + math.cos(angle) * 15.4;
-      final y =
-          size.height / 2 +
-          math.sin(angle * 1.21 + offsets[index] * 0.23) * 3.7 +
-          math.sin(angle * 0.57 + index) * 1.0;
-      final radius = 2.7 + 0.8 * (0.5 + 0.5 * math.sin(angle * 0.83));
-      points.add((
-        depth: y + math.sin(angle) * 0.25,
-        center: Offset(x, y),
-        radius: radius,
-        index: index,
-      ));
-    }
+    final points = thinkingOrbPoints(size, phase, active: active);
     points.sort((a, b) => a.depth.compareTo(b.depth));
     for (final point in points) {
       final opacity = (0.68 + (point.depth - size.height / 2) * 0.035).clamp(
@@ -204,4 +176,31 @@ class _ThinkingOrbsPainter extends CustomPainter {
       oldDelegate.accent != accent ||
       oldDelegate.phase != phase ||
       oldDelegate.active != active;
+}
+
+/// Periodic geometry shared by painting and seam regression checks. Each
+/// phase-shifted orbit has identical position and velocity at phase 0 and 1.
+List<({double depth, Offset center, double radius, int index})>
+thinkingOrbPoints(Size size, double phase, {bool active = true}) {
+  return List.generate(ThinkingOrbs.orbCount, (index) {
+    if (!active) {
+      final y = size.height / 2 + (index.isEven ? -0.7 : 0.7);
+      return (
+        depth: y,
+        center: Offset(5 + index * 8.8, y),
+        radius: 3.2,
+        index: index,
+      );
+    }
+    final angle =
+        phase * math.pi * 2 + index * math.pi * 2 / ThinkingOrbs.orbCount;
+    final x = size.width / 2 + math.cos(angle) * 15.4;
+    final y = size.height / 2 + math.sin(angle) * 3.7;
+    return (
+      depth: y,
+      center: Offset(x, y),
+      radius: 3.1 + 0.4 * math.sin(angle),
+      index: index,
+    );
+  });
 }

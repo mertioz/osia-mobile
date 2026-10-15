@@ -53,6 +53,10 @@ Map<String, dynamic> traceEvent({
   'conversation_id': 'conv-254',
   'request_id': 'request-254',
   'turn_id': 'turn-254',
+  'run_id': 'run-254',
+  'provider_id': 'deepseek',
+  'model_id': 'deepseek-flash',
+  'effective_reasoning': 'high',
   'sequence': sequence,
   'revision': revision,
   'kind': kind,
@@ -68,6 +72,10 @@ ExecutionTraceSnapshot snapshot(List<Map<String, dynamic>> events) =>
       'conversation_id': 'conv-254',
       'request_id': 'request-254',
       'turn_id': 'turn-254',
+      'run_id': 'run-254',
+      'provider_id': 'deepseek',
+      'model_id': 'deepseek-flash',
+      'effective_reasoning': 'high',
       'redaction_class': executionTraceRedactionClass,
       'events': events,
     })!;
@@ -78,6 +86,10 @@ ExecutionTraceSnapshot uncheckedSnapshot(List<Map<String, dynamic>> events) =>
         conversationId: 'conv-254',
         requestId: 'request-254',
         turnId: 'turn-254',
+        runId: 'run-254',
+        providerId: 'deepseek',
+        modelId: 'deepseek-flash',
+        effectiveReasoning: 'high',
       ),
       events: events
           .map((event) => ExecutionTraceEvent.parse(event)!)
@@ -149,8 +161,8 @@ void main() {
     final goal = traceEvent(
       id: 'trace-goal',
       sequence: 1,
-      kind: 'goal',
-      displayKey: 'execution.goal.complete_task',
+      kind: 'action',
+      displayKey: 'execution.action.shell',
     );
     final terminal = traceEvent(
       id: 'trace-terminal',
@@ -169,16 +181,13 @@ void main() {
     );
 
     expect(find.byType(ExecutionTraceBlock), findsOneWidget);
-    expect(find.text(osiaStringsEn.executionTraceTitle), findsOneWidget);
-    expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
+    expect(find.text(osiaStringsEn.executionTraceTitle), findsNothing);
+    expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
     expect(find.byIcon(Icons.expand_more_rounded), findsNothing);
     expect(find.byKey(const ValueKey('execution_trace_summary')), findsNothing);
     expect(find.byIcon(Icons.check_circle_outline_rounded), findsNothing);
     expect(find.byIcon(Icons.auto_awesome_rounded), findsNothing);
-    expect(
-      find.text(osiaStringsEn.executionTraceText('execution.terminal.success')),
-      findsNothing,
-    );
+    expect(find.text('Completed'), findsNothing);
     expect(
       find.descendant(
         of: find.byType(ExecutionTraceBlock),
@@ -202,9 +211,9 @@ void main() {
         traceEvent(
           id: 'trace-goal',
           sequence: 1,
-          kind: 'goal',
-          displayKey: 'execution.goal.answer',
-        ),
+          kind: 'public_reasoning_summary',
+          displayKey: 'execution.reasoning.summary',
+        )..['summary'] = 'Checking the public browser status.',
         traceEvent(
           id: 'trace-browser',
           sequence: 2,
@@ -248,16 +257,10 @@ void main() {
       expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
       expect(find.byIcon(Icons.expand_more_rounded), findsOneWidget);
       expect(find.text(prose), findsOneWidget);
-      expect(prose, isNot(contains('\n')));
+      expect(prose, 'Checking the public browser status.');
       expect(prose, isNot(contains('•')));
       expect(find.byType(ListView), findsNothing);
       expect(find.byType(ListTile), findsNothing);
-      for (final event in trace.events) {
-        expect(
-          find.text(osiaStringsEn.executionTraceText(event.display.key)),
-          findsNothing,
-        );
-      }
 
       await tester.tap(find.byKey(const ValueKey('execution_trace_toggle')));
       await tester.pumpAndSettle();
@@ -307,7 +310,7 @@ void main() {
           displayKey: 'execution.goal.complete_task',
         ),
       ]);
-      const expected = 'I worked in the browser.';
+      const expected = '';
 
       expect(formatExecutionTraceSummary(osiaStringsEn, trace), expected);
       expect(formatExecutionTraceSummary(osiaStringsEn, trace), expected);
@@ -319,6 +322,10 @@ void main() {
       conversationId: 'conv-254',
       requestId: 'request-254',
       turnId: 'turn-254',
+      runId: 'run-254',
+      providerId: 'deepseek',
+      modelId: 'deepseek-flash',
+      effectiveReasoning: 'high',
     );
     final safe = ExecutionTraceEvent.parse(
       traceEvent(
@@ -371,7 +378,7 @@ void main() {
     );
     final prose = formatExecutionTraceSummary(osiaStringsEn, trace);
 
-    expect(prose, isEmpty);
+    expect(prose, '');
     expect(prose, isNot(contains('secret')));
     expect(prose, isNot(contains('provider')));
   });
@@ -412,26 +419,33 @@ void main() {
     final action = traceEvent(
       id: 'trace-action',
       sequence: 1,
-      kind: 'action',
-      displayKey: 'execution.action.browser',
-    );
+      kind: 'public_reasoning_summary',
+      displayKey: 'execution.reasoning.summary',
+    )..['summary'] = 'Checking the visible browser status.';
     final initial = snapshot(<Map<String, dynamic>>[action]);
-    await tester.pumpWidget(host(ExecutionTraceBlock(snapshot: initial)));
+    await tester.pumpWidget(
+      host(ExecutionTraceBlock(snapshot: initial, active: true)),
+    );
     final initialProse = formatExecutionTraceSummary(osiaStringsEn, initial);
-    expect(initialProse, isEmpty);
-    expect(find.byKey(const ValueKey('execution_trace_summary')), findsNothing);
+    expect(initialProse, 'Checking the visible browser status.');
+    expect(
+      find.byKey(const ValueKey('execution_trace_summary')),
+      findsOneWidget,
+    );
 
     final updated = snapshot(<Map<String, dynamic>>[
       action,
       traceEvent(
         id: 'trace-result',
         sequence: 2,
-        kind: 'result',
-        displayKey: 'execution.result.completed',
-      ),
+        kind: 'public_reasoning_summary',
+        displayKey: 'execution.reasoning.summary',
+      )..['summary'] = 'Comparing the returned public value.',
     ]);
-    await tester.pumpWidget(host(ExecutionTraceBlock(snapshot: updated)));
-    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      host(ExecutionTraceBlock(snapshot: updated, active: true)),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
     expect(
       find.text(formatExecutionTraceSummary(osiaStringsEn, updated)),
       findsOneWidget,
@@ -447,9 +461,9 @@ void main() {
       traceEvent(
         id: 'trace-goal',
         sequence: 1,
-        kind: 'goal',
-        displayKey: 'execution.goal.complete_task',
-      ),
+        kind: 'public_reasoning_summary',
+        displayKey: 'execution.reasoning.summary',
+      )..['summary'] = 'Checking the public values in the connected document.',
       traceEvent(
         id: 'trace-connector',
         sequence: 2,
@@ -465,11 +479,16 @@ void main() {
     ]);
     await tester.pumpWidget(
       host(
-        ExecutionTraceBlock(snapshot: trace),
+        ExecutionTraceBlock(snapshot: trace, active: true),
         textScale: 3,
         disableAnimations: true,
       ),
     );
+    // Exercise reduced-motion close/reopen as well as automatic first layout.
+    await tester.tap(find.byKey(const ValueKey('execution_trace_toggle')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('execution_trace_toggle')));
+    await tester.pump();
 
     expect(tester.takeException(), isNull);
     final summary = tester.widget<Text>(
@@ -481,41 +500,64 @@ void main() {
     expect(find.byTooltip('Speak'), findsNothing);
   });
 
-  testWidgets('French and English render localized prose', (tester) async {
-    final trace = snapshot(<Map<String, dynamic>>[
-      traceEvent(
-        id: 'trace-goal',
-        sequence: 1,
-        kind: 'goal',
-        displayKey: 'execution.goal.answer',
-      ),
-      traceEvent(
-        id: 'trace-result',
-        sequence: 2,
-        kind: 'result',
-        displayKey: 'execution.result.completed',
-      ),
-    ]);
-    await tester.pumpWidget(host(ExecutionTraceBlock(snapshot: trace)));
-    expect(find.text(osiaStringsEn.executionTraceTitle), findsOneWidget);
-    expect(
-      find.text(formatExecutionTraceSummary(osiaStringsEn, trace)),
-      findsOneWidget,
-    );
+  testWidgets(
+    'French and English preserve model wording and localize the header',
+    (tester) async {
+      final trace = snapshot(<Map<String, dynamic>>[
+        traceEvent(
+          id: 'trace-goal',
+          sequence: 1,
+          kind: 'public_reasoning_summary',
+          displayKey: 'execution.reasoning.summary',
+        )..['summary'] = 'Checking the public values before answering.',
+        traceEvent(
+          id: 'trace-result',
+          sequence: 2,
+          kind: 'result',
+          displayKey: 'execution.result.completed',
+        ),
+      ]);
+      await tester.pumpWidget(
+        host(ExecutionTraceBlock(snapshot: trace, active: true)),
+      );
+      final accessibility = tester.ensureSemantics();
+      expect(find.text(osiaStringsEn.executionTraceTitle), findsNothing);
+      expect(
+        find.bySemanticsLabel(osiaStringsEn.executionTraceTitle),
+        findsOneWidget,
+      );
+      expect(
+        find.text(formatExecutionTraceSummary(osiaStringsEn, trace)),
+        findsOneWidget,
+      );
 
-    await tester.pumpWidget(
-      host(ExecutionTraceBlock(snapshot: trace), strings: osiaStringsFr),
-    );
-    expect(find.text('Réflexion'), findsOneWidget);
-    expect(
-      formatExecutionTraceSummary(osiaStringsFr, trace),
-      'J’ai terminé l’étape demandée.',
-    );
-    expect(
-      find.text(formatExecutionTraceSummary(osiaStringsFr, trace)),
-      findsOneWidget,
-    );
-  });
+      await tester.pumpWidget(
+        host(
+          ExecutionTraceBlock(snapshot: trace, active: true),
+          strings: osiaStringsFr,
+        ),
+      );
+      expect(find.text('Réflexion'), findsNothing);
+      expect(find.bySemanticsLabel('Réflexion'), findsOneWidget);
+      expect(
+        formatExecutionTraceSummary(osiaStringsFr, trace),
+        'Checking the public values before answering.',
+      );
+      expect(
+        find.text(formatExecutionTraceSummary(osiaStringsFr, trace)),
+        findsOneWidget,
+      );
+      await tester.pumpWidget(
+        host(
+          ExecutionTraceBlock(snapshot: trace, active: false),
+          strings: osiaStringsFr,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Réflexion'), findsOneWidget);
+      accessibility.dispose();
+    },
+  );
 
   test('WOR-254 labels exist in every supported language', () {
     for (final code in osiaSupportedLanguages) {
@@ -524,13 +566,6 @@ void main() {
       expect(strings.executionTraceTitle, isNotEmpty);
       for (final state in ws.CommittedTransportState.values) {
         expect(strings.transportStateText(state.name), isNotEmpty);
-      }
-      for (final key in executionTraceDisplayKeys.keys) {
-        expect(strings.executionTraceText(key), isNotEmpty);
-        expect(strings.executionTraceText(key), isNot(key));
-        if (key != 'execution.reasoning.summary') {
-          expect(strings.executionTraceSummaryClause(key), isNotEmpty);
-        }
       }
     }
   });

@@ -9,6 +9,10 @@ const traceKey = ExecutionTraceKey(
   conversationId: 'conv-257',
   requestId: 'request-257',
   turnId: 'turn-257',
+  runId: 'run-257',
+  providerId: 'deepseek',
+  modelId: 'deepseek-flash',
+  effectiveReasoning: 'high',
 );
 
 Map<String, dynamic> traceEvent({
@@ -29,6 +33,10 @@ Map<String, dynamic> traceEvent({
   'conversation_id': conversationId,
   'request_id': requestId,
   'turn_id': turnId,
+  'run_id': traceKey.runId,
+  'provider_id': traceKey.providerId,
+  'model_id': traceKey.modelId,
+  'effective_reasoning': traceKey.effectiveReasoning,
   'sequence': sequence,
   'revision': revision,
   'kind': kind,
@@ -47,12 +55,19 @@ ExecutionTraceSnapshot snapshot(List<Map<String, dynamic>> events) =>
       'conversation_id': traceKey.conversationId,
       'request_id': traceKey.requestId,
       'turn_id': traceKey.turnId,
+      'run_id': traceKey.runId,
+      'provider_id': traceKey.providerId,
+      'model_id': traceKey.modelId,
+      'effective_reasoning': traceKey.effectiveReasoning,
       'redaction_class': executionTraceRedactionClass,
       'events': events,
     })!;
 
-ExecutionTraceSnapshot uncheckedSnapshot(List<ExecutionTraceEvent> events) =>
-    ExecutionTraceSnapshot(key: traceKey, events: events);
+ExecutionTraceSnapshot uncheckedSnapshot(List<Map<String, dynamic>> events) =>
+    ExecutionTraceSnapshot(
+      key: traceKey,
+      events: events.map((event) => ExecutionTraceEvent.parse(event)!).toList(),
+    );
 
 List<Map<String, dynamic>> successfulActions() => <Map<String, dynamic>>[
   traceEvent(
@@ -117,622 +132,176 @@ Widget host(Widget child, {OsiaStrings strings = osiaStringsEn}) => OsiaTheme(
   ),
 );
 
+// WOR-340 supersedes local first-person prose generation. Retain the real
+// activity/privacy/order contracts without inventing model statements.
 void main() {
-  test('three successful actions become one natural ordered sentence', () {
-    final prose = formatExecutionTraceSummary(
-      osiaStringsEn,
-      snapshot(successfulActions()),
-    );
-
-    expect(
-      prose,
-      'I worked in the browser, then handled a document and worked with files.',
-    );
-    expect('I '.allMatches(prose), hasLength(1));
-    expect(prose, isNot(contains('Step completed')));
-    expect(prose, isNot(contains('result')));
-  });
-
-  test('permission allow collapses into the resulting action', () {
-    final trace = snapshot(<Map<String, dynamic>>[
-      traceEvent(
-        id: 'action',
-        sequence: 1,
-        kind: 'action',
-        displayKey: 'execution.action.browser',
-        toolAttemptId: 'attempt-allow',
-      ),
-      traceEvent(
-        id: 'permission',
-        sequence: 2,
-        kind: 'waiting_permission',
-        displayKey: 'execution.permission.waiting',
-        toolAttemptId: 'attempt-allow',
-        permissionRequestId: 'permission-allow',
-      ),
-      traceEvent(
-        id: 'result',
-        sequence: 3,
-        kind: 'result',
-        displayKey: 'execution.result.completed',
-        toolAttemptId: 'attempt-allow',
-      ),
-    ]);
-
-    final prose = formatExecutionTraceSummary(osiaStringsEn, trace);
-    expect(prose, 'I worked in the browser.');
-    expect(prose.toLowerCase(), isNot(contains('permission')));
-    expect(prose.toLowerCase(), isNot(contains('authorization')));
-  });
-
-  test('permission denial stays truthful without blaming the user', () {
-    final trace = snapshot(<Map<String, dynamic>>[
-      traceEvent(
-        id: 'action',
-        sequence: 1,
-        kind: 'action',
-        displayKey: 'execution.action.connector',
-        toolAttemptId: 'attempt-denied',
-      ),
-      traceEvent(
-        id: 'permission',
-        sequence: 2,
-        kind: 'waiting_permission',
-        displayKey: 'execution.permission.waiting',
-        toolAttemptId: 'attempt-denied',
-        permissionRequestId: 'permission-denied',
-      ),
-      traceEvent(
-        id: 'result',
-        sequence: 3,
-        kind: 'result',
-        displayKey: 'execution.result.needs_attention',
-        toolAttemptId: 'attempt-denied',
-      ),
-      traceEvent(
-        id: 'terminal',
-        sequence: 4,
-        kind: 'terminal',
-        displayKey: 'execution.terminal.blocked',
-        terminal: true,
-      ),
-    ]);
-
-    final prose = formatExecutionTraceSummary(osiaStringsEn, trace);
-    expect(prose, contains('authorization was unavailable'));
-    expect(prose.toLowerCase(), isNot(contains('you denied')));
-    expect(prose.toLowerCase(), isNot(contains('you rejected')));
-  });
-
-  test('three sibling actions with one safe category stay natural', () {
-    final events = <Map<String, dynamic>>[];
-    for (var index = 0; index < 3; index++) {
-      final attempt = 'attempt-$index';
-      events
-        ..add(
-          traceEvent(
-            id: 'action-$index',
-            sequence: index * 2 + 1,
-            kind: 'action',
-            displayKey: 'execution.action.capability',
-            toolAttemptId: attempt,
-          ),
-        )
-        ..add(
-          traceEvent(
-            id: 'result-$index',
-            sequence: index * 2 + 2,
-            kind: 'result',
-            displayKey: 'execution.result.completed',
-            toolAttemptId: attempt,
-          ),
-        );
-    }
-
-    expect(
-      formatExecutionTraceSummary(osiaStringsEn, snapshot(events)),
-      'I completed 3 related actions with OSIA.',
-    );
-  });
-
-  test('presentation failure never reads as a user denial', () {
-    final trace = snapshot(<Map<String, dynamic>>[
-      traceEvent(
-        id: 'action',
-        sequence: 1,
-        kind: 'action',
-        displayKey: 'execution.action.connector',
-        toolAttemptId: 'attempt-presentation',
-      ),
-      traceEvent(
-        id: 'permission',
-        sequence: 2,
-        kind: 'waiting_permission',
-        displayKey: 'execution.permission.waiting',
-        toolAttemptId: 'attempt-presentation',
-        permissionRequestId: 'permission-presentation',
-      ),
-      traceEvent(
-        id: 'result',
-        sequence: 3,
-        kind: 'result',
-        displayKey: 'execution.result.needs_attention',
-        toolAttemptId: 'attempt-presentation',
-      ),
-      traceEvent(
-        id: 'terminal',
-        sequence: 4,
-        kind: 'terminal',
-        displayKey: 'execution.terminal.blocked',
-        terminal: true,
-      ),
-    ]);
-
-    final prose = formatExecutionTraceSummary(osiaStringsEn, trace);
-    expect(prose, contains('authorization was unavailable'));
-    for (final forbidden in <String>[
-      'denied',
-      'declined',
-      'rejected',
-      'user',
-    ]) {
-      expect(prose.toLowerCase(), isNot(contains(forbidden)));
-    }
-  });
+  const successfulFacts = '';
 
   test(
-    'failed first method and successful fallback form one recovery sentence',
+    'successful actions remain factual activity, without model impersonation',
     () {
-      final trace = snapshot(<Map<String, dynamic>>[
+      final text = formatExecutionTraceSummary(
+        osiaStringsEn,
+        snapshot(successfulActions()),
+      );
+      expect(text, successfulFacts);
+      expect(text, isNot(contains('I ')));
+      expect(text, isNot(contains('verified')));
+    },
+  );
+
+  test(
+    'repetition preserves distinct observed actions instead of inferring a story',
+    () {
+      final trace = snapshot([
         traceEvent(
-          id: 'first-action',
+          id: 'one',
           sequence: 1,
-          kind: 'action',
-          displayKey: 'execution.action.shell',
-          toolAttemptId: 'attempt-first',
-        ),
-        traceEvent(
-          id: 'first-result',
-          sequence: 2,
-          kind: 'result',
-          displayKey: 'execution.result.needs_attention',
-          toolAttemptId: 'attempt-first',
-        ),
-        traceEvent(
-          id: 'fallback',
-          sequence: 3,
-          kind: 'continuation',
-          displayKey: 'execution.continuation.new_strategy',
-        ),
-        traceEvent(
-          id: 'second-action',
-          sequence: 4,
           kind: 'action',
           displayKey: 'execution.action.browser',
-          toolAttemptId: 'attempt-second',
         ),
         traceEvent(
-          id: 'second-result',
-          sequence: 5,
-          kind: 'result',
-          displayKey: 'execution.result.completed',
-          toolAttemptId: 'attempt-second',
+          id: 'two',
+          sequence: 2,
+          kind: 'action',
+          displayKey: 'execution.action.browser',
         ),
       ]);
-
-      expect(
-        formatExecutionTraceSummary(osiaStringsEn, trace),
-        'The first method did not work, so I tried another and worked in the browser.',
-      );
+      expect(formatExecutionTraceSummary(osiaStringsEn, trace), '');
     },
   );
 
-  test('ambiguous fallback order does not invent a relationship', () {
-    final trace = snapshot(<Map<String, dynamic>>[
-      traceEvent(
-        id: 'failed-action',
-        sequence: 1,
-        kind: 'action',
-        displayKey: 'execution.action.shell',
-        toolAttemptId: 'attempt-failed',
-      ),
-      traceEvent(
-        id: 'failed-result',
-        sequence: 2,
-        kind: 'result',
-        displayKey: 'execution.result.needs_attention',
-        toolAttemptId: 'attempt-failed',
-      ),
-      traceEvent(
-        id: 'continuation',
-        sequence: 3,
-        kind: 'continuation',
-        displayKey: 'execution.continuation.new_strategy',
-      ),
-      traceEvent(
-        id: 'browser-action',
-        sequence: 4,
-        kind: 'action',
-        displayKey: 'execution.action.browser',
-        toolAttemptId: 'attempt-browser',
-      ),
-      traceEvent(
-        id: 'browser-result',
-        sequence: 5,
-        kind: 'result',
-        displayKey: 'execution.result.completed',
-        toolAttemptId: 'attempt-browser',
-      ),
-      traceEvent(
-        id: 'document-action',
-        sequence: 6,
-        kind: 'action',
-        displayKey: 'execution.action.document',
-        toolAttemptId: 'attempt-document',
-      ),
-      traceEvent(
-        id: 'document-result',
-        sequence: 7,
-        kind: 'result',
-        displayKey: 'execution.result.completed',
-        toolAttemptId: 'attempt-document',
-      ),
-    ]);
-
-    final prose = formatExecutionTraceSummary(osiaStringsEn, trace);
-    expect(
-      prose,
-      "I worked in the browser, then handled a document, but I couldn't complete the local operation.",
+  test('latest revision wins and event order survives replay', () {
+    final old = traceEvent(
+      id: 'a',
+      sequence: 1,
+      kind: 'action',
+      displayKey: 'execution.action.browser',
     );
-    expect(prose, isNot(contains('first method')));
-  });
-
-  test('partial success states completed work before the concrete blocker', () {
-    final trace = snapshot(<Map<String, dynamic>>[
-      traceEvent(
-        id: 'browser-action',
-        sequence: 1,
-        kind: 'action',
-        displayKey: 'execution.action.browser',
-        toolAttemptId: 'attempt-browser',
-      ),
-      traceEvent(
-        id: 'browser-result',
-        sequence: 2,
-        kind: 'result',
-        displayKey: 'execution.result.completed',
-        toolAttemptId: 'attempt-browser',
-      ),
-      traceEvent(
-        id: 'document-action',
-        sequence: 3,
-        kind: 'action',
-        displayKey: 'execution.action.document',
-        toolAttemptId: 'attempt-document',
-      ),
-      traceEvent(
-        id: 'document-result',
-        sequence: 4,
-        kind: 'result',
-        displayKey: 'execution.result.needs_attention',
-        toolAttemptId: 'attempt-document',
-      ),
-      traceEvent(
-        id: 'terminal',
-        sequence: 5,
-        kind: 'terminal',
-        displayKey: 'execution.terminal.blocked',
-        terminal: true,
-      ),
-    ]);
-
-    expect(
-      formatExecutionTraceSummary(osiaStringsEn, trace),
-      "I worked in the browser, but I couldn't complete the document step.",
+    final updated = traceEvent(
+      id: 'a',
+      sequence: 1,
+      revision: 2,
+      kind: 'action',
+      displayKey: 'execution.action.shell',
     );
+    final result = traceEvent(
+      id: 'b',
+      sequence: 2,
+      kind: 'result',
+      displayKey: 'execution.result.needs_attention',
+    );
+    final trace = uncheckedSnapshot([result, old, updated, old]);
+    expect(formatExecutionTraceSummary(osiaStringsEn, trace), '');
   });
 
   test(
-    'physical partial shape deduplicates blockers and keeps success first',
+    'terminal and planner metadata never manufacture a model explanation',
     () {
-      final trace = snapshot(<Map<String, dynamic>>[
-        traceEvent(
-          id: 'shell-action',
-          sequence: 1,
-          kind: 'action',
-          displayKey: 'execution.action.shell',
-          toolAttemptId: 'attempt-shell',
-        ),
-        traceEvent(
-          id: 'shell-result',
-          sequence: 2,
-          kind: 'result',
-          displayKey: 'execution.result.completed',
-          toolAttemptId: 'attempt-shell',
-        ),
-        traceEvent(
-          id: 'generic-failure-a',
-          sequence: 3,
-          kind: 'result',
-          displayKey: 'execution.result.needs_attention',
-          toolAttemptId: 'unmatched-a',
-        ),
-        traceEvent(
-          id: 'generic-failure-b',
-          sequence: 4,
-          kind: 'result',
-          displayKey: 'execution.result.needs_attention',
-          toolAttemptId: 'unmatched-b',
-        ),
-        traceEvent(
-          id: 'capability-action-a',
-          sequence: 5,
-          kind: 'action',
-          displayKey: 'execution.action.capability',
-          toolAttemptId: 'attempt-capability-a',
-        ),
-        traceEvent(
-          id: 'capability-result-a',
-          sequence: 6,
-          kind: 'result',
-          displayKey: 'execution.result.completed',
-          toolAttemptId: 'attempt-capability-a',
-        ),
-        traceEvent(
-          id: 'capability-action-b',
-          sequence: 7,
-          kind: 'action',
-          displayKey: 'execution.action.capability',
-          toolAttemptId: 'attempt-capability-b',
-        ),
-        traceEvent(
-          id: 'capability-result-b',
-          sequence: 8,
-          kind: 'result',
-          displayKey: 'execution.result.completed',
-          toolAttemptId: 'attempt-capability-b',
-        ),
-        traceEvent(
-          id: 'terminal',
-          sequence: 9,
-          kind: 'terminal',
-          displayKey: 'execution.terminal.blocked',
-          terminal: true,
-        ),
-      ]);
-
-      expect(
-        formatExecutionTraceSummary(osiaStringsEn, trace),
-        "I ran a local operation. I completed 2 related actions with OSIA, but I couldn't complete the next step.",
-      );
-    },
-  );
-
-  test(
-    'reconciliation-only information becomes a short jargon-free summary',
-    () {
-      final trace = snapshot(<Map<String, dynamic>>[
-        traceEvent(
-          id: 'goal',
-          sequence: 1,
-          kind: 'goal',
-          displayKey: 'execution.goal.complete_task',
-        ),
-        traceEvent(
-          id: 'reconciliation',
-          sequence: 2,
-          kind: 'reconciliation',
-          displayKey: 'execution.reconciliation.verifying',
-        ),
-        traceEvent(
-          id: 'terminal',
-          sequence: 3,
-          kind: 'terminal',
-          displayKey: 'execution.terminal.blocked',
-          terminal: true,
-        ),
-      ]);
-
-      final prose = formatExecutionTraceSummary(osiaStringsEn, trace);
-      expect(prose, 'I had to stop before the request was complete.');
-      for (final forbidden in <String>[
-        'reconciliation',
-        'postcondition',
-        'terminal',
-        'strategy',
-        'evidence',
-        'invocation',
+      for (final terminalKey in [
+        'success',
+        'blocked',
+        'cancelled',
+        'safety_block',
       ]) {
-        expect(prose.toLowerCase(), isNot(contains(forbidden)));
+        final trace = snapshot([
+          traceEvent(
+            id: 'goal',
+            sequence: 1,
+            kind: 'goal',
+            displayKey: 'execution.goal.complete_task',
+          ),
+          traceEvent(
+            id: 'preparing',
+            sequence: 2,
+            kind: 'action',
+            displayKey: 'execution.action.preparing',
+          ),
+          traceEvent(
+            id: 'verify',
+            sequence: 3,
+            kind: 'reconciliation',
+            displayKey: 'execution.reconciliation.verifying',
+          ),
+          traceEvent(
+            id: 'terminal',
+            sequence: 4,
+            kind: 'terminal',
+            displayKey: 'execution.terminal.$terminalKey',
+            terminal: true,
+          ),
+        ]);
+        expect(formatExecutionTraceSummary(osiaStringsEn, trace), isEmpty);
       }
     },
   );
 
-  test('latest revision wins without repeating the action', () {
-    final oldAction = ExecutionTraceEvent.parse(
-      traceEvent(
-        id: 'revised-action',
-        sequence: 1,
-        revision: 1,
-        kind: 'action',
-        displayKey: 'execution.action.browser',
-        toolAttemptId: 'attempt-revised',
-      ),
-    )!;
-    final revisedAction = ExecutionTraceEvent.parse(
-      traceEvent(
-        id: 'revised-action',
-        sequence: 1,
-        revision: 2,
-        kind: 'action',
-        displayKey: 'execution.action.document',
-        toolAttemptId: 'attempt-revised',
-      ),
-    )!;
-    final result = ExecutionTraceEvent.parse(
-      traceEvent(
-        id: 'result',
-        sequence: 2,
-        kind: 'result',
-        displayKey: 'execution.result.completed',
-        toolAttemptId: 'attempt-revised',
-      ),
-    )!;
-
-    expect(
-      formatExecutionTraceSummary(
-        osiaStringsEn,
-        uncheckedSnapshot(<ExecutionTraceEvent>[
-          oldAction,
-          revisedAction,
-          result,
-        ]),
-      ),
-      'I handled a document.',
-    );
-  });
-
-  test('event order is preserved', () {
-    final prose = formatExecutionTraceSummary(
-      osiaStringsEn,
-      snapshot(successfulActions()),
-    );
-    expect(prose.indexOf('browser'), lessThan(prose.indexOf('document')));
-    expect(prose.indexOf('document'), lessThan(prose.indexOf('files')));
-  });
-
-  test('unknown and cross-turn events are ignored safely', () {
-    final unknown = ExecutionTraceEvent(
-      eventId: 'unknown',
-      traceKey: traceKey,
+  test('public model wording and activity stay separate, in order', () {
+    final raw = traceEvent(
+      id: 'model',
       sequence: 1,
-      revision: 1,
-      kind: ExecutionTraceKind.action,
-      display: const ExecutionTraceDisplay('provider.private_reasoning'),
-      timestamp: DateTime.utc(2026, 8, 10),
-      terminal: false,
-    );
-    final crossTurn = ExecutionTraceEvent.parse(
+      kind: 'public_reasoning_summary',
+      displayKey: 'execution.reasoning.summary',
+    )..['summary'] = 'I checked  both visible values.';
+    final trace = snapshot([
+      raw,
       traceEvent(
-        id: 'cross-turn',
+        id: 'tool',
         sequence: 2,
         kind: 'action',
         displayKey: 'execution.action.shell',
-        conversationId: 'other-conversation',
-        requestId: 'other-request',
-        turnId: 'other-turn',
       ),
-    )!;
-    final safeAction = ExecutionTraceEvent.parse(
       traceEvent(
-        id: 'safe-action',
+        id: 'returned',
         sequence: 3,
-        kind: 'action',
-        displayKey: 'execution.action.browser',
-      ),
-    )!;
-    final safeResult = ExecutionTraceEvent.parse(
-      traceEvent(
-        id: 'safe-result',
-        sequence: 4,
         kind: 'result',
-        displayKey: 'execution.result.completed',
-      ),
-    )!;
-
-    final prose = formatExecutionTraceSummary(
-      osiaStringsEn,
-      uncheckedSnapshot(<ExecutionTraceEvent>[
-        unknown,
-        crossTurn,
-        safeAction,
-        safeResult,
-      ]),
-    );
-    expect(prose, 'I worked in the browser.');
-    expect(prose, isNot(contains('provider')));
-    expect(prose, isNot(contains('local operation')));
-  });
-
-  test('simple turns stay concise', () {
-    final trace = snapshot(<Map<String, dynamic>>[
-      traceEvent(
-        id: 'goal',
-        sequence: 1,
-        kind: 'goal',
-        displayKey: 'execution.goal.answer',
-      ),
-      traceEvent(
-        id: 'terminal',
-        sequence: 2,
-        kind: 'terminal',
-        displayKey: 'execution.terminal.success',
-        terminal: true,
+        displayKey: 'execution.result.observed',
       ),
     ]);
-
-    final prose = formatExecutionTraceSummary(osiaStringsEn, trace);
-    expect(prose, 'I handled the request.');
-    expect(prose.length, lessThan(40));
-  });
-
-  test('persistence reconstruction produces identical prose', () {
-    final original = snapshot(successfulActions());
-    final restored = ExecutionTraceSnapshot.parseHistory(original.toJson())!;
-
     expect(
-      formatExecutionTraceSummary(osiaStringsFr, restored),
-      formatExecutionTraceSummary(osiaStringsFr, original),
+      formatExecutionTraceSummary(osiaStringsEn, trace),
+      'I checked  both visible values.',
     );
-  });
-
-  test('French and English are natural and all six locales resolve', () {
-    final trace = snapshot(successfulActions());
     expect(
       formatExecutionTraceSummary(osiaStringsFr, trace),
-      'J’ai utilisé le navigateur, puis traité un document et travaillé avec des fichiers.',
+      'I checked  both visible values.',
     );
-    expect(
-      formatExecutionTraceSummary(osiaStringsEn, trace),
-      'I worked in the browser, then handled a document and worked with files.',
-    );
-    for (final code in osiaSupportedLanguages) {
-      final prose = formatExecutionTraceSummary(
-        osiaStringsForCode(code),
-        trace,
+  });
+
+  test(
+    'history reconstruction keeps exact text and localizes only activity',
+    () {
+      final original = snapshot(successfulActions());
+      final restored = ExecutionTraceSnapshot.parseHistory(original.toJson())!;
+      expect(
+        formatExecutionTraceSummary(osiaStringsEn, restored),
+        successfulFacts,
       );
-      expect(prose, isNotEmpty, reason: code);
-      expect(prose, isNot(contains('execution.')), reason: code);
-      if (code != 'en') {
-        expect(prose, isNot(contains('I worked')), reason: code);
+      for (final code in osiaSupportedLanguages) {
+        final text = formatExecutionTraceSummary(
+          osiaStringsForCode(code),
+          restored,
+        );
+        expect(text, isEmpty);
+        expect(text, isNot(contains('execution.')));
+        expect(text, isNot(contains('attempt-')));
       }
-    }
+    },
+  );
+
+  test('late activity after a terminal cannot create more Thinking', () {
+    final events = successfulActions();
+    final late = traceEvent(
+      id: 'late',
+      sequence: 8,
+      kind: 'action',
+      displayKey: 'execution.action.shell',
+    );
+    final trace = uncheckedSnapshot([...events, late]);
+    expect(formatExecutionTraceSummary(osiaStringsEn, trace), successfulFacts);
   });
 
-  test('public prose contains no internal terms or identifiers', () {
-    final prose = formatExecutionTraceSummary(
-      osiaStringsEn,
-      snapshot(successfulActions()),
-    ).toLowerCase();
-    for (final forbidden in <String>[
-      'postcondition',
-      'terminality',
-      'semantic equivalence',
-      'strategy frontier',
-      'evidence revision',
-      'reconciliation',
-      'invocation',
-      'tool_attempt',
-      'permission_request',
-      'attempt-browser',
-      'request-257',
-      'turn-257',
-    ]) {
-      expect(prose, isNot(contains(forbidden)));
-    }
-  });
-
-  testWidgets('collapsed Reflection UI and no-speak contract stay unchanged', (
+  testWidgets('completed tool-only history has no fabricated Thinking', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -741,25 +310,9 @@ void main() {
           snapshot: snapshot(successfulActions()),
           collapsed: true,
         ),
-        strings: osiaStringsFr,
       ),
     );
-
-    expect(find.text('Réflexion'), findsOneWidget);
-    expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
+    expect(find.byKey(const ValueKey('execution_trace_toggle')), findsNothing);
     expect(find.byKey(const ValueKey('execution_trace_summary')), findsNothing);
-    expect(find.byIcon(Icons.volume_up_rounded), findsNothing);
-    expect(find.byTooltip('Speak'), findsNothing);
-
-    await tester.tap(find.byKey(const ValueKey('execution_trace_toggle')));
-    await tester.pumpAndSettle();
-    expect(find.byIcon(Icons.expand_more_rounded), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('execution_trace_summary')),
-      findsOneWidget,
-    );
-    expect(find.byType(Card), findsNothing);
-    expect(find.byType(ListTile), findsNothing);
-    expect(find.byIcon(Icons.volume_up_rounded), findsNothing);
   });
 }

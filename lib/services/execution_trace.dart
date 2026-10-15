@@ -47,6 +47,7 @@ const Map<String, ExecutionTraceKind> executionTraceDisplayKeys =
       'execution.action.capability': ExecutionTraceKind.action,
       'execution.permission.waiting': ExecutionTraceKind.waitingPermission,
       'execution.result.completed': ExecutionTraceKind.result,
+      'execution.result.observed': ExecutionTraceKind.result,
       'execution.result.needs_attention': ExecutionTraceKind.result,
       'execution.result.cancelled': ExecutionTraceKind.result,
       'execution.continuation.new_strategy': ExecutionTraceKind.continuation,
@@ -88,9 +89,7 @@ bool _safeMetadata(String value, {int maxLength = 256}) {
 }
 
 bool _safePublicSummary(String value) {
-  if (value.trim().isEmpty ||
-      value.length > 2000 ||
-      utf8.encode(value).length > 4096) {
+  if (value.trim().isEmpty) {
     return false;
   }
   if (RegExp(
@@ -100,6 +99,9 @@ bool _safePublicSummary(String value) {
     return false;
   }
   if (_sensitivePublicTextPatterns.any((pattern) => pattern.hasMatch(value))) {
+    return false;
+  }
+  if (RegExp(r'<[|｜]|[|｜]DSML[|｜]', caseSensitive: false).hasMatch(value)) {
     return false;
   }
   for (final unit in value.codeUnits) {
@@ -447,9 +449,7 @@ class ExecutionTraceEnvelope {
   static ExecutionTraceEnvelope? parse(Map<String, dynamic> raw) {
     final event = ExecutionTraceEvent.parse(raw, envelope: true);
     final snapshotRaw = raw['snapshot'];
-    if (event == null ||
-        snapshotRaw is! List ||
-        snapshotRaw.length > executionTraceMaxEvents) {
+    if (event == null || snapshotRaw is! List) {
       return null;
     }
     final snapshot = <ExecutionTraceEvent>[];
@@ -468,8 +468,6 @@ class ExecutionTraceEnvelope {
         )) {
       return null;
     }
-    final encodedBytes = utf8.encode(jsonEncode(raw)).length;
-    if (encodedBytes > executionTraceMaxSerializedBytes) return null;
     return ExecutionTraceEnvelope(event: event, snapshot: snapshot);
   }
 }
@@ -560,9 +558,7 @@ class ExecutionTraceSnapshot {
       effectiveReasoning: effectiveReasoning,
     );
     final items = raw['events'];
-    if (!key.valid ||
-        items is! List ||
-        items.length > executionTraceMaxEvents) {
+    if (!key.valid || items is! List) {
       return null;
     }
     final events = <ExecutionTraceEvent>[];
@@ -584,10 +580,6 @@ class ExecutionTraceSnapshot {
       events.add(event);
     }
     final snapshot = ExecutionTraceSnapshot(key: key, events: events);
-    if (utf8.encode(jsonEncode(snapshot.toJson())).length >
-        executionTraceMaxSerializedBytes) {
-      return null;
-    }
     return snapshot;
   }
 }
@@ -675,6 +667,11 @@ class ExecutionTraceAccumulator {
       if (sequenceOwner != null && sequenceOwner != event.eventId) return null;
       if (previous != null) {
         if (event.sequence != previous.sequence) return null;
+        if (previous.kind == ExecutionTraceKind.reasoningSummary &&
+            (event.kind != previous.kind ||
+                !event.publicSummary.startsWith(previous.publicSummary))) {
+          continue;
+        }
         if (event.revision == previous.revision &&
             jsonEncode(event.toJson()) != jsonEncode(previous.toJson())) {
           return null;
@@ -694,17 +691,12 @@ class ExecutionTraceAccumulator {
     }
     final values = candidateEvents.values.toList()
       ..sort((a, b) => a.sequence.compareTo(b.sequence));
-    if (values.length > executionTraceMaxEvents) return null;
     terminalSeen = false;
     for (final event in values) {
       if (terminalSeen) return null;
       terminalSeen = event.terminal;
     }
     final snapshot = ExecutionTraceSnapshot(key: key, events: values);
-    if (utf8.encode(jsonEncode(snapshot.toJson())).length >
-        executionTraceMaxSerializedBytes) {
-      return null;
-    }
     _events
       ..clear()
       ..addAll(candidateEvents);
@@ -714,4 +706,48 @@ class ExecutionTraceAccumulator {
     _terminal = terminalSeen;
     return snapshot;
   }
+}
+
+/// UI projection merge: a compact/history snapshot cannot erase public text
+/// already received for this exact PC-owned turn. No new events are authored.
+ExecutionTraceSnapshot mergeExecutionTraceSnapshots(
+  ExecutionTraceSnapshot? previous,
+  ExecutionTraceSnapshot incoming,
+) {
+  if (previous == null || previous.key != incoming.key) return incoming;
+  if (previous.terminal) return previous;
+  final events = <String, ExecutionTraceEvent>{};
+  final sequences = <int, String>{};
+  for (final snapshot in [previous, incoming]) {
+    for (final event in snapshot.events) {
+      if (event.traceKey != incoming.key ||
+          ExecutionTraceEvent.parse(event.toJson()) == null) {
+        continue;
+      }
+      final prior = events[event.eventId];
+      final owner = sequences[event.sequence];
+      if (owner != null && owner != event.eventId) continue;
+      if (prior != null &&
+          (prior.sequence != event.sequence ||
+              prior.revision >= event.revision)) {
+        continue;
+      }
+      if (prior != null &&
+          prior.publicSummary.isNotEmpty &&
+          !event.publicSummary.startsWith(prior.publicSummary)) {
+        continue;
+      }
+      events[event.eventId] = event;
+      sequences[event.sequence] = event.eventId;
+    }
+  }
+  final ordered = events.values.toList()
+    ..sort((a, b) => a.sequence.compareTo(b.sequence));
+  final terminalIndex = ordered.indexWhere((event) => event.terminal);
+  return ExecutionTraceSnapshot(
+    key: incoming.key,
+    events: terminalIndex < 0
+        ? ordered
+        : ordered.take(terminalIndex + 1).toList(),
+  );
 }

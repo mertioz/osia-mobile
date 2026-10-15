@@ -12,7 +12,7 @@ const _key = ExecutionTraceKey(
   turnId: 'turn-311',
   runId: 'run-311',
   providerId: 'deepseek',
-  modelId: 'deepseek-chat',
+  modelId: 'deepseek-flash',
   effectiveReasoning: 'auto',
 );
 
@@ -103,9 +103,12 @@ void main() {
       expect(find.byType(ThinkingOrbs), findsOneWidget);
       expect(
         find.byKey(const ValueKey('execution_trace_summary')),
-        findsNothing,
+        findsOneWidget,
       );
 
+      await tester.tap(find.byKey(const ValueKey('execution_trace_toggle')));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text(first.publicSummary), findsNothing);
       await tester.tap(find.byKey(const ValueKey('execution_trace_toggle')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text(first.publicSummary), findsOneWidget);
@@ -120,7 +123,7 @@ void main() {
         ),
       );
       await tester.pump(const Duration(milliseconds: 300));
-      final combined = '${first.publicSummary}\n\n${second.publicSummary}';
+      final combined = '${first.publicSummary}\n${second.publicSummary}';
       expect(find.text(combined), findsOneWidget);
       expect(find.text(first.publicSummary), findsNothing);
 
@@ -129,20 +132,17 @@ void main() {
           ExecutionTraceBlock(
             snapshot: _snapshot(<ExecutionTraceEvent>[first, second]),
             collapsed: true,
-            active: false,
+            active: true,
             finalStreaming: true,
           ),
         ),
       );
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('execution_trace_summary')),
-        findsNothing,
-      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text(combined), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('execution_trace_toggle')));
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text(combined), findsOneWidget);
+      expect(find.text(combined), findsNothing);
 
       await tester.pumpWidget(
         _host(
@@ -158,6 +158,9 @@ void main() {
           ),
         ),
       );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text(combined), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('execution_trace_toggle')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text(combined), findsOneWidget);
       expect(tester.takeException(), isNull);

@@ -189,6 +189,59 @@ class _ChatScreenState extends State<ChatScreen> {
   // outgoing and incoming children can never share a key.
   int _bannerSeq = 0;
   bool _initialized = false;
+  // Transient PC projection: preserve a manual toggle when a live trace moves from
+  // the trailing status slot into its exact assistant bubble during streaming.
+  final Map<ExecutionTraceKey, ExecutionTraceDisclosureState>
+  _thinkingDisclosures = {};
+  final Map<String, ExecutionTraceDisclosureState> _waitingThinkingDisclosures =
+      {};
+
+  ExecutionTraceDisclosureState _waitingThinkingDisclosure(String requestId) =>
+      _waitingThinkingDisclosures.putIfAbsent(
+        requestId,
+        () => ExecutionTraceDisclosureState(),
+      );
+
+  final Map<ExecutionTraceKey, ExecutionTraceSnapshot> _thinkingSnapshots = {};
+
+  ExecutionTraceSnapshot? _retainThinkingTrace(
+    ExecutionTraceSnapshot? trace, {
+    ExecutionTraceKey? key,
+  }) {
+    if (trace == null) return key == null ? null : _thinkingSnapshots[key];
+    final merged = mergeExecutionTraceSnapshots(
+      _thinkingSnapshots[trace.key],
+      trace,
+    );
+    _thinkingSnapshots[trace.key] = merged;
+    return merged;
+  }
+
+  ExecutionTraceDisclosureState _thinkingDisclosure(
+    ExecutionTraceSnapshot trace,
+  ) => _thinkingDisclosures.putIfAbsent(
+    trace.key,
+    () => _waitingThinkingDisclosure(trace.key.requestId),
+  );
+
+  bool _thinkingTraceActive(ExecutionTraceSnapshot trace) {
+    final turn = _activeTurn;
+    return turn != null &&
+        !turn.terminal &&
+        !trace.terminal &&
+        _activeChatWork &&
+        executionTraceForExactIdentity(
+              trace,
+              conversationId: turn.conversationId,
+              requestId: turn.requestId,
+              turnId: turn.turnId,
+              runId: turn.runId,
+              providerId: turn.providerId,
+              modelId: turn.modelId,
+              effectiveReasoning: turn.effectiveReasoning,
+            ) !=
+            null;
+  }
 
   // Conversations
   List<ws.Conversation> _conversations = [];
@@ -1012,7 +1065,9 @@ class _ChatScreenState extends State<ChatScreen> {
               unawaited(_completeSubmittedAttachments(clientRequestId));
             }
             _pendingTurn = null;
+            final cancelledTrace = _retainThinkingTrace(_liveExecutionTrace);
             _clearActiveTurnProjection();
+            _liveExecutionTrace = cancelledTrace;
           }
           setState(() {
             _awaitingResponse = false;
@@ -1034,7 +1089,6 @@ class _ChatScreenState extends State<ChatScreen> {
             _thinking = false;
             _noResponse = false;
             _chatDocumentProgress = null;
-            _liveExecutionTrace = null;
           });
           break;
         }
@@ -1335,17 +1389,30 @@ class _ChatScreenState extends State<ChatScreen> {
                   providerId: m.providerId,
                   modelId: m.modelId,
                   effectiveReasoning: m.effectiveReasoning,
-                  executionTrace: executionTraceForExactIdentity(
-                    m.executionTrace,
-                    conversationId: m.conversationId.isNotEmpty
-                        ? m.conversationId
-                        : (effectiveConvId ?? ''),
-                    requestId: m.clientRequestId,
-                    turnId: m.turnId,
-                    runId: m.runId,
-                    providerId: m.providerId,
-                    modelId: m.modelId,
-                    effectiveReasoning: m.effectiveReasoning,
+                  executionTrace: _retainThinkingTrace(
+                    executionTraceForExactIdentity(
+                      m.executionTrace,
+                      conversationId: m.conversationId.isNotEmpty
+                          ? m.conversationId
+                          : (effectiveConvId ?? ''),
+                      requestId: m.clientRequestId,
+                      turnId: m.turnId,
+                      runId: m.runId,
+                      providerId: m.providerId,
+                      modelId: m.modelId,
+                      effectiveReasoning: m.effectiveReasoning,
+                    ),
+                    key: ExecutionTraceKey(
+                      conversationId: m.conversationId.isNotEmpty
+                          ? m.conversationId
+                          : (effectiveConvId ?? ''),
+                      requestId: m.clientRequestId,
+                      turnId: m.turnId,
+                      runId: m.runId,
+                      providerId: m.providerId,
+                      modelId: m.modelId,
+                      effectiveReasoning: m.effectiveReasoning,
+                    ),
                   ),
                 ),
               ),
@@ -4707,7 +4774,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _chatDocumentProgress = null;
       _liveExecutionTrace = null;
       _awaitingResponse = true;
-      _thinking = false;
+      _thinking = true;
       _noResponse = false;
     });
     _stopRecoveryPoll();
@@ -4738,13 +4805,16 @@ class _ChatScreenState extends State<ChatScreen> {
         _thinking = false;
         _noResponse = false;
         _chatDocumentProgress = null;
-        _liveExecutionTrace = null;
+        // Keep already received public text reopenable after cancellation.
+        _liveExecutionTrace = _retainThinkingTrace(_liveExecutionTrace);
       });
     }
   }
 
   void _onExecutionTrace(ExecutionTraceSnapshot snapshot) {
     if (!mounted) return;
+    final following =
+        !_scrollCtrl.hasClients || _scrollCtrl.position.extentAfter < 48;
     final key = snapshot.key;
     final projection = _activeTurn;
     if (_wsService.isConversationCancellationRequested(
@@ -4756,8 +4826,13 @@ class _ChatScreenState extends State<ChatScreen> {
             projection?.requestId == key.requestId &&
             projection?.turnId == key.turnId &&
             projection?.runId == key.runId)) {
-      if (_liveExecutionTrace != null) {
-        setState(() => _liveExecutionTrace = null);
+      if (snapshot.terminal &&
+          (_liveExecutionTrace?.key == key ||
+              (projection?.conversationId == key.conversationId &&
+                  projection?.requestId == key.requestId &&
+                  projection?.turnId == key.turnId &&
+                  projection?.runId == key.runId))) {
+        setState(() => _liveExecutionTrace = _retainThinkingTrace(snapshot));
       }
       return;
     }
@@ -4808,6 +4883,7 @@ class _ChatScreenState extends State<ChatScreen> {
               null,
     );
     setState(() {
+      snapshot = _retainThinkingTrace(snapshot)!;
       if (matchingEntry >= 0) {
         _entries[matchingEntry] = _entries[matchingEntry].copyWith(
           executionTrace: snapshot,
@@ -4817,7 +4893,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _liveExecutionTrace = snapshot;
       }
     });
-    _scrollToBottomAnimated();
+    if (following) _scrollToBottomAnimated();
   }
 
   ExecutionTraceSnapshot? _matchingLiveTrace({
@@ -5209,7 +5285,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     setState(() {
       _awaitingResponse = true;
-      _thinking = false;
+      _thinking = true;
       _noResponse = false;
     });
     // WOR-75/WOR-53/WOR-62: user engaged LIVE on this conversation — stand any
@@ -5332,7 +5408,7 @@ class _ChatScreenState extends State<ChatScreen> {
         );
         _pendingTurn = null;
         _awaitingResponse = true;
-        _thinking = false;
+        _thinking = true;
         _noResponse = false;
         _chatDocumentProgress = null;
         // WOR-75/WOR-53/WOR-62: mark the displayed conversation's turn in flight
@@ -5801,18 +5877,25 @@ class _ChatScreenState extends State<ChatScreen> {
                             final trace = _liveExecutionTrace;
                             if (trace != null) {
                               return ExecutionTraceBlock(
-                                key: ValueKey(
-                                  'trace_${trace.key.conversationId}_'
-                                  '${trace.key.requestId}_${trace.key.turnId}_'
-                                  '${trace.key.runId}',
-                                ),
+                                key: ValueKey(trace.key),
+                                disclosureState: _thinkingDisclosure(trace),
                                 snapshot: trace,
                                 collapsed: true,
-                                active: !trace.terminal && _activeChatWork,
+                                active: _thinkingTraceActive(trace),
                               );
                             }
                             return _showThinkingTrailer
-                                ? const ThinkingDisclosure()
+                                ? ThinkingDisclosure(
+                                    key: ValueKey(
+                                      _pendingTurn?.clientRequestId ??
+                                          _activeTurn?.requestId,
+                                    ),
+                                    disclosureState: _waitingThinkingDisclosure(
+                                      _pendingTurn?.clientRequestId ??
+                                          _activeTurn?.requestId ??
+                                          '',
+                                    ),
+                                  )
                                 : _buildNoResponseTile(palette, strings);
                           }
                           final entry = _entries[index];
@@ -5822,17 +5905,11 @@ class _ChatScreenState extends State<ChatScreen> {
                             children: [
                               if (entry.executionTrace case final trace?)
                                 ExecutionTraceBlock(
-                                  key: ValueKey(
-                                    'trace_${trace.key.conversationId}_'
-                                    '${trace.key.requestId}_${trace.key.turnId}_'
-                                    '${trace.key.runId}',
-                                  ),
+                                  key: ValueKey(trace.key),
+                                  disclosureState: _thinkingDisclosure(trace),
                                   snapshot: trace,
                                   collapsed: true,
-                                  active:
-                                      !entry.isStreaming &&
-                                      !trace.terminal &&
-                                      _activeChatWork,
+                                  active: _thinkingTraceActive(trace),
                                   finalStreaming: entry.isStreaming,
                                 ),
                               ChatBubble(

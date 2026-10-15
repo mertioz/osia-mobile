@@ -159,7 +159,7 @@ void main() {
     expect(match(effectiveReasoning: 'low'), isNull);
   });
 
-  test('public summary has priority over real activity fallback', () {
+  test('public summary survives tool metadata without fallback narration', () {
     expect(
       formatExecutionTraceSummary(
         osiaStringsEn,
@@ -169,7 +169,7 @@ void main() {
     );
   });
 
-  test('real activity is shown without synthetic remaining-work prose', () {
+  test('coarse tool metadata generates no Thinking prose', () {
     final english = formatExecutionTraceSummary(
       osiaStringsEn,
       _realActivityTrace(),
@@ -179,8 +179,8 @@ void main() {
       _realActivityTrace(),
     );
 
-    expect(english, isNotEmpty);
-    expect(french, isNotEmpty);
+    expect(english, isEmpty);
+    expect(french, isEmpty);
     expect(french, isNot(contains('Reste à faire')));
     expect(french, isNot(contains('Aucun moyen valide')));
   });
@@ -202,7 +202,7 @@ void main() {
         ExecutionTraceBlock(
           snapshot: _publicSummaryTrace(),
           collapsed: true,
-          active: true,
+          active: false,
         ),
       ),
     );
@@ -237,8 +237,11 @@ void main() {
   ) async {
     await tester.pumpWidget(_host(const ThinkingDisclosure()));
 
-    expect(find.text(osiaStringsEn.executionTraceTitle), findsOneWidget);
-    expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
+    expect(find.text(osiaStringsEn.executionTraceTitle), findsNothing);
+    expect(
+      find.byKey(const ValueKey('execution_trace_toggle')),
+      findsOneWidget,
+    );
     for (final fake in <String>[
       'Planning...',
       'Working...',
