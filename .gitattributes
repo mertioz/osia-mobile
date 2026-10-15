@@ -1,3 +1,5 @@
 # Canonical Guide artifacts are hashed across the PC and Mobile repositories.
 assets/guide/catalog.v4.json text eol=lf
 lib/guide/guide_catalog_data.g.dart text eol=lf
+# The legal manifest hashes these exact canonical bytes on every platform.
+assets/legal/legal-source.json text eol=lf
