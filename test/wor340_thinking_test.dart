@@ -137,7 +137,7 @@ void main() {
     () async {
       final service = ws.WebSocketService(
         ip: '127.0.0.1',
-        token: 'synthetic-wor340-test',
+        token: 'test-only',
         autoReconnect: false,
         lanDirectV1: false,
         webRtcDirectV1: false,
