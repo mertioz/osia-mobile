@@ -695,6 +695,31 @@ class ModelProviderCatalogueEntry {
   }
 }
 
+/// One public quota window from the canonical PC account snapshot.
+class ChatGptQuotaWindow {
+  const ChatGptQuotaWindow({
+    required this.label,
+    required this.remainingPercent,
+  });
+
+  final String label;
+  final int remainingPercent;
+
+  static ChatGptQuotaWindow? parse(Object? raw) {
+    if (raw is! Map) return null;
+    final label = raw['label'];
+    final remaining = raw['remainingPercent'];
+    if (label is! String ||
+        label.trim().isEmpty ||
+        remaining is! int ||
+        remaining < 0 ||
+        remaining > 100) {
+      return null;
+    }
+    return ChatGptQuotaWindow(label: label.trim(), remainingPercent: remaining);
+  }
+}
+
 /// Sanitized ChatGPT-account state. Credentials and raw App Server payloads
 /// are deliberately not represented by this type.
 class ChatGptAccountState {
@@ -707,6 +732,7 @@ class ChatGptAccountState {
   final String email;
   final String plan;
   final int? usagePercent;
+  final List<ChatGptQuotaWindow> quotaWindows;
   final String selectedModel;
   final String verificationUrl;
   final String userCode;
@@ -721,6 +747,7 @@ class ChatGptAccountState {
     this.email = '',
     this.plan = '',
     this.usagePercent,
+    this.quotaWindows = const [],
     this.selectedModel = '',
     this.verificationUrl = '',
     this.userCode = '',
@@ -743,6 +770,11 @@ class ChatGptAccountState {
       email: (json['email'] ?? '').toString(),
       plan: (json['plan'] ?? '').toString(),
       usagePercent: usage is int && usage >= 0 && usage <= 100 ? usage : null,
+      quotaWindows: List.unmodifiable([
+        if (json['quotaWindows'] is List)
+          for (final raw in json['quotaWindows'] as List)
+            ?ChatGptQuotaWindow.parse(raw),
+      ]),
       selectedModel: (json['selectedModel'] ?? '').toString(),
       verificationUrl: (login['verificationUrl'] ?? '').toString(),
       userCode: (login['userCode'] ?? '').toString(),
@@ -759,6 +791,7 @@ class ChatGptAccountState {
     email: email,
     plan: plan,
     usagePercent: usagePercent,
+    quotaWindows: quotaWindows,
     selectedModel: selectedModel,
   );
 }

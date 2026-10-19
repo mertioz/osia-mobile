@@ -1505,7 +1505,17 @@ class _ChatGptAccountCardState extends State<_ChatGptAccountCard> {
                 style: TextStyle(color: palette.textMuted, fontSize: 12.5),
               ),
             ],
-            if (_state.usagePercent != null) ...[
+            for (final window in _state.quotaWindows) ...[
+              const SizedBox(height: 4),
+              Text(
+                strings.chatGptQuotaRemaining(
+                  window.label,
+                  window.remainingPercent,
+                ),
+                style: TextStyle(color: palette.textMuted, fontSize: 12.5),
+              ),
+            ],
+            if (_state.quotaWindows.isEmpty && _state.usagePercent != null) ...[
               const SizedBox(height: 4),
               Text(
                 strings.chatGptUsage(_state.usagePercent!),

@@ -73,6 +73,51 @@ class _AccountWebSocketService extends ws.WebSocketService {
 }
 
 void main() {
+  testWidgets('canonical PC quota windows retain remaining percentages', (
+    tester,
+  ) async {
+    final service = _AccountWebSocketService();
+    addTearDown(service.dispose);
+    await tester.pumpWidget(
+      OsiaTheme(
+        palette: osiaPalette,
+        child: OsiaL10n(
+          strings: osiaStringsEn,
+          child: MaterialApp(home: ProvidersScreen(wsService: service)),
+        ),
+      ),
+    );
+    service.emitConfig();
+    await tester.pump();
+    await tester.tap(find.text(osiaStringsEn.catAiProviders));
+    await tester.pumpAndSettle();
+    service.emitAccount(
+      ws.ChatGptAccountState.fromJson({
+        'connected': true,
+        'available': true,
+        'quotaWindows': [
+          {'label': '5 h', 'remainingPercent': 88},
+          {'label': 'Weekly', 'remainingPercent': 0},
+          {'label': 'Invalid', 'remainingPercent': 101},
+          {'label': 'Invalid', 'remainingPercent': true},
+          {'label': '', 'remainingPercent': 12},
+          'malformed',
+        ],
+        'usagePercent': 99,
+        'access_token': 'test-only',
+      }),
+    );
+    await tester.pump();
+      await tester.pump();
+      expect(find.text('5 h: 88% remaining'), findsOneWidget);
+    expect(find.text('Weekly: 0% remaining'), findsOneWidget);
+    expect(find.textContaining('Invalid'), findsNothing);
+    expect(find.text(osiaStringsEn.chatGptUsage(99)), findsNothing);
+    service.emitAccount(ws.ChatGptAccountState.fromJson({'connected': false}));
+    await tester.pump();
+    expect(find.text('5 h: 88% remaining'), findsNothing);
+  });
+
   testWidgets(
     'ChatGPT settings mirrors disconnected, device-code and connected states',
     (tester) async {

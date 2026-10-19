@@ -1744,6 +1744,28 @@ class OsiaStrings {
     }
   }
 
+  String chatGptQuotaRemaining(String label, int percent) {
+    final weekly = switch (languageCode) {
+      'fr' => 'Hebdomadaire',
+      'zh' => '每周',
+      'ja' => '週間',
+      'de' => 'Wöchentlich',
+      'es' => 'Semanal',
+      _ => 'Weekly',
+    };
+    if (label.endsWith('Weekly')) {
+      label = '${label.substring(0, label.length - 6)}$weekly';
+    }
+    return switch (languageCode) {
+      'fr' => '$label : $percent % restants',
+      'zh' => '$label：剩余 $percent%',
+      'ja' => '$label: 残り $percent%',
+      'de' => '$label: $percent % verbleibend',
+      'es' => '$label: $percent % restante',
+      _ => '$label: $percent% remaining',
+    };
+  }
+
   String chatGptUsage(int percent) {
     switch (languageCode) {
       case 'fr':
