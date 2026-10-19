@@ -108,8 +108,8 @@ void main() {
       }),
     );
     await tester.pump();
-      await tester.pump();
-      expect(find.text('5 h: 88% remaining'), findsOneWidget);
+    await tester.pump();
+    expect(find.text('5 h: 88% remaining'), findsOneWidget);
     expect(find.text('Weekly: 0% remaining'), findsOneWidget);
     expect(find.textContaining('Invalid'), findsNothing);
     expect(find.text(osiaStringsEn.chatGptUsage(99)), findsNothing);

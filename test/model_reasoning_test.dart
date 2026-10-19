@@ -54,6 +54,26 @@ void main() {
   });
 
   group('OsiaReasoningConfig', () {
+    test(
+      'retains runtime-defined option IDs through config and local edits',
+      () {
+        final config = ws.OsiaReasoningConfig.fromJson({
+          'default': 'ULTRA',
+          'providers': {'chatgpt_account': 'provider-next'},
+          'models': {'chatgpt_account:fixture': 'runtime_effort_2'},
+        });
+        expect(config.defaultLevel, 'ultra');
+        expect(config.providers['chatgpt_account'], 'provider-next');
+        expect(config.models['chatgpt_account:fixture'], 'runtime_effort_2');
+        expect(
+          config
+              .withModelOverride('chatgpt_account:fixture', 'ULTRA')
+              .models['chatgpt_account:fixture'],
+          'ultra',
+        );
+      },
+    );
+
     test('parses absent and partial config safely', () {
       expect(ws.OsiaReasoningConfig.fromJson(null).toJson(), {
         'default': 'auto',
@@ -65,7 +85,7 @@ void main() {
         'reasoning': {
           'default': 'HIGH',
           'providers': {'Google': 'LOW'},
-          'models': {'deepseek-v4-pro': 'MAX', 'gemini-3.5-flash': 'LOUD'},
+          'models': {'deepseek-v4-pro': 'MAX', 'gemini-3.5-flash': 'LOUD!'},
         },
       });
       expect(cfg.reasoning.defaultLevel, 'high');

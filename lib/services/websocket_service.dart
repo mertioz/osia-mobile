@@ -818,17 +818,12 @@ class ModelsListMessage extends OsiaMessage {
 /// This mirrors the backend WOR-77 schema additively. Old servers may omit the
 /// field entirely; in that case mobile treats reasoning as provider defaults.
 class OsiaReasoningConfig {
-  static const Set<String> _validLevels = {
-    'auto',
-    'off',
-    'minimal',
-    'low',
-    'medium',
-    'high',
-    'xhigh',
-    'normal',
-    'max',
-  };
+  // Match PC config normalization. The canonical catalogue and server own
+  // acceptance for the selected model; transport must retain new option IDs.
+  static final _levelSyntax = RegExp(
+    r'^\p{L}[\p{L}\p{N}_-]{0,31}$',
+    unicode: true,
+  );
 
   final String defaultLevel;
   final Map<String, String> providers;
@@ -856,7 +851,7 @@ class OsiaReasoningConfig {
       final level = raw.trim().toLowerCase();
       if (level == 'default') return 'auto';
       if (level == 'none') return 'off';
-      if (_validLevels.contains(level)) return level;
+      if (_levelSyntax.hasMatch(level)) return level;
     }
     return 'auto';
   }
