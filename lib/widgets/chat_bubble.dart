@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../l10n.dart';
 import '../motion.dart';
@@ -141,14 +142,16 @@ class _ChatBubbleState extends State<ChatBubble>
       height: 1.45,
     );
 
-    final Widget content = _SafeMarkdownText(
-      text: widget.text,
-      style: textStyle,
-      accent: palette.accent,
-      codeBackground: palette.surfaceElevated,
-      isStreaming: widget.isStreaming,
-      inlineTrailing: widget.inlineTrailing,
-    );
+    final Widget content = widget.isUser
+        ? SelectionArea(child: Text(widget.text, style: textStyle))
+        : _SafeMarkdownText(
+            text: widget.text,
+            style: textStyle,
+            accent: palette.accent,
+            codeBackground: palette.surfaceElevated,
+            isStreaming: widget.isStreaming,
+            inlineTrailing: widget.inlineTrailing,
+          );
 
     final bubble = widget.isUser
         ? _userBubble(palette, content)
@@ -268,8 +271,7 @@ class _SafeMarkdownText extends StatefulWidget {
 }
 
 class _SafeMarkdownTextState extends State<_SafeMarkdownText> {
-  final List<TapGestureRecognizer> _linkRecognizers =
-      <TapGestureRecognizer>[];
+  final List<TapGestureRecognizer> _linkRecognizers = <TapGestureRecognizer>[];
 
   static final RegExp _fencedCode = RegExp(
     r'```[^\n]*\n(.*?)```',
@@ -340,7 +342,8 @@ class _SafeMarkdownTextState extends State<_SafeMarkdownText> {
           spans.add(TextSpan(text: token));
         } else {
           final url = link.group(2)!;
-          final recognizer = TapGestureRecognizer()..onTap = () => _openLink(url);
+          final recognizer = TapGestureRecognizer()
+            ..onTap = () => _openLink(url);
           _linkRecognizers.add(recognizer);
           spans.add(
             TextSpan(
@@ -407,8 +410,68 @@ class _SafeMarkdownTextState extends State<_SafeMarkdownText> {
   @override
   Widget build(BuildContext context) {
     _disposeRecognizers();
+    if (!widget.isStreaming) {
+      // PC renders completed answers as GitHub Markdown with HTML disabled.
+      // Keep the exact stored message; only its native presentation changes.
+      final heading = widget.style.copyWith(fontWeight: FontWeight.w600);
+      return SelectionArea(
+        child: MarkdownBody(
+          data: widget.text,
+          onTapLink: (_, href, _) {
+            if (href != null) _openLink(href);
+          },
+          imageBuilder: (uri, title, alt) {
+            // PC-local paths cannot address phone files. Only public HTTP(S)
+            // images can be rendered here; attachments use canonical uploads.
+            if (uri.scheme != 'http' && uri.scheme != 'https') {
+              return Text(alt ?? '', style: widget.style);
+            }
+            return Image.network(
+              uri.toString(),
+              semanticLabel: alt,
+              errorBuilder: (_, _, _) => Text(alt ?? '', style: widget.style),
+            );
+          },
+          styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+            p: widget.style,
+            h1: heading.copyWith(fontSize: 23),
+            h2: heading.copyWith(fontSize: 21),
+            h3: heading.copyWith(fontSize: 19),
+            h4: heading.copyWith(fontSize: 17),
+            h5: heading.copyWith(fontSize: 16),
+            h6: heading,
+            listBullet: widget.style,
+            blockquote: widget.style,
+            tableBody: widget.style,
+            tableHead: heading,
+            a: widget.style.copyWith(
+              color: widget.accent,
+              decoration: TextDecoration.underline,
+            ),
+            code: widget.style.copyWith(
+              fontFamily: 'monospace',
+              backgroundColor: widget.codeBackground,
+            ),
+            codeblockDecoration: BoxDecoration(
+              color: widget.codeBackground,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            blockquoteDecoration: BoxDecoration(
+              border: Border(left: BorderSide(color: widget.accent, width: 2)),
+            ),
+            tableBorder: TableBorder.all(
+              color: widget.accent.withValues(alpha: 0.2),
+            ),
+            blockSpacing: 8,
+          ),
+        ),
+      );
+    }
     return SelectionArea(
-      child: Text.rich(TextSpan(children: _markdownSpans()), style: widget.style),
+      child: Text.rich(
+        TextSpan(children: _markdownSpans()),
+        style: widget.style,
+      ),
     );
   }
 }

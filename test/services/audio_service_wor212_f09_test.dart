@@ -2,11 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:osia_mobile/services/audio_service.dart';
+import 'package:osia_mobile/services/websocket_service.dart' as ws;
 import 'package:record/record.dart';
 
 class _FakeRecorder implements AudioRecorder {
@@ -352,17 +352,43 @@ void main() {
   });
 
   test(
-    'WebSocket service matches reviewed PC-canonical parity contract checksum',
+    'recorded audio forwards exact identity and voice preferences to PC',
     () async {
-      final source = await File(
-        'lib/services/websocket_service.dart',
-      ).readAsString();
-      final normalizedSource = source.replaceAll('\r\n', '\n');
-
-      expect(
-        sha256.convert(utf8.encode(normalizedSource)).toString().toUpperCase(),
-        '3B2AA56E3D8D85F29034896BA8BDE47F8BA59361ED6845495ED1CE9F7F4EABEC',
+      final sent = <Map<String, dynamic>>[];
+      final service = ws.WebSocketService(
+        ip: '127.0.0.1',
+        token: 'test-only',
+        autoReconnect: false,
+        lanDirectV1: false,
+        webRtcDirectV1: false,
+        relayFallbackV1: false,
+        sendFrameForTest: (frame) {
+          sent.add(frame);
+          return true;
+        },
       );
+      addTearDown(service.dispose);
+      service.setClientLocale('fr');
+      final data = base64Encode(utf8.encode('test-only audio'));
+      expect(
+        service.sendAudio(
+          data,
+          conversationId: 'voice-conv',
+          clientRequestId: 'voice-request',
+          ttsEnabled: false,
+        ),
+        isTrue,
+      );
+      expect(sent.single, {
+        'type': 'audio',
+        'format': 'wav',
+        'data': data,
+        'conversation_id': 'voice-conv',
+        'request_id': 'voice-request',
+        'client_request_id': 'voice-request',
+        'tts_enabled': false,
+        'locale': 'fr',
+      });
     },
   );
 }
