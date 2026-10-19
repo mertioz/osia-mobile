@@ -82,6 +82,55 @@ class _AccountWebSocketService extends ws.WebSocketService {
 
 void main() {
   testWidgets(
+    'open provider list follows canonical key and workspace updates',
+    (tester) async {
+      final service = _AccountWebSocketService();
+      addTearDown(service.dispose);
+      await tester.pumpWidget(
+        OsiaTheme(
+          palette: osiaPalette,
+          child: OsiaL10n(
+            strings: osiaStringsEn,
+            child: MaterialApp(home: ProvidersScreen(wsService: service)),
+          ),
+        ),
+      );
+      service.emitConfig();
+      await tester.pump();
+      await tester.tap(find.text(osiaStringsEn.catAiProviders));
+      await tester.pumpAndSettle();
+      final row = find
+          .ancestor(of: find.text('Claude API'), matching: find.byType(InkWell))
+          .first;
+      final badge = find.descendant(
+        of: row,
+        matching: find.byIcon(Icons.check_circle_rounded),
+      );
+      expect(badge, findsNothing);
+      service._config.add(
+        ws.ConfigData.fromJson({
+          'api_keys_set': {'anthropic': true},
+          'anthropic_workspace_id': 'workspace_live',
+        }),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(badge, findsOneWidget);
+      await tester.tap(find.text('Claude API'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('claude_api_workspace')),
+            )
+            .controller!
+            .text,
+        'workspace_live',
+      );
+    },
+  );
+
+  testWidgets(
     'Claude API workspace mirrors PC and saves without replacing a key',
     (tester) async {
       final service = _AccountWebSocketService();

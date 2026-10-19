@@ -1309,14 +1309,23 @@ class _ProviderListScreen extends StatelessWidget {
     this.anthropicWorkspaceId = '',
   });
 
-  bool _isKeySet(ProviderEntry entry) =>
-      entry.apiProvider != null && (apiKeysSet[entry.apiProvider] ?? false);
+  bool _isKeySet(ProviderEntry entry, ws.ConfigData? config) =>
+      entry.apiProvider != null &&
+      ((config?.apiKeysSet ?? apiKeysSet)[entry.apiProvider] ?? false);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => StreamBuilder<ws.ConfigData>(
+    stream: wsService.configStream,
+    builder: (context, snapshot) => _buildProviders(context, snapshot.data),
+  );
+
+  Widget _buildProviders(BuildContext context, ws.ConfigData? config) {
     final palette = OsiaTheme.of(context);
     final strings = OsiaL10n.of(context);
     final providers = providersFor(category);
+    final fallbackCounts = config == null
+        ? apiKeyFallbackCounts
+        : _readFallbackCounts(config.settings['api_key_fallbacks_set']);
 
     return Scaffold(
       backgroundColor: palette.background,
@@ -1383,22 +1392,24 @@ class _ProviderListScreen extends StatelessWidget {
                       _ProviderRow(
                         entry: providers[i],
                         localLabel: strings.localLabel,
-                        keyConfigured: _isKeySet(providers[i]),
+                        keyConfigured: _isKeySet(providers[i], config),
                         palette: palette,
                         onTap: () => Navigator.of(context).push(
                           slideFadeRoute(
                             _ProviderConfigScreen(
                               entry: providers[i],
                               wsService: wsService,
-                              keyConfigured: _isKeySet(providers[i]),
-                              initialWorkspaceId: anthropicWorkspaceId,
+                              keyConfigured: _isKeySet(providers[i], config),
+                              initialWorkspaceId: config == null
+                                  ? anthropicWorkspaceId
+                                  : (config.settings['anthropic_workspace_id'] ??
+                                            '')
+                                        .toString(),
                               showFallbackKeys:
                                   category == ProviderCategory.ai &&
                                   providers[i].apiProvider != null,
                               fallbackKeyCount:
-                                  apiKeyFallbackCounts[providers[i]
-                                      .apiProvider] ??
-                                  0,
+                                  fallbackCounts[providers[i].apiProvider] ?? 0,
                             ),
                           ),
                         ),
