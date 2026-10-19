@@ -118,6 +118,7 @@ class _StableWebSocketService extends ws.WebSocketService {
   int modelRequests = 0;
   int mcpStatusRequests = 0;
   final List<String> ensureReasons = <String>[];
+  final List<String> clientLocales = <String>[];
   final List<(String, String)> sentTurns = <(String, String)>[];
   final List<(String, Object?)> settingChanges = <(String, Object?)>[];
   final List<String> deleteRequests = <String>[];
@@ -126,6 +127,12 @@ class _StableWebSocketService extends ws.WebSocketService {
 
   @override
   ws.ConnectionState get state => ws.ConnectionState.connected;
+
+  @override
+  void setClientLocale(String? locale) {
+    clientLocales.add(locale ?? '');
+    super.setClientLocale(locale);
+  }
 
   @override
   Stream<ws.OsiaMessage> get messageStream => countedMessages;
@@ -471,6 +478,20 @@ void main() {
       'osia_token': 'token',
     });
   });
+
+  testWidgets(
+    'language changes update the same canonical text and voice connection',
+    (tester) async {
+      final harness = await _pumpChat(tester);
+      expect(harness.service.clientLocales.last, 'en');
+      harness.language.setLanguageByCode('fr');
+      await tester.pump();
+      expect(harness.service.clientLocales.last, 'fr');
+      expect(harness.service.connectCalls, 0);
+      expect(harness.service.disconnectCalls, 0);
+      await _disposeChatHarness(tester, harness);
+    },
+  );
 
   for (final terminalStatus in ['done', 'cancelled', 'error']) {
     testWidgets('Thinking V5 Chat lifecycle: $terminalStatus', (tester) async {

@@ -417,6 +417,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _slashPaletteController.addListener(_onSlashPaletteChanged);
+    widget.languageController.addListener(_onLanguageChanged);
     _notificationService = OsiaNotificationService(storage: widget.storage);
     _pendingHandoff = widget.handoff;
     _initConnection();
@@ -443,6 +444,22 @@ class _ChatScreenState extends State<ChatScreen> {
       _updateSlashPalette();
     } catch (error) {
       debugPrint('[OSIA Slash] catalog unavailable: $error');
+    }
+  }
+
+  void _onLanguageChanged() {
+    if (_initialized) {
+      _wsService.setClientLocale(widget.languageController.code);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.languageController != widget.languageController) {
+      oldWidget.languageController.removeListener(_onLanguageChanged);
+      widget.languageController.addListener(_onLanguageChanged);
+      _onLanguageChanged();
     }
   }
 
@@ -5714,6 +5731,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    widget.languageController.removeListener(_onLanguageChanged);
     _attachmentCancellation?.cancel();
     for (final deletion in _pendingConversationDeletions.values) {
       deletion.timeout?.cancel();
