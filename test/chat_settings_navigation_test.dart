@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -8,10 +9,13 @@ import 'package:osia_mobile/screens/chat_screen.dart';
 import 'package:osia_mobile/screens/settings_screen.dart';
 import 'package:osia_mobile/services/background_connection_service.dart';
 import 'package:osia_mobile/services/connection_lifecycle_service.dart';
+import 'package:osia_mobile/services/execution_trace.dart';
 import 'package:osia_mobile/services/storage_service.dart';
 import 'package:osia_mobile/services/websocket_service.dart' as ws;
 import 'package:osia_mobile/theme.dart';
 import 'package:osia_mobile/widgets/chat_bubble.dart';
+import 'package:osia_mobile/widgets/execution_trace_block.dart';
+import 'package:osia_mobile/widgets/thinking_orbs.dart';
 
 class _ListenCountingStream<T> extends Stream<T> {
   _ListenCountingStream(this.source);
@@ -467,6 +471,120 @@ void main() {
       'osia_token': 'token',
     });
   });
+
+  for (final terminalStatus in ['done', 'cancelled', 'error']) {
+    testWidgets('Thinking V5 Chat lifecycle: $terminalStatus', (tester) async {
+      final harness = await _pumpChat(tester);
+      final service = harness.service;
+      const request = 'request-wor347';
+      const turn = 'turn-wor347';
+      const key = ExecutionTraceKey(
+        conversationId: 'conv-nav',
+        requestId: request,
+        turnId: turn,
+        runId: 'run-turn-wor347',
+        providerId: 'provider-test',
+        modelId: 'model-test',
+        effectiveReasoning: 'medium',
+      );
+      service.handleIncomingFrameForTest(
+        _canonicalTurnFrame(
+          type: 'turn_accepted',
+          conversationId: 'conv-nav',
+          requestId: request,
+          turnId: turn,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(ThinkingDisclosure), findsOneWidget);
+      final toggle = find.byKey(const ValueKey('execution_trace_toggle'));
+      final semantics = tester.ensureSemantics();
+      expect(
+        tester.getSemantics(toggle).flagsCollection.isExpanded,
+        Tristate.isTrue,
+      );
+      expect(
+        find.byKey(const ValueKey('execution_trace_summary')),
+        findsNothing,
+      );
+      expect(find.byType(ThinkingOrbs), findsOneWidget);
+      // A deliberate collapse before the first public provider event must
+      // survive the waiting-row -> trace -> answer-bubble transitions.
+      await tester.tap(toggle);
+      await tester.pump();
+      final commentary = ExecutionTraceEvent(
+        eventId: 'summary-wor347',
+        traceKey: key,
+        sequence: 1,
+        revision: 1,
+        kind: ExecutionTraceKind.reasoningSummary,
+        display: const ExecutionTraceDisplay('execution.reasoning.summary'),
+        timestamp: DateTime.utc(2026, 10, 20),
+        terminal: false,
+        publicSummary: 'Checking the public document.',
+      ).toJson();
+      service.handleIncomingFrameForTest({
+        'type': 'execution_trace',
+        ...commentary,
+        'snapshot': [commentary],
+      });
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(ExecutionTraceBlock), findsOneWidget);
+      expect(find.text('Checking the public document.'), findsNothing);
+      await tester.tap(toggle);
+      await tester.pump();
+      expect(find.text('Checking the public document.'), findsOneWidget);
+      service.handleIncomingFrameForTest(
+        _canonicalTurnFrame(
+          type: 'response_chunk',
+          conversationId: 'conv-nav',
+          requestId: request,
+          turnId: turn,
+          content: 'Final public answer.',
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('Checking the public document.'), findsOneWidget);
+      // Replay the same accepted identity while navigating away and back.
+      await _openSettings(tester);
+      service.handleIncomingFrameForTest(
+        _canonicalTurnFrame(
+          type: 'turn_accepted',
+          conversationId: 'conv-nav',
+          requestId: request,
+          turnId: turn,
+        ),
+      );
+      await tester.pump();
+      await _closeSettings(tester);
+      expect(find.text('Checking the public document.'), findsOneWidget);
+      service.handleIncomingFrameForTest(
+        _canonicalTurnFrame(
+          type: 'turn_status',
+          conversationId: 'conv-nav',
+          requestId: request,
+          turnId: turn,
+          status: terminalStatus,
+          terminal: true,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.byType(ThinkingOrbs), findsNothing);
+      expect(
+        find.byKey(const ValueKey('execution_trace_summary')),
+        findsNothing,
+      );
+      await tester.tap(toggle);
+      await tester.pump();
+      expect(find.text('Checking the public document.'), findsOneWidget);
+      semantics.dispose();
+      await _disposeChatHarness(tester, harness);
+    });
+  }
 
   testWidgets(
     'Settings round-trip preserves service, turn, listeners, cron, and MCP',
