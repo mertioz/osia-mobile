@@ -164,7 +164,7 @@ class ProviderEntry {
 }
 
 // Official "Get API key" pages, by provider id.
-const String _kUrlAnthropic = 'https://console.anthropic.com/settings/keys';
+const String _kUrlAnthropic = 'https://platform.claude.com/settings/keys';
 const String _kUrlOpenAi = 'https://platform.openai.com/api-keys';
 const String _kUrlGoogle = 'https://aistudio.google.com/app/apikey';
 const String _kUrlDeepSeek = 'https://platform.deepseek.com/api_keys';
@@ -184,7 +184,7 @@ List<ProviderEntry> providersFor(ProviderCategory category) {
       ];
     case ProviderCategory.ai:
       return const [
-        ProviderEntry('Anthropic', 'anthropic', _kUrlAnthropic),
+        ProviderEntry('Claude API', 'anthropic', _kUrlAnthropic),
         ProviderEntry('OpenAI', 'openai', _kUrlOpenAi),
         ProviderEntry('Google', 'google', _kUrlGoogle),
         ProviderEntry('DeepSeek', 'deepseek', _kUrlDeepSeek),
@@ -531,6 +531,10 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
                                       .toList()
                                 : const <String>[],
                             chatGptAccount: _chatGptAccount,
+                            anthropicWorkspaceId:
+                                (config.settings['anthropic_workspace_id'] ??
+                                        '')
+                                    .toString(),
                           ),
                         ),
                       ),
@@ -1287,6 +1291,7 @@ class _ProviderListScreen extends StatelessWidget {
   final String sttGroqModel;
   final List<String> sttLocalModelsAvailable;
   final ws.ChatGptAccountState chatGptAccount;
+  final String anthropicWorkspaceId;
 
   const _ProviderListScreen({
     required this.category,
@@ -1301,6 +1306,7 @@ class _ProviderListScreen extends StatelessWidget {
     this.sttGroqModel = 'whisper-large-v3-turbo',
     this.sttLocalModelsAvailable = const [],
     this.chatGptAccount = const ws.ChatGptAccountState(),
+    this.anthropicWorkspaceId = '',
   });
 
   bool _isKeySet(ProviderEntry entry) =>
@@ -1385,6 +1391,7 @@ class _ProviderListScreen extends StatelessWidget {
                               entry: providers[i],
                               wsService: wsService,
                               keyConfigured: _isKeySet(providers[i]),
+                              initialWorkspaceId: anthropicWorkspaceId,
                               showFallbackKeys:
                                   category == ProviderCategory.ai &&
                                   providers[i].apiProvider != null,
@@ -1598,6 +1605,7 @@ class _ProviderConfigScreen extends StatefulWidget {
   /// Whether the PC has a key stored for this provider (from `api_keys_set`).
   /// Drives the "configured" badge and the "remove key" action.
   final bool keyConfigured;
+  final String initialWorkspaceId;
 
   /// Fallback keys remain on the PC. Mobile only receives the slot count.
   final bool showFallbackKeys;
@@ -1607,6 +1615,7 @@ class _ProviderConfigScreen extends StatefulWidget {
     required this.entry,
     required this.wsService,
     required this.keyConfigured,
+    this.initialWorkspaceId = '',
     this.showFallbackKeys = false,
     this.fallbackKeyCount = 0,
   });
@@ -1617,6 +1626,12 @@ class _ProviderConfigScreen extends StatefulWidget {
 
 class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
   final TextEditingController _keyCtrl = TextEditingController();
+  final TextEditingController _workspaceCtrl = TextEditingController();
+  late String _workspaceBaseline;
+  bool get _isClaude => widget.entry.apiProvider == 'anthropic';
+  bool get _workspaceDirty =>
+      _isClaude && _workspaceCtrl.text.trim() != _workspaceBaseline;
+  bool get _canSave => _hasText || _workspaceDirty;
   bool _obscured = true;
   // Drives the Save button's enabled state — only a non-empty key saves.
   bool _hasText = false;
@@ -1631,6 +1646,11 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
   void initState() {
     super.initState();
     _configured = widget.keyConfigured;
+    _workspaceBaseline = widget.initialWorkspaceId;
+    _workspaceCtrl.text = _workspaceBaseline;
+    _workspaceCtrl.addListener(() {
+      if (mounted) setState(() {});
+    });
     _fallbackKeyCount = widget.fallbackKeyCount;
     _keyCtrl.addListener(() {
       final has = _keyCtrl.text.trim().isNotEmpty;
@@ -1638,6 +1658,11 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
     });
     _configSub = widget.wsService.configStream.listen((config) {
       if (!mounted) return;
+      if (_isClaude && !_workspaceDirty) {
+        _workspaceBaseline = (config.settings['anthropic_workspace_id'] ?? '')
+            .toString();
+        _workspaceCtrl.text = _workspaceBaseline;
+      }
       final provider = widget.entry.apiProvider;
       final configured =
           provider != null && config.apiKeysSet[provider] == true;
@@ -1660,6 +1685,7 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
   void dispose() {
     _configSub?.cancel();
     _keyCtrl.dispose();
+    _workspaceCtrl.dispose();
     super.dispose();
   }
 
@@ -1693,15 +1719,26 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
   void _save() {
     final provider = widget.entry.apiProvider;
     final key = _keyCtrl.text.trim();
-    if (provider == null || key.isEmpty) return;
-    widget.wsService.sendSetApiKey(provider, key);
+    if (provider == null || !_canSave) return;
+    // Persist the workspace before a key change rebuilds the canonical client.
+    if (_workspaceDirty) {
+      widget.wsService.sendSetSetting(
+        'anthropic_workspace_id',
+        _workspaceCtrl.text.trim(),
+      );
+    }
+    if (key.isNotEmpty) widget.wsService.sendSetApiKey(provider, key);
     // Refresh the snapshot so the landing screen's "configured" badges
     // reflect the new key on the next visit.
     widget.wsService.sendGetConfig();
     final strings = OsiaL10n.of(context);
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(strings.apiKeySaved)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          key.isEmpty ? strings.claudeWorkspaceSaved : strings.apiKeySaved,
+        ),
+      ),
+    );
     Navigator.of(context).pop();
   }
 
@@ -1801,6 +1838,21 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (_isClaude) ...[
+          Text(
+            strings.claudeApiInfo,
+            style: TextStyle(color: palette.textMuted, fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const ValueKey('claude_api_workspace'),
+            controller: _workspaceCtrl,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: InputDecoration(labelText: strings.claudeWorkspace),
+          ),
+          const SizedBox(height: 16),
+        ],
         // "Configured" banner — the PC has a key set for this provider.
         if (_configured) ...[
           _OsiaCard(
@@ -1840,7 +1892,7 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
           autocorrect: false,
           enableSuggestions: false,
           textInputAction: TextInputAction.done,
-          onSubmitted: (_) => _hasText ? _save() : null,
+          onSubmitted: (_) => _canSave ? _save() : null,
           cursorColor: palette.accent,
           style: TextStyle(color: palette.textPrimary, fontSize: 15),
           decoration: InputDecoration(
@@ -1920,7 +1972,7 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
         SizedBox(
           height: 52,
           child: ElevatedButton(
-            onPressed: _hasText ? _save : null,
+            onPressed: _canSave ? _save : null,
             style: ElevatedButton.styleFrom(
               backgroundColor: palette.accent,
               foregroundColor: palette.isDark

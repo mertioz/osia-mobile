@@ -1766,6 +1766,37 @@ class OsiaStrings {
     };
   }
 
+  String get claudeWorkspace => switch (languageCode) {
+    'fr' => 'Workspace Claude API (facultatif)',
+    'zh' => 'Claude API 工作区（可选）',
+    'ja' => 'Claude API ワークスペース（任意）',
+    'de' => 'Claude API Workspace (optional)',
+    'es' => 'Workspace de Claude API (opcional)',
+    _ => 'Claude API workspace (optional)',
+  };
+
+  String get claudeApiInfo => switch (languageCode) {
+    'fr' =>
+      'Utilise une clé API Claude Console et ses crédits API. Le workspace est nécessaire pour les clés multi-workspaces.',
+    'zh' => '使用 Claude Console API 密钥和 API 额度。多工作区密钥需要工作区 ID。',
+    'ja' => 'Claude Console の API キーと API クレジットを使用します。複数ワークスペースのキーには ID が必要です。',
+    'de' =>
+      'Verwendet einen Claude Console API-Schlüssel und API-Guthaben. Schlüssel für mehrere Workspaces benötigen die Workspace-ID.',
+    'es' =>
+      'Usa una clave API de Claude Console y créditos API. Las claves de varios workspaces necesitan el ID del workspace.',
+    _ =>
+      'Uses a Claude Console API key and API credits. Multi-workspace keys require a workspace ID.',
+  };
+
+  String get claudeWorkspaceSaved => switch (languageCode) {
+    'fr' => 'Workspace enregistré',
+    'zh' => '工作区已保存',
+    'ja' => 'ワークスペースを保存しました',
+    'de' => 'Workspace gespeichert',
+    'es' => 'Workspace guardado',
+    _ => 'Workspace saved',
+  };
+
   String chatGptUsage(int percent) {
     switch (languageCode) {
       case 'fr':

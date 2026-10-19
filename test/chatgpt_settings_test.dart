@@ -17,6 +17,7 @@ class _AccountWebSocketService extends ws.WebSocketService {
   int loginCalls = 0;
   int cancelCalls = 0;
   int logoutCalls = 0;
+  final writes = <(String, Object?)>[];
   final ws.ChatGptAccountState cachedAccount;
 
   @override
@@ -58,8 +59,15 @@ class _AccountWebSocketService extends ws.WebSocketService {
   @override
   void sendChatGptAccountLogout() => logoutCalls++;
 
-  void emitConfig() {
-    _config.add(ws.ConfigData.fromJson({'settings': <String, dynamic>{}}));
+  @override
+  void sendSetSetting(String key, Object? value) => writes.add((key, value));
+
+  @override
+  void sendSetApiKey(String provider, String key) =>
+      writes.add((provider, key));
+
+  void emitConfig([Map<String, dynamic> settings = const {}]) {
+    _config.add(ws.ConfigData.fromJson({'settings': settings}));
   }
 
   void emitAccount(ws.ChatGptAccountState state) => _account.add(state);
@@ -73,6 +81,40 @@ class _AccountWebSocketService extends ws.WebSocketService {
 }
 
 void main() {
+  testWidgets(
+    'Claude API workspace mirrors PC and saves without replacing a key',
+    (tester) async {
+      final service = _AccountWebSocketService();
+      addTearDown(service.dispose);
+      await tester.pumpWidget(
+        OsiaTheme(
+          palette: osiaPalette,
+          child: OsiaL10n(
+            strings: osiaStringsEn,
+            child: MaterialApp(home: ProvidersScreen(wsService: service)),
+          ),
+        ),
+      );
+      service.emitConfig({'anthropic_workspace_id': 'workspace_fixture'});
+      await tester.pump();
+      await tester.tap(find.text(osiaStringsEn.catAiProviders));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Claude API'));
+      await tester.pumpAndSettle();
+      final field = find.byKey(const ValueKey('claude_api_workspace'));
+      expect(
+        tester.widget<TextField>(field).controller!.text,
+        'workspace_fixture',
+      );
+      await tester.enterText(field, 'workspace_next');
+      await tester.pump();
+      await tester.ensureVisible(find.text(osiaStringsEn.save));
+      await tester.tap(find.text(osiaStringsEn.save));
+      await tester.pumpAndSettle();
+      expect(service.writes, [('anthropic_workspace_id', 'workspace_next')]);
+    },
+  );
+
   testWidgets('canonical PC quota windows retain remaining percentages', (
     tester,
   ) async {
