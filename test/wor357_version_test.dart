@@ -28,6 +28,15 @@ void main() {
     },
   );
   test('iOS packaging fails closed until a store maximum is supplied', () {
+    // App Store Connect browser inventory verified 2026-10-20; source build 19
+    // must also exceed the accepted Android 18, not merely iOS maximum 16.
+    expect(
+      validatedIosBuildNumber({
+        'OSIA_IOS_STORE_MAX_BUILD': '16',
+        'IOS_BUILD_NUMBER': '19',
+      }),
+      19,
+    );
     for (final env in <Map<String, String>>[
       {},
       {'OSIA_IOS_STORE_MAX_BUILD': '24', 'IOS_BUILD_NUMBER': '19'},
