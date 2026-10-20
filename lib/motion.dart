@@ -132,24 +132,32 @@ class _PressableScaleState extends State<PressableScale>
   // value: 0 = released (scale 1.0), 1 = fully pressed (scale pressedScale).
   // lowerBound is negative so the spring rebound can overshoot just past 1.0
   // for a light bounce before settling at the resting scale.
-  late final AnimationController _c = AnimationController(
-    vsync: this,
-    lowerBound: -1.0,
-    upperBound: 1.0,
-    value: 0.0,
-  );
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    // Reduced motion may never read the controller during build. Initialize
+    // while mounted, rather than creating a ticker for the first time in dispose.
+    _c = AnimationController(
+      vsync: this,
+      lowerBound: -1.0,
+      upperBound: 1.0,
+      value: 0.0,
+    );
+  }
 
   void _press() => _c.animateTo(
-        1.0,
-        duration: MotionDurations.tap,
-        curve: MotionCurves.enter,
-      );
+    1.0,
+    duration: MotionDurations.tap,
+    curve: MotionCurves.enter,
+  );
 
   void _release() => _c.animateTo(
-        0.0,
-        duration: MotionDurations.fast,
-        curve: MotionCurves.spring,
-      );
+    0.0,
+    duration: MotionDurations.fast,
+    curve: MotionCurves.spring,
+  );
 
   @override
   void dispose() {
@@ -188,11 +196,7 @@ class StaggeredAppear extends StatefulWidget {
   final int index;
   final Widget child;
 
-  const StaggeredAppear({
-    super.key,
-    required this.index,
-    required this.child,
-  });
+  const StaggeredAppear({super.key, required this.index, required this.child});
 
   @override
   State<StaggeredAppear> createState() => _StaggeredAppearState();

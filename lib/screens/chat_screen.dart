@@ -1406,31 +1406,35 @@ class _ChatScreenState extends State<ChatScreen> {
                   providerId: m.providerId,
                   modelId: m.modelId,
                   effectiveReasoning: m.effectiveReasoning,
-                  executionTrace: _retainThinkingTrace(
-                    executionTraceForExactIdentity(
-                      m.executionTrace,
-                      conversationId: m.conversationId.isNotEmpty
-                          ? m.conversationId
-                          : (effectiveConvId ?? ''),
-                      requestId: m.clientRequestId,
-                      turnId: m.turnId,
-                      runId: m.runId,
-                      providerId: m.providerId,
-                      modelId: m.modelId,
-                      effectiveReasoning: m.effectiveReasoning,
-                    ),
-                    key: ExecutionTraceKey(
-                      conversationId: m.conversationId.isNotEmpty
-                          ? m.conversationId
-                          : (effectiveConvId ?? ''),
-                      requestId: m.clientRequestId,
-                      turnId: m.turnId,
-                      runId: m.runId,
-                      providerId: m.providerId,
-                      modelId: m.modelId,
-                      effectiveReasoning: m.effectiveReasoning,
-                    ),
-                  ),
+                  // A user and its reply share turn identity. Only the reply
+                  // owns Thinking, including when restoring retained snapshots.
+                  executionTrace: m.role != 'assistant'
+                      ? null
+                      : _retainThinkingTrace(
+                          executionTraceForExactIdentity(
+                            m.executionTrace,
+                            conversationId: m.conversationId.isNotEmpty
+                                ? m.conversationId
+                                : (effectiveConvId ?? ''),
+                            requestId: m.clientRequestId,
+                            turnId: m.turnId,
+                            runId: m.runId,
+                            providerId: m.providerId,
+                            modelId: m.modelId,
+                            effectiveReasoning: m.effectiveReasoning,
+                          ),
+                          key: ExecutionTraceKey(
+                            conversationId: m.conversationId.isNotEmpty
+                                ? m.conversationId
+                                : (effectiveConvId ?? ''),
+                            requestId: m.clientRequestId,
+                            turnId: m.turnId,
+                            runId: m.runId,
+                            providerId: m.providerId,
+                            modelId: m.modelId,
+                            effectiveReasoning: m.effectiveReasoning,
+                          ),
+                        ),
                 ),
               ),
             );
@@ -4849,7 +4853,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   projection?.requestId == key.requestId &&
                   projection?.turnId == key.turnId &&
                   projection?.runId == key.runId))) {
-        setState(() => _liveExecutionTrace = _retainThinkingTrace(snapshot));
+        setState(() => _attachThinkingTrace(snapshot));
       }
       return;
     }
@@ -4883,6 +4887,11 @@ class _ChatScreenState extends State<ChatScreen> {
         )) {
       return;
     }
+    setState(() => _attachThinkingTrace(snapshot));
+    if (following) _scrollToBottomAnimated();
+  }
+
+  void _attachThinkingTrace(ExecutionTraceSnapshot snapshot) {
     final matchingEntry = _entries.lastIndexWhere(
       (entry) =>
           !entry.isUser &&
@@ -4899,18 +4908,15 @@ class _ChatScreenState extends State<ChatScreen> {
               ) !=
               null,
     );
-    setState(() {
-      snapshot = _retainThinkingTrace(snapshot)!;
-      if (matchingEntry >= 0) {
-        _entries[matchingEntry] = _entries[matchingEntry].copyWith(
-          executionTrace: snapshot,
-        );
-        _liveExecutionTrace = null;
-      } else {
-        _liveExecutionTrace = snapshot;
-      }
-    });
-    if (following) _scrollToBottomAnimated();
+    snapshot = _retainThinkingTrace(snapshot)!;
+    if (matchingEntry >= 0) {
+      _entries[matchingEntry] = _entries[matchingEntry].copyWith(
+        executionTrace: snapshot,
+      );
+      _liveExecutionTrace = null;
+    } else {
+      _liveExecutionTrace = snapshot;
+    }
   }
 
   ExecutionTraceSnapshot? _matchingLiveTrace({
@@ -5921,13 +5927,17 @@ class _ChatScreenState extends State<ChatScreen> {
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              if (entry.executionTrace case final trace?)
+                              if (isAssistant && entry.executionTrace != null)
                                 ExecutionTraceBlock(
-                                  key: ValueKey(trace.key),
-                                  disclosureState: _thinkingDisclosure(trace),
-                                  snapshot: trace,
+                                  key: ValueKey(entry.executionTrace!.key),
+                                  disclosureState: _thinkingDisclosure(
+                                    entry.executionTrace!,
+                                  ),
+                                  snapshot: entry.executionTrace!,
                                   collapsed: true,
-                                  active: _thinkingTraceActive(trace),
+                                  active: _thinkingTraceActive(
+                                    entry.executionTrace!,
+                                  ),
                                   finalStreaming: entry.isStreaming,
                                 ),
                               ChatBubble(
