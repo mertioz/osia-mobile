@@ -23,12 +23,20 @@ flutter devices
 flutter test integration_test/wor354_thinking_touch_device_test.dart -d <device-id> --reporter expanded
 ```
 
-Execution on 2026-10-20: Gradle assembleDebug succeeded and produced a private
+Initial execution on 2026-10-20: Gradle assembleDebug succeeded and produced a private
 debug APK. The wireless device disconnected during installation and subsequently
 was absent from `adb devices`; installation failed before test execution. This
 is **not DEVICE_VERIFIED**. No production application was uninstalled and no
 public artifact/version/store submission was made. Reconnect Android and rerun;
-an operator visual acceptance and iOS physical acceptance remain outstanding.
+an operator visual acceptance and iOS physical acceptance were then outstanding.
+
+Subsequent Android acceptance on the same date succeeded: both physical tests
+passed on Pixel 9a / Android 17, and the operator confirmed no flash in either
+dark or light panels using the production widget in an isolated visual fixture.
+The production app was then updated in place from 1.1.2 build 17 to private
+1.1.2 build 18, with an identical signing certificate and retained data
+containers. See [final acceptance and WOR-357 handoff](WOR-354-356-final-acceptance.md)
+for source/artifact provenance and the remaining iOS/API gates.
 
 Final automated Mobile regression after the provider changes: 512 passed,
 1 skipped; flutter analyze lib test plus this integration entry point reported
