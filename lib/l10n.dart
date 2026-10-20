@@ -1775,6 +1775,20 @@ class OsiaStrings {
     _ => 'Claude API workspace (optional)',
   };
 
+  String get grokApiInfo => switch (languageCode) {
+    'fr' =>
+      'Connexion par clé API xAI. La facturation API est distincte des abonnements Grok. La connexion au compte Grok dans OSIA reste indisponible, dans l’attente d’une méthode officielle et d’une autorisation.',
+    'zh' => '使用xAI API密钥连接。API与Grok订阅分开计费。OSIA中的Grok账户登录在获得官方方法和授权前不可用。',
+    'ja' =>
+      'xAI APIキーで接続します。API料金はGrokのサブスクリプションとは別です。OSIAでのGrokアカウント接続は公式の方法と許可が得られるまで利用できません。',
+    'de' =>
+      'Mit xAI-API-Schlüssel verbinden. Die API wird getrennt vom Grok-Abo abgerechnet. Die Grok-Kontoanmeldung in OSIA ist bis zu einer offiziellen Methode und Genehmigung nicht verfügbar.',
+    'es' =>
+      'Conecta con una clave API de xAI. La API se factura por separado de Grok. El inicio de sesión de Grok en OSIA no está disponible hasta contar con un método oficial y autorización.',
+    _ =>
+      'Connect with an xAI API key. API billing is separate from Grok subscriptions. Grok account login in OSIA is unavailable pending an official method and authorization.',
+  };
+
   String get claudeApiInfo => switch (languageCode) {
     'fr' =>
       'Utilise une clé API Claude Console et ses crédits API. Le workspace est nécessaire pour les clés multi-workspaces.',

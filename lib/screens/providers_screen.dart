@@ -99,8 +99,8 @@ const Map<String, String> _kProviderNames = {
   'openai': 'OpenAI',
   'deepseek': 'DeepSeek',
   'google': 'Google',
-  'xai': 'xAI',
-  'groq': 'Groq',
+  'xai': 'Grok / xAI',
+  'groq': 'GroqCloud',
   'mistral': 'Mistral',
   'ollama': 'Local (Ollama)',
 };
@@ -188,8 +188,8 @@ List<ProviderEntry> providersFor(ProviderCategory category) {
         ProviderEntry('OpenAI', 'openai', _kUrlOpenAi),
         ProviderEntry('Google', 'google', _kUrlGoogle),
         ProviderEntry('DeepSeek', 'deepseek', _kUrlDeepSeek),
-        ProviderEntry('xAI', 'xai', _kUrlXai),
-        ProviderEntry('Groq', 'groq', _kUrlGroq),
+        ProviderEntry('Grok / xAI', 'xai', _kUrlXai),
+        ProviderEntry('GroqCloud', 'groq', _kUrlGroq),
         ProviderEntry('Mistral', 'mistral', _kUrlMistral),
         ProviderEntry('Ollama', null, null),
       ];
@@ -1849,6 +1849,14 @@ class _ProviderConfigScreenState extends State<_ProviderConfigScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (widget.entry.apiProvider == 'xai') ...[
+          Text(
+            strings.grokApiInfo,
+            key: const ValueKey('grok_api_account_notice'),
+            style: TextStyle(color: palette.textMuted, fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+        ],
         if (_isClaude) ...[
           Text(
             strings.claudeApiInfo,
