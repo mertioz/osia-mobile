@@ -58,9 +58,9 @@ Android retained the original data-directory identities, credential/device
 encrypted data inodes and first-install timestamps for both existing user
 profiles. No clear-data, uninstall, downgrade flag, keystore replacement or
 pairing reset was used. Private credentials were not read or exported to prove
-retention. A separate operator check of existing pairing/settings after launch
-has been requested and is still pending at this report revision; functional
-credential/pairing retention is not claimed from inode evidence alone.
+retention. After opening the updated production app, the operator separately
+confirmed **“Existing pairing and settings are intact.”** No re-pairing was
+required. Provider credentials were not exercised through charged inference.
 
 This is a private acceptance build of historical version 1.1.2, not the WOR-357
 version transition. `pubspec.yaml` remains 1.1.2+16; the build number was supplied
@@ -115,7 +115,7 @@ Account remains independent.
 ## WOR-357 handoff: prepared, release gates still open
 
 Android Thinking acceptance and the private in-place update above are complete.
-The operator's post-update pairing/settings check remains pending separately.
+The operator's post-update pairing/settings check also passed.
 Outstanding gates remain explicit:
 
 1. iOS physical Thinking interaction, light/dark and reduced-motion/accessibility
