@@ -279,6 +279,11 @@ class _ThinkingToggle extends StatelessWidget {
       child: InkWell(
         key: const ValueKey('execution_trace_toggle'),
         onTap: onTap,
+        // The six orbs are their own feedback; inherited Material ink paints
+        // a rectangular flash across this otherwise transparent surface.
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
         focusColor: palette.accent.withValues(alpha: 0.18),
         child: ConstrainedBox(
           constraints: const BoxConstraints(minWidth: 54, minHeight: 48),
