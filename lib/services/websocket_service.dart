@@ -567,6 +567,8 @@ class OsiaModel {
   final String? provider;
   final List<String> inputModalities;
   final bool selectable;
+  final String catalogueSource;
+  final String availability;
   final List<OsiaModelReasoningOption> reasoningOptions;
   final String selectedReasoning;
 
@@ -577,6 +579,8 @@ class OsiaModel {
     this.provider,
     this.inputModalities = const ['text'],
     this.selectable = true,
+    this.catalogueSource = '',
+    this.availability = '',
     this.reasoningOptions = const [],
     this.selectedReasoning = 'auto',
   });
@@ -588,8 +592,14 @@ class OsiaModel {
     if (raw is Map) {
       final m = raw.cast<String, dynamic>();
       final id = (m['id'] ?? m['name'] ?? m['model'] ?? '').toString();
-      final label = (m['label'] ?? m['name'] ?? m['id'] ?? m['model'] ?? id)
-          .toString();
+      final label =
+          (m['displayName'] ??
+                  m['label'] ??
+                  m['name'] ??
+                  m['id'] ??
+                  m['model'] ??
+                  id)
+              .toString();
       final desc = m['description']?.toString();
       final provider = (m['providerId'] ?? m['provider'])?.toString();
       final rawModalities = m['inputModalities'];
@@ -622,6 +632,8 @@ class OsiaModel {
         provider: provider,
         inputModalities: modalities,
         selectable: m['selectable'] != false && m['usable'] != false,
+        catalogueSource: (m['source'] ?? '').toString(),
+        availability: (m['availability'] ?? '').toString(),
         reasoningOptions: options,
         selectedReasoning: (reasoning['selected'] ?? 'auto')
             .toString()
