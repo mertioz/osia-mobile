@@ -181,8 +181,8 @@ void main() {
     );
 
     expect(find.byType(ExecutionTraceBlock), findsOneWidget);
-    expect(find.text(osiaStringsEn.executionTraceTitle), findsNothing);
-    expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
+    expect(find.text(osiaStringsEn.executionTraceTitle), findsOneWidget);
+    expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
     expect(find.byIcon(Icons.expand_more_rounded), findsNothing);
     expect(find.byKey(const ValueKey('execution_trace_summary')), findsNothing);
     expect(find.byIcon(Icons.check_circle_outline_rounded), findsNothing);

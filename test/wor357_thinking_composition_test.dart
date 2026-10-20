@@ -153,6 +153,14 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       expect(find.byType(ExecutionTraceBlock), findsOneWidget);
       final thinking = find.byType(ExecutionTraceBlock);
+      expect(find.byType(ThinkingDisclosure), findsOneWidget);
+      final emptyReply = find.byWidgetPredicate(
+        (w) => w is ChatBubble && w.text == 'Next answer',
+      );
+      expect(
+        tester.getBottomLeft(find.byType(ThinkingDisclosure)).dy,
+        lessThanOrEqualTo(tester.getTopLeft(emptyReply).dy),
+      );
       final user = find.byWidgetPredicate(
         (w) => w is ChatBubble && w.text == 'First question',
       );

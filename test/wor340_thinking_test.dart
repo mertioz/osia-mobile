@@ -428,7 +428,7 @@ void main() {
   });
 
   testWidgets(
-    'historical public text is collapsed and terminal-only trace disappears',
+    'historical public text is collapsed and empty trace keeps one control',
     (tester) async {
       await tester.pumpWidget(host(trace([event()]), active: false));
       expect(
@@ -471,7 +471,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('execution_trace_toggle')),
-        findsNothing,
+        findsOneWidget,
       );
     },
   );

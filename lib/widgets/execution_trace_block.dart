@@ -168,7 +168,6 @@ class _ExecutionTraceBlockState extends State<ExecutionTraceBlock> {
     final duration = Motion.duration(context, MotionDurations.medium);
     final active = widget.active && !_completed;
 
-    if (summary.isEmpty && !active) return const SizedBox.shrink();
     final detail = _expanded && summary.isNotEmpty
         ? Padding(
             padding: const EdgeInsets.only(top: 2, bottom: 4),
@@ -218,9 +217,14 @@ class _ExecutionTraceBlockState extends State<ExecutionTraceBlock> {
 /// Compact truthful placeholder shown before the first displayable activity
 /// event. It deliberately contains no synthetic status prose.
 class ThinkingDisclosure extends StatefulWidget {
-  const ThinkingDisclosure({super.key, this.disclosureState});
+  const ThinkingDisclosure({
+    super.key,
+    this.disclosureState,
+    this.active = true,
+  });
 
   final ExecutionTraceDisclosureState? disclosureState;
+  final bool active;
 
   @override
   State<ThinkingDisclosure> createState() => _ThinkingDisclosureState();
@@ -233,11 +237,28 @@ class _ThinkingDisclosureState extends State<ThinkingDisclosure> {
   void initState() {
     super.initState();
     _disclosure = widget.disclosureState ?? ExecutionTraceDisclosureState();
-    if (!_disclosure._started) {
+    _updateDisclosure();
+  }
+
+  @override
+  void didUpdateWidget(covariant ThinkingDisclosure oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.disclosureState != widget.disclosureState) {
+      _disclosure = widget.disclosureState ?? ExecutionTraceDisclosureState();
+    }
+    _updateDisclosure();
+  }
+
+  void _updateDisclosure() {
+    if (_disclosure._wasActive && !widget.active && !_disclosure._completed) {
+      _disclosure._completed = true;
+      _disclosure._expanded = false;
+    }
+    if (widget.active && !_disclosure._started && !_disclosure._completed) {
       _disclosure._started = true;
       _disclosure._expanded = true;
     }
-    _disclosure._wasActive = true;
+    _disclosure._wasActive = widget.active;
   }
 
   @override
@@ -245,7 +266,7 @@ class _ThinkingDisclosureState extends State<ThinkingDisclosure> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
       child: _ThinkingToggle(
-        active: true,
+        active: widget.active && !_disclosure._completed,
         expanded: _disclosure._expanded,
         onTap: () =>
             setState(() => _disclosure._expanded = !_disclosure._expanded),

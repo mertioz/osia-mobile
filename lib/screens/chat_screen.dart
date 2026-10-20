@@ -4004,7 +4004,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// is false and [_noResponse] is true, that slot holds the retry tile
   /// instead — the two are mutually exclusive (arming the error clears
   /// [_thinking]).
-  bool get _showThinkingTrailer => _thinking && !_isThinkingMidStream;
+  bool get _showThinkingTrailer => _thinking && _streamingIndex == null;
 
   String get _slashLocale => widget.languageController.code;
 
@@ -5939,6 +5939,18 @@ class _ChatScreenState extends State<ChatScreen> {
                                     entry.executionTrace!,
                                   ),
                                   finalStreaming: entry.isStreaming,
+                                )
+                              else if (isAssistant)
+                                ThinkingDisclosure(
+                                  key: ValueKey(
+                                    'thinking_${_activeConversationId}_${entry.messageId}_$index',
+                                  ),
+                                  active: entry.isStreaming,
+                                  disclosureState: _waitingThinkingDisclosure(
+                                    entry.clientRequestId.isNotEmpty
+                                        ? entry.clientRequestId
+                                        : 'history_${_activeConversationId}_${entry.messageId}_$index',
+                                  ),
                                 ),
                               ChatBubble(
                                 // Stable key per slot so the bubble (and its

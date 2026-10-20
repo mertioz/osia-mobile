@@ -301,18 +301,25 @@ void main() {
     expect(formatExecutionTraceSummary(osiaStringsEn, trace), successfulFacts);
   });
 
-  testWidgets('completed tool-only history has no fabricated Thinking', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      host(
-        ExecutionTraceBlock(
-          snapshot: snapshot(successfulActions()),
-          collapsed: true,
+  testWidgets(
+    'completed tool-only history keeps a control without fabricated prose',
+    (tester) async {
+      await tester.pumpWidget(
+        host(
+          ExecutionTraceBlock(
+            snapshot: snapshot(successfulActions()),
+            collapsed: true,
+          ),
         ),
-      ),
-    );
-    expect(find.byKey(const ValueKey('execution_trace_toggle')), findsNothing);
-    expect(find.byKey(const ValueKey('execution_trace_summary')), findsNothing);
-  });
+      );
+      expect(
+        find.byKey(const ValueKey('execution_trace_toggle')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('execution_trace_summary')),
+        findsNothing,
+      );
+    },
+  );
 }
