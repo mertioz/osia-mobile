@@ -49,20 +49,45 @@ workflows:
             --create
       - name: Add signing certificate to keychain
         script: keychain add-certificates
-      - name: Verify canonical release version
+      - name: Select available App Store Connect build number
         script: |
           set -e
-          configured="$(sed -nE 's/^version:[[:space:]]+([^[:space:]]+)[[:space:]]*$/\1/p' pubspec.yaml)"
-          if [ "$configured" != "1.1.2+16" ]; then
-            echo "Expected canonical version 1.1.2+16, found $configured"
+          if [ -z "${APP_STORE_APPLE_ID:-}" ]; then
+            echo "APP_STORE_APPLE_ID is required in Codemagic group osia_app_store."
             exit 1
           fi
+          configured="$(sed -nE 's/^version:[[:space:]]+[^+[:space:]]+\+([0-9]+)[[:space:]]*$/\1/p' pubspec.yaml)"
+          case "$configured" in
+            ''|*[!0-9]*)
+              echo "pubspec.yaml must declare a numeric iOS build number."
+              exit 1
+              ;;
+          esac
+          queried="$(app-store-connect get-latest-build-number \
+            "$APP_STORE_APPLE_ID" --platform IOS --all-versions)"
+          case "$queried" in
+            '') echo 'App Store Connect maximum build is unknown.'; exit 1 ;;
+            *[!0-9]*)
+              echo "Could not determine the latest App Store Connect build number."
+              exit 1
+              ;;
+            *) latest="$queried" ;;
+          esac
+          if [ "$latest" -ge "$configured" ]; then
+            selected=$((latest + 1))
+          else
+            selected="$configured"
+          fi
+          echo "OSIA_IOS_STORE_MAX_BUILD=$latest" >> "$CM_ENV"
+          echo "IOS_BUILD_NUMBER=$selected" >> "$CM_ENV"
+          echo "Selected iOS build number $selected"
       - name: Apply standard App Store distribution profile
         script: xcode-project use-profiles
-      - name: Build signed App Store IPA with canonical pubspec version
+      - name: Build signed App Store IPA with verified monotonic build
         script: |
           set -e
           flutter build ipa --release \
+            --build-number="$IOS_BUILD_NUMBER" \
             --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - build/ios/ipa/*.ipa
@@ -140,10 +165,10 @@ workflows:
               exit 1
               ;;
           esac
-          queried="$(app-store-connect get-latest-testflight-build-number \
-            "$APP_STORE_APPLE_ID" --platform IOS)"
+          queried="$(app-store-connect get-latest-build-number \
+            "$APP_STORE_APPLE_ID" --platform IOS --all-versions)"
           case "$queried" in
-            '') latest=0 ;;
+            '') echo 'App Store Connect maximum build is unknown.'; exit 1 ;;
             *[!0-9]*)
               echo "Could not determine the latest App Store Connect build number."
               exit 1
@@ -155,6 +180,7 @@ workflows:
           else
             selected="$configured"
           fi
+          echo "OSIA_IOS_STORE_MAX_BUILD=$latest" >> "$CM_ENV"
           echo "IOS_BUILD_NUMBER=$selected" >> "$CM_ENV"
           echo "Selected iOS build number $selected"
       - name: Apply App Store signing profile

@@ -125,6 +125,21 @@ String productionAndroidArtifactPath({bool appBundle = false}) => appBundle
     ? 'build/app/outputs/bundle/release/app-release.aab'
     : 'build/app/outputs/flutter-apk/app-release.apk';
 
+int validatedIosBuildNumber(Map<String, String> environment) {
+  final maximum = int.tryParse(environment['OSIA_IOS_STORE_MAX_BUILD'] ?? '');
+  final selected = int.tryParse(environment['IOS_BUILD_NUMBER'] ?? '');
+  if (maximum == null ||
+      maximum < 0 ||
+      selected == null ||
+      selected <= maximum ||
+      selected < 19) {
+    throw const FormatException(
+      'Query App Store Connect first, then supply OSIA_IOS_STORE_MAX_BUILD and a greater IOS_BUILD_NUMBER (minimum 19).',
+    );
+  }
+  return selected;
+}
+
 Future<void> main(List<String> arguments) async {
   var platform = 'android';
   var validateOnly = false;
@@ -172,6 +187,15 @@ Future<void> main(List<String> arguments) async {
     '--dart-define=webrtc_direct_v1=true',
     '--dart-define=relay_fallback_v1=true',
   ];
+  if (platform == 'ios') {
+    try {
+      command.add(
+        '--build-number=${validatedIosBuildNumber(Platform.environment)}',
+      );
+    } on FormatException catch (error) {
+      _fail(error.message);
+    }
+  }
   stdout.writeln('Building the official OSIA $platform release.');
   if (platform == 'android') {
     stdout.writeln(

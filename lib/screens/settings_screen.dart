@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../l10n.dart';
 import '../legal_manifest.dart';
 import '../motion.dart';
+import '../product_version.dart';
 import '../nav.dart';
 import '../services/background_connection_service.dart';
 import '../services/notification_service.dart';
@@ -605,6 +606,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
 
               // ── Donation + footer ────────────────────────────────────
+              ExpansionTile(
+                key: const Key('product-version'),
+                title: const Text('OSIA $productVersion · Beta'),
+                subtitle: Text(
+                  widget.languageController.code == 'fr'
+                      ? 'Historique de développement'
+                      : 'Development history',
+                ),
+                children: [
+                  for (final entry
+                      in historicalMobileVersions.entries.toList().reversed)
+                    ListTile(
+                      title: Text(entry.value),
+                      subtitle: Text(entry.key),
+                    ),
+                ],
+              ),
               const SizedBox(height: 28),
               Center(
                 child: InkWell(
