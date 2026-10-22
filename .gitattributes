@@ -3,3 +3,5 @@ assets/guide/catalog.v4.json text eol=lf
 lib/guide/guide_catalog_data.g.dart text eol=lf
 # The legal manifest hashes these exact canonical bytes on every platform.
 assets/legal/legal-source.json text eol=lf
+# Preserve the upstream OFL license verbatim, including its original whitespace.
+assets/fonts/OFL.txt -text -whitespace
