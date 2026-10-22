@@ -6,6 +6,68 @@ are separate states. **The production release is not complete.** Desktop macOS
 is paused; the accepted Windows 0.9.0 distribution is unchanged.
 
 
+## Published direct APK and final signed artifacts
+
+The operator accepted build22 on the Pixel for retained pairing/settings and
+its Android QR diagnostics notice, then explicitly authorized publication of
+the exact APK and site. Build21's earlier functional acceptance remains the
+record for real chat, single Thinking, Stop, background/network recovery and
+editable reporting without automatic sending. No iPhone acceptance is claimed.
+
+The signed universal **0.9.5/code22 APK is publicly available**:
+https://osia.space/fr/download/android
+
+Immutable binary:
+https://download.osia.space/android/0.9.5/22/OSIA-Mobile.apk
+
+**118,159,332 bytes**, SHA256
+`e6266eb6b695e0ff9fed4093de1bb0ee89a98decad7e6d2f0bc5c4ff43c1fe81`.
+Source: `9f88381f241c298fc2e2d05e2556663e871d5f99`.
+The original local/upload certificate is preserved. APK v2, universal ABIs,
+ZIP16KiB alignment and all 14 64-bit ELF alignments passed. The separate Play
+AAB is **91,837,290 bytes**, SHA256
+`d4a348b32427f42a786cd87348d6b96c531f552853c7ff7b8bbd83153dda9681`;
+official bundletool1.18.3 validates it and its certificate matches the upload key.
+Source22 analysis is clean; the full suite passed 516 with one existing live
+opt-in skip. No runtime source was changed after building these binaries.
+
+Five exact Android objects were uploaded using the existing bounded DPAPI
+uploader, extended only to these pinned keys, sizes, hashes and source. All
+five private readbacks and full unauthenticated public GET/hash checks passed.
+The new site source is `908a0aa48c6915f1f24827954deb49b8cbc60c8a`;
+primary HEAD, origin/main and GitHub matched. Cloudflare Pages production
+`94c93df2-2afc-4d59-8db0-5792c47e71e9` deployed successfully. Ten EN/FR
+public page checks passed, public release JSON equals source, and Windows
+artifact/history metadata remains identical. Site tests34, build, export and
+GitHub Secret scan39793384354 passed. Store links remain disabled.
+
+Codemagic job `6ada147f8a524d15d6a60a5a` finished successfully, including
+native signature verification and Apple upload. Downloaded final IPA:
+**33,248,665 bytes**, SHA256
+`2afec715ff4fb5b44d1eaa8743cb542032396e2a583573fb96727d4c7ed4e751`.
+Its embedded identity/version/build and actual bytes match CI provenance.
+Apple independently lists 0.9.5/build22 as ready to submit, UUID
+`e5f85e1a-f351-4e7d-935e-301d42a0fac2`. It is associated with the App Store
+0.9.5 draft, with manual release retained. No App Review submission was made.
+
+Apple privacy draft now includes support content, device IDs and technical
+diagnostics for functionality, potentially linked to identity, without ad
+tracking; EN/FR privacy URLs are saved. Google Data Safety is saved as a draft
+with SDK diagnostics/usage/install IDs and optional report text, plus the
+privacy-policy deletion-request link. These drafts require final cross-check
+against the complete review package, not a claim of store compliance approval.
+No dedicated reviewer PC or iPhone is available. The operator authorized the
+separate support requests for Apple and Google. Both were sent: Apple showed
+a case acknowledgement; Google showed a created request with its number
+pending. An automated Google suggestion was escalated to a support specialist
+and is not treated as a human policy determination. References are in WOR-352.
+
+Play independently accepted the signed AAB as **22 (0.9.5)**. Production release
+record4 was saved with EN/FR notes and 100% of targeted countries; the UI
+explicitly confirmed that a separate Publishing overview action is needed to
+send it for review. No such action was taken. This is an uploaded/saved
+production release, not approval or public Play availability.
+
 ## Final privacy audit update
 
 The operator accepted Android **0.9.5/code21** on the Pixel for retained
@@ -52,7 +114,7 @@ App Store Connect operation. No automatic beta or App Store review is enabled.
 - Existing bilingual privacy policy 2026-10-05.4 already covers voluntary support
   messages and infrastructure metadata. The report form provides the precise
   fields and 30-day inbox notice. No published historical legal bundle was changed.
-- Both iOS workflows upload and assign the existing internal group with
+- Both iOS workflows upload with
   `submit_to_testflight: false` and `submit_to_app_store: false`. Codemagic's
   `submit_to_testflight: true` means beta **review**, not binary upload.
   [Official publishing semantics](https://docs.codemagic.io/yaml-publishing/app-store-connect/).
@@ -136,9 +198,8 @@ the operator. A new signed artifact is not proof of physical acceptance.
 
 ## Remaining acceptance gates
 
-1. Final signed candidate21 artifacts, exact provenance/hashes and private
-   Android in-place acceptance without losing settings/pairing. Independent iOS
-   device/lifecycle/Keychain acceptance remains unverified.
+1. Signed candidate22 artifacts and Android acceptance are recorded above.
+   Independent iOS device/lifecycle/Keychain acceptance remains unverified.
 2. Working, repeatable reviewer access. The existing synthetic local review
    mode does not prove access to real PC/provider/tool functionality; do not
    disguise it as a full live review environment. The earlier Google refusal
@@ -154,9 +215,9 @@ the operator. A new signed artifact is not proof of physical acceptance.
 5. Actual provider readiness/eligibility is not proven by contract tests. No
    paid inference, account purchase or new subscription was authorized or made.
    In particular, commercial ChatGPT plan eligibility must not be promised.
-6. Operator's explicit go-ahead for the verified final store submission/release
-   and direct APK publication; then verify public listings/full downloads before
-   enabling store links on osia.space. No public artifact has been published here.
+6. Operator's explicit go-ahead for the verified final store submission/release,
+   then verify public listings before enabling store links. The direct APK
+   checkpoint and publication are complete as recorded above.
 
 Official references: [Apple review rules](https://developer.apple.com/app-store/review/guidelines/),
 [Google AI reporting](https://support.google.com/googleplay/android-developer/answer/13985936),
