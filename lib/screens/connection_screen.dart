@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -607,7 +608,7 @@ class _ConnectionScreenState extends State<ConnectionScreen>
   }
 
   Widget _buildScanButton(OsiaPalette palette, OsiaStrings strings) {
-    return TextButton.icon(
+    final button = TextButton.icon(
       key: const Key('pairing-scan-button'),
       onPressed: _connecting ? null : _scanQrCode,
       icon: const Icon(Icons.qr_code_scanner_rounded, size: 20),
@@ -616,6 +617,26 @@ class _ConnectionScreenState extends State<ConnectionScreen>
         foregroundColor: palette.accent,
         textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
       ),
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        button,
+        if (defaultTargetPlatform == TargetPlatform.android)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+            child: Text(
+              strings.pairingQrDataNotice,
+              key: const Key('pairing-qr-data-notice'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                color: palette.textMuted,
+              ),
+            ),
+          ),
+      ],
     );
   }
 

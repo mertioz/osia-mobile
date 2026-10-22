@@ -49,11 +49,11 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('bundled legal manifest matches the canonical version and hash', () async {
-    expect(currentLegalManifest.version, '2026-10-05.4');
+    expect(currentLegalManifest.version, '2026-10-22.1');
     expect(currentLegalManifest.termsVersion, currentLegalManifest.version);
     expect(currentLegalManifest.privacyVersion, currentLegalManifest.version);
-    expect(currentLegalManifest.lastUpdated, '2026-10-05');
-    expect(currentLegalManifest.effectiveDate, '2026-10-06');
+    expect(currentLegalManifest.lastUpdated, '2026-10-22');
+    expect(currentLegalManifest.effectiveDate, '2026-10-22');
     expect(currentLegalManifest.publicContactEmail, 'contact@osia.space');
     expect(currentLegalManifest.governingLaw, 'France');
     expect(currentLegalManifest.minimumAge, isNull);
@@ -74,7 +74,7 @@ void main() {
     expect(sha256.convert(bytes).toString(), currentLegalManifest.contentSha256);
     expect(
       currentLegalManifest.contentSha256,
-      '80a13b01fad30ce9ef8b7974f4452fd0a2f653f78dc49ed75db54a7e921427a6',
+      '0bbe9ce0744e647a5ed840f2c1b824bbaf3bdf519847f2bf16b9d20bfb1a9670',
     );
   });
 
@@ -201,7 +201,7 @@ void main() {
     expect(body.data, contains('1. Operator and scope'));
     expect(body.data, contains('35. Contact'));
     expect(body.data, contains('Aymen Gherbi'));
-    expect(find.text('Version 2026-10-05.4 · updated 2026-10-05'), findsOneWidget);
+    expect(find.text('Version 2026-10-22.1 · updated 2026-10-22'), findsOneWidget);
     expect(find.textContaining('18 years old'), findsNothing);
     expect(find.textContaining('Draft'), findsNothing);
     expect(find.textContaining('Brouillon'), findsNothing);

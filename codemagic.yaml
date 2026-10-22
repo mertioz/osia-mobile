@@ -101,8 +101,7 @@ workflows:
         auth: integration
         # Upload and internal group assignment only; beta review is a separate action.
         submit_to_testflight: false
-        beta_groups:
-          - OSIA Internal
+        # Tester assignment is performed explicitly in App Store Connect.
         submit_to_app_store: false
 
   ios-testflight-internal:

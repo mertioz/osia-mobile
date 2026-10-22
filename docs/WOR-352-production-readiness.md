@@ -5,6 +5,32 @@ osia.space are the objective. TestFlight, internal testing, upload and approval
 are separate states. **The production release is not complete.** Desktop macOS
 is paused; the accepted Windows 0.9.0 distribution is unchanged.
 
+
+## Final privacy audit update
+
+The operator accepted Android **0.9.5/code21** on the Pixel for retained
+pairing/settings, a real conversation, one Thinking disclosure, Stop,
+background/network recovery and the editable report form with no automatic send.
+This does not establish iOS acceptance or cover an untested replacement binary.
+
+The subsequent native SDK audit confirmed Google ML Kit barcode-scanner metrics
+on Android. Final source therefore advances to **0.9.5+22**, adds a localized
+notice before opening the Android QR scanner (manual token pairing avoids the
+SDK), and prepares canonical bilingual legal source **2026-10-22.1**. Sections
+39/40 document voluntary reports and Android SDK processing. The prior legal
+source remains immutable. New bundle SHA256:
+`0bbe9ce0744e647a5ed840f2c1b824bbaf3bdf519847f2bf16b9d20bfb1a9670`.
+The site legal update is prepared locally and must be deployed before the new
+public Mobile release. Android Data Safety must include the SDK's diagnostic
+and usage metrics/installation identifiers; the iOS native scanner is separate.
+[Google's disclosure](https://developers.google.com/ml-kit/android-data-disclosure),
+[SDK privacy terms](https://developers.google.com/ml-kit/terms).
+
+Candidate21 also completed native signing verification and uploaded, but its
+post-processing still failed. The release-candidate workflow now limits CI to
+verification and binary upload; internal tester assignment is an explicit
+App Store Connect operation. No automatic beta or App Store review is enabled.
+
 ## Source and verified corrections
 
 - `db19ae9603bbe794b125b3a938f060a8a84bde00`: remove the iOS Beta label,

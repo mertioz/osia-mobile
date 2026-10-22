@@ -4637,6 +4637,15 @@ class OsiaL10n extends InheritedWidget {
 }
 
 extension PermissionOsiaStrings on OsiaStrings {
+  String get pairingQrDataNotice => _permissionText(
+    'Android QR scanning uses Google ML Kit, which sends diagnostic and usage metrics to Google. Manual token pairing avoids this SDK.',
+    'Le scan QR Android utilise Google ML Kit, qui transmet des diagnostics et métriques d’usage à Google. L’association manuelle par jeton évite ce SDK.',
+    'Android 二维码扫描使用 Google ML Kit，并向 Google 发送诊断和使用指标。手动输入配对令牌可避免使用此 SDK。',
+    'Android の QR スキャンは Google ML Kit を使用し、診断・利用状況の指標を Google に送信します。トークンを手入力すれば、この SDK を使わずに接続できます。',
+    'Der Android-QR-Scanner verwendet Google ML Kit und sendet Diagnose- und Nutzungsmetriken an Google. Manuelle Token-Kopplung verwendet dieses SDK nicht.',
+    'El escaneo QR de Android usa Google ML Kit y envía métricas de diagnóstico y uso a Google. La vinculación manual con token evita este SDK.',
+  );
+
   String _permissionText(
     String en,
     String fr,

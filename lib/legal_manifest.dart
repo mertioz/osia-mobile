@@ -45,11 +45,11 @@ class OsiaLegalManifest {
 }
 
 const currentLegalManifest = OsiaLegalManifest(
-  version: "2026-10-05.4",
-  termsVersion: "2026-10-05.4",
-  privacyVersion: "2026-10-05.4",
-  lastUpdated: "2026-10-05",
-  effectiveDate: "2026-10-06",
+  version: "2026-10-22.1",
+  termsVersion: "2026-10-22.1",
+  privacyVersion: "2026-10-22.1",
+  lastUpdated: "2026-10-22",
+  effectiveDate: "2026-10-22",
   publicContactEmail: "contact@osia.space",
   governingLaw: "France",
   agePolicy: "OSIA is not specifically directed at children. Minors may use it subject to applicable law; parental or legal-guardian authorization or supervision may be required. OSIA does not independently verify age unless a feature expressly says that it does.",
@@ -57,7 +57,7 @@ const currentLegalManifest = OsiaLegalManifest(
   materialChange: true,
   termsAcceptanceRequired: false,
   privacyNoticeRequired: false,
-  contentSha256: "80a13b01fad30ce9ef8b7974f4452fd0a2f653f78dc49ed75db54a7e921427a6",
+  contentSha256: "0bbe9ce0744e647a5ed840f2c1b824bbaf3bdf519847f2bf16b9d20bfb1a9670",
   termsUrls: {
     "en": "https://osia.space/en/legal/terms",
     "fr": "https://osia.space/legal/terms",
