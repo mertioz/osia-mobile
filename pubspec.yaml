@@ -1,7 +1,7 @@
 name: osia_mobile
 description: "OSIA Mobile — companion app for the OSIA voice assistant."
 publish_to: 'none'
-version: 0.9.5+20
+version: 0.9.5+21
 
 environment:
   sdk: ^3.12.0
@@ -54,6 +54,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/fonts/
     - assets/osia_logo.png
     - assets/osia_logo_mark.png
     - assets/production_capabilities.json

@@ -1,5 +1,8 @@
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'guide_progress.dart';
 import 'l10n.dart';
 import 'legal_manifest.dart';
@@ -16,6 +19,11 @@ import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  GoogleFonts.config.allowRuntimeFetching = false;
+  LicenseRegistry.addLicense(() async* {
+    final license = await rootBundle.loadString('assets/fonts/OFL.txt');
+    yield LicenseEntryWithLineBreaks(const ['Inter'], license);
+  });
   await AudioService.cleanupOrphanedRecordings();
   // Sweep any stale temp files left behind by previous picker sessions so
   // the plugin's internal cache stays in a clean state.

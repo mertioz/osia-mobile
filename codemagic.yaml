@@ -89,14 +89,18 @@ workflows:
           flutter build ipa --release \
             --build-number="$IOS_BUILD_NUMBER" \
             --export-options-plist=/Users/builder/export_options.plist
+      - name: Verify signed iOS archive and exported identity
+        script: python3 tool/verify_ios_artifact.py
     artifacts:
       - build/ios/ipa/*.ipa
+      - build/ios/ipa/OSIA-build-metadata.json
       - build/ios/archive/Runner.xcarchive/dSYMs/*.dSYM
       - /tmp/xcodebuild_logs/*.log
     publishing:
       app_store_connect:
         auth: integration
-        submit_to_testflight: true
+        # Upload and internal group assignment only; beta review is a separate action.
+        submit_to_testflight: false
         beta_groups:
           - OSIA Internal
         submit_to_app_store: false
@@ -193,14 +197,18 @@ workflows:
           flutter build ipa --release \
             --build-number="$IOS_BUILD_NUMBER" \
             --export-options-plist=/Users/builder/export_options.plist
+      - name: Verify signed iOS archive and exported identity
+        script: python3 tool/verify_ios_artifact.py
     artifacts:
       - build/ios/ipa/*.ipa
+      - build/ios/ipa/OSIA-build-metadata.json
       - build/ios/archive/Runner.xcarchive/dSYMs/*.dSYM
       - /tmp/xcodebuild_logs/*.log
     publishing:
       app_store_connect:
         auth: integration
-        submit_to_testflight: true
+        # Upload and internal group assignment only; beta review is a separate action.
+        submit_to_testflight: false
         beta_groups:
           - OSIA Internal
         submit_to_app_store: false

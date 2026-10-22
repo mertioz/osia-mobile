@@ -194,7 +194,7 @@ void main() {
       ),
     );
     expect(workflow, contains('auth: integration'));
-    expect(workflow, contains('submit_to_testflight: true'));
+    expect(workflow, contains('submit_to_testflight: false'));
     expect(workflow, contains('beta_groups:\n          - OSIA Internal'));
     expect(workflow, contains('submit_to_app_store: false'));
     expect(workflow, isNot(contains('submit_to_app_store: true')));
@@ -283,7 +283,7 @@ void main() {
     expect(addCertificates, greaterThan(fetch));
     expect(useProfiles, greaterThan(addCertificates));
 
-    expect(workflow, contains('submit_to_testflight: true'));
+    expect(workflow, contains('submit_to_testflight: false'));
     expect(workflow, contains('beta_groups:\n          - OSIA Internal'));
     expect(
       workflow,
@@ -301,7 +301,7 @@ void main() {
       final pubspec = _read('pubspec.yaml');
       final workflow = _read('codemagic.yaml');
 
-      expect(pubspec, contains('version: 0.9.5+20'));
+      expect(pubspec, contains('version: 0.9.5+21'));
       expect(pubspec, isNot(contains('version: 1.0.1+2')));
       final candidateStart = workflow.indexOf('  ios-release-candidate:\n');
       final internalStart = workflow.indexOf('  ios-testflight-internal:\n');
@@ -318,7 +318,7 @@ void main() {
       expect(candidate, isNot(contains('--build-name=')));
       expect(candidate, isNot(contains('testFlightInternalTestingOnly')));
       expect(candidate, isNot(contains('triggering:')));
-      expect(candidate, contains('submit_to_testflight: true'));
+      expect(candidate, contains('submit_to_testflight: false'));
       expect(candidate, contains('submit_to_app_store: false'));
     },
   );

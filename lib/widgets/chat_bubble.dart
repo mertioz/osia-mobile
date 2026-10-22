@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../l10n.dart';
 import '../motion.dart';
 import '../theme.dart';
+import '../content_report_strings.dart';
 
 /// A chat bubble for displaying messages in the conversation.
 ///
@@ -26,6 +27,7 @@ class ChatBubble extends StatefulWidget {
   /// message — asks the PC to read this message aloud. The button is only
   /// shown when this is non-null (i.e. on completed assistant bubbles).
   final VoidCallback? onSpeak;
+  final VoidCallback? onReport;
 
   /// Optional widget rendered inline at the very end of the streaming text
   /// (after the blinking cursor) — e.g. a mid-stream thinking indicator.
@@ -41,6 +43,7 @@ class ChatBubble extends StatefulWidget {
     this.isStreaming = false,
     this.isSystem = false,
     this.onSpeak,
+    this.onReport,
     this.inlineTrailing,
   });
 
@@ -235,7 +238,24 @@ class _ChatBubbleState extends State<ChatBubble>
                   ),
                   child: content,
                 ),
-                if (showSpeak) _SpeakButton(onTap: widget.onSpeak!),
+                if (showSpeak ||
+                    (widget.onReport != null && !widget.isStreaming))
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      if (showSpeak) _SpeakButton(onTap: widget.onSpeak!),
+                      if (widget.onReport != null && !widget.isStreaming)
+                        IconButton(
+                          tooltip: OsiaL10n.of(context).reportContent,
+                          icon: Icon(
+                            Icons.flag_outlined,
+                            size: 18,
+                            color: palette.textMuted,
+                          ),
+                          onPressed: widget.onReport,
+                        ),
+                    ],
+                  ),
               ],
             ),
           ),

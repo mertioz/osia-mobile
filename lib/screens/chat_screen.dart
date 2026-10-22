@@ -22,6 +22,7 @@ import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 import '../widgets/accent_logo.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/content_report_dialog.dart';
 import '../widgets/connection_badge.dart';
 import '../widgets/execution_trace_block.dart';
 import '../widgets/glass_input_bar.dart';
@@ -5970,6 +5971,18 @@ class _ChatScreenState extends State<ChatScreen> {
                                     : null,
                                 onSpeak: isAssistant
                                     ? () => _speakMessage(entry)
+                                    : null,
+                                onReport:
+                                    isAssistant &&
+                                        !entry.isStreaming &&
+                                        entry.content.trim().isNotEmpty
+                                    ? () => showDialog<void>(
+                                        context: context,
+                                        barrierDismissible: false,
+                                        builder: (_) => ContentReportDialog(
+                                          text: entry.content,
+                                        ),
+                                      )
                                     : null,
                               ),
                             ],
