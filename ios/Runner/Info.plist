@@ -35,7 +35,7 @@
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>OSIA accesses your photo library only when you explicitly select an image to attach to a conversation.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>OSIA accesses the camera only when you explicitly capture an image to attach to a conversation or scan an OSIA pairing QR code.</string>
+	<string>OSIA accesses the camera only when you explicitly choose to scan an OSIA pairing QR code to connect to your own computer.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>OSIA utilise votre réseau local pour se connecter directement et de manière chiffrée à votre PC associé.</string>
 	<key>NSBonjourServices</key>

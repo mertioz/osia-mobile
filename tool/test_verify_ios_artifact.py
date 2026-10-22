@@ -1,9 +1,35 @@
 import unittest
+from io import BytesIO
+from zipfile import ZipFile
 from datetime import datetime, timedelta, timezone
-from verify_ios_artifact import verify_metadata
+from verify_ios_artifact import verify_metadata, verify_no_location_api
 
 
 class IosArtifactMetadataTests(unittest.TestCase):
+    def test_rejects_location_in_runner_and_embedded_framework(self):
+        for path in ["Payload/Runner.app/Runner", "Payload/Runner.app/Frameworks/SDK.framework/SDK"]:
+            for marker in [b"requestWhenInUseAuthorization", b"requestAlwaysAuthorization",
+                           b"DKCameraLocationManager", b"_OBJC_CLASS_$_CLLocationManager"]:
+                with self.subTest(path=path, marker=marker):
+                    stream = BytesIO()
+                    with ZipFile(stream, "w") as archive:
+                        archive.writestr(path, bytes.fromhex("cffaedfe") + marker)
+                    with ZipFile(stream) as archive, self.assertRaises(ValueError):
+                        verify_no_location_api(archive)
+
+    def test_checks_native_code_not_resource_text_and_rejects_empty_bundle(self):
+        stream = BytesIO()
+        with ZipFile(stream, "w") as archive:
+            archive.writestr("Payload/Runner.app/Runner", bytes.fromhex("cffaedfe") + b"safe native code")
+            archive.writestr("Payload/Runner.app/help.txt", b"requestWhenInUseAuthorization")
+        with ZipFile(stream) as archive:
+            self.assertEqual(verify_no_location_api(archive), ["Payload/Runner.app/Runner"])
+        stream = BytesIO()
+        with ZipFile(stream, "w") as archive:
+            archive.writestr("Payload/Runner.app/help.txt", b"no executable")
+        with ZipFile(stream) as archive, self.assertRaises(ValueError):
+            verify_no_location_api(archive)
+
     def setUp(self):
         self.info = {"CFBundleIdentifier": "space.osia.app", "CFBundleShortVersionString": "0.9.5", "CFBundleVersion": "21"}
         self.profile = {

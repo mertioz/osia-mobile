@@ -2,6 +2,12 @@ platform :ios, '13.0'
 
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
+# ChatScreen uses FileType.any (UIDocumentPicker), never file_picker's media
+# or audio galleries. Avoid their unused camera/location SDK dependencies.
+Pod::PICKER_MEDIA = false
+Pod::PICKER_AUDIO = false
+Pod::PICKER_DOCUMENT = true
+
 project 'Runner', {
   'Debug' => :debug,
   'Profile' => :release,

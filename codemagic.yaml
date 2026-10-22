@@ -28,7 +28,7 @@ workflows:
       - name: Configure Flutter dependencies
         script: |
           set -e
-          flutter config --enable-swift-package-manager
+          flutter config --no-enable-swift-package-manager
           flutter pub get
       - name: Analyze Flutter source
         script: flutter analyze
@@ -88,7 +88,7 @@ workflows:
           set -e
           flutter build ipa --release \
             --build-number="$IOS_BUILD_NUMBER" \
-            --export-options-plist=/Users/builder/export_options.plist
+            --export-options-plist="$HOME/export_options.plist"
       - name: Verify signed iOS archive and exported identity
         script: python3 tool/verify_ios_artifact.py
     artifacts:
@@ -133,7 +133,7 @@ workflows:
       - name: Configure Flutter dependencies
         script: |
           set -e
-          flutter config --enable-swift-package-manager
+          flutter config --no-enable-swift-package-manager
           flutter pub get
       - name: Analyze Flutter source
         script: flutter analyze
@@ -195,7 +195,7 @@ workflows:
           set -e
           flutter build ipa --release \
             --build-number="$IOS_BUILD_NUMBER" \
-            --export-options-plist=/Users/builder/export_options.plist
+            --export-options-plist="$HOME/export_options.plist"
       - name: Verify signed iOS archive and exported identity
         script: python3 tool/verify_ios_artifact.py
     artifacts:

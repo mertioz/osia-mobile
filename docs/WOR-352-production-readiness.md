@@ -198,6 +198,49 @@ the operator. A new signed artifact is not proof of physical acceptance.
 
 ## Remaining acceptance gates
 
+### Follow-up inspection, 22 October
+
+Google support case `6-9050000041393` now has a human acknowledgement: the
+expert team is investigating reviewer access and asks that no newer version be
+submitted until resolution. Apple case `103005087756` has an email receipt but
+no substantive answer. No duplicate requests were sent.
+
+Apple's successful build22 delivery also generated **ITMS-90683**: a missing
+location purpose string. Inspection of the actual signed IPA confirms
+`DKCameraLocationManager`, `CLLocationManager` and
+`requestWhenInUseAuthorization` in Runner. Dart does not request location;
+`file_picker` 8.3.7's SwiftPM graph pulls DKCamera although ChatScreen only calls
+`FileType.any`. Its CocoaPods spec supports document-only compilation.
+The smallest correction uses that supported configuration, excludes unused
+media/audio galleries, and disables SwiftPM for this pinned Flutter3.44.1
+project. The QR camera remains available through mobile_scanner. No user-facing
+feature or LAN/WAN transport is disabled. Camera purpose text now describes QR
+scanning, rather than claiming an in-app photo-capture flow that is not exposed.
+
+The native artifact verifier now rejects location authorization selectors and
+CLLocationManager/DKCamera references in every shipped Mach-O executable,
+including statically linked Runner. It rejects the actual build22 IPA, so a
+replacement **iOS-only build greater than22** is necessary before final review.
+Product version remains0.9.5; Android APK/AAB22 and their source9f88381,
+signatures, public URLs and acceptance are preserved. Any replacement iOS IPA
+must record its own source/hash/build and undergo independent physical testing;
+the old build22 must not be silently described as corrected.
+
+**ITMS-90068** separately warns that the iOS13 deployment target must rise to15
+for deliveries from April2027. This is a future requirement, not evidence that
+the October2026 upload failed; no minimum-OS change is bundled into this fix.
+
+The existing internal TestFlight group has two testers; one used an iPhone15Pro
+on build16. Build22 has no observed installation. The operator explicitly
+declined contacting that tester. No message or new invitation was sent.
+
+Play currently has managed publishing **disabled**, 177 countries/regions plus
+rest-of-world additions, and12 changes not sent. Apple retains manual release.
+These different release behaviors must be included in the final checkpoint.
+The English Play description was refreshed in a saved draft to include the
+own-PC requirement, voluntary report flow, MLKit notice/manual alternative and
+external provider terms/costs. Historical July screenshots remain provisional.
+
 1. Signed candidate22 artifacts and Android acceptance are recorded above.
    Independent iOS device/lifecycle/Keychain acceptance remains unverified.
 2. Working, repeatable reviewer access. The existing synthetic local review

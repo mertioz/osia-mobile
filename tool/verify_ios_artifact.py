@@ -12,6 +12,34 @@ from datetime import datetime, timezone
 from zipfile import ZipFile
 
 
+def verify_no_location_api(bundle: ZipFile) -> list[str]:
+    """Reject unused native location code, including statically linked SDKs.
+
+    Build22 passed source-only checks but Apple's ITMS-90683 scanner found
+    DKCamera's location API in Runner. Inspect every shipped Mach-O executable,
+    not just dynamically embedded frameworks or Dart permission call sites.
+    """
+    magic = {bytes.fromhex(value) for value in
+             ("cffaedfe", "cefaedfe", "cafebabe", "bebafeca", "cafebabf", "bfbafeca")}
+    forbidden = (b"requestWhenInUseAuthorization", b"requestAlwaysAuthorization",
+                 b"DKCameraLocationManager", b"_OBJC_CLASS_$_CLLocationManager")
+    native_files = []
+    for name in bundle.namelist():
+        if not name.startswith("Payload/") or name.endswith("/"):
+            continue
+        with bundle.open(name) as entry:
+            header = entry.read(4)
+            if header not in magic:
+                continue
+            data = header + entry.read()
+        native_files.append(name)
+        if any(marker in data for marker in forbidden):
+            raise ValueError(f"Unused native location API remains in {name}")
+    if not native_files:
+        raise ValueError("IPA contains no native executable to inspect")
+    return native_files
+
+
 def verify_metadata(info: dict, profile: dict, version: str, build: str) -> dict:
     if (info.get("CFBundleIdentifier") != "space.osia.app"
             or info.get("CFBundleShortVersionString") != version
@@ -59,6 +87,7 @@ def main() -> None:
         if len(info_paths) != 1:
             raise ValueError("Expected exactly one application in the IPA")
         info = plistlib.loads(bundle.read(info_paths[0]))
+        native_files = verify_no_location_api(bundle)
     metadata = verify_metadata(info, profile, version_match[1], build)
     archive_info = plistlib.loads((archive_app / "Info.plist").read_bytes())
     verify_metadata(archive_info, profile, version_match[1], build)
@@ -67,6 +96,8 @@ def main() -> None:
         sha256=hashlib.sha256(ipa.read_bytes()).hexdigest(),
         size_bytes=ipa.stat().st_size,
         archive_signature_verified=True,
+        location_api_absent=True,
+        inspected_native_files=native_files,
         device_verified=False,
     )
     (ipa.parent / "OSIA-build-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")

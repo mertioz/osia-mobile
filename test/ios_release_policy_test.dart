@@ -122,10 +122,6 @@ void main() {
       requiredPhrases: <String>[
         'camera',
         'explicitly',
-        'capture',
-        'image',
-        'attach',
-        'conversation',
         'pairing',
         'qr code',
       ],
@@ -153,6 +149,11 @@ void main() {
     expect(info, isNot(contains('NSLocationWhenInUseUsageDescription')));
     expect(podfile, isNot(contains('PERMISSION_LOCATION=1')));
     expect(podfile, isNot(contains('PERMISSION_LOCATION_WHENINUSE=1')));
+    expect(podfile, contains('Pod::PICKER_MEDIA = false'));
+    expect(podfile, contains('Pod::PICKER_AUDIO = false'));
+    expect(podfile, contains('Pod::PICKER_DOCUMENT = true'));
+    expect(_read('pubspec.yaml'), contains('enable-swift-package-manager: false'));
+    expect(_read('codemagic.yaml'), isNot(contains('config --enable-swift-package-manager')));
     expect(androidManifest, isNot(contains('ACCESS_FINE_LOCATION')));
     expect(androidManifest, isNot(contains('ACCESS_COARSE_LOCATION')));
     expect(
