@@ -10,7 +10,7 @@ void main() {
       expect(productVersion, '0.9.5');
       expect(
         File('pubspec.yaml').readAsStringSync(),
-        contains('version: $productVersion+19'),
+        contains('version: $productVersion+20'),
       );
       final aliases = historicalMobileVersions.values.toList();
       expect(aliases.toSet().length, aliases.length);

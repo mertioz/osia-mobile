@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n.dart';
 import '../legal_manifest.dart';
@@ -19,12 +18,10 @@ import 'guide_screen.dart';
 import 'memory_screen.dart';
 import 'providers_screen.dart';
 
-/// Placeholder donation URL — to be replaced with the real one later.
-const String _kDonationUrl = 'https://osia.space/donate';
 bool get _liveApiAvailable => false;
 
 /// Settings screen. Only reachable from the chat screen, i.e. after a
-/// successful connection. Hosts five sections plus a donation link:
+/// successful connection. Hosts five sections:
 ///   - Appearance: color theme swatches (applied live)
 ///   - Language: EN/FR/ZH/JA/DE/ES dropdown
 ///   - Voice: auto-TTS toggle
@@ -322,21 +319,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Navigator.of(context).pushNamedAndRemoveUntil('/connection', (_) => false);
   }
 
-  Future<void> _openDonation() async {
-    final uri = Uri.parse(_kDonationUrl);
-    var opened = false;
-    try {
-      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } catch (_) {
-      opened = false;
-    }
-    if (!opened && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(OsiaL10n.of(context).linkOpenFailed)),
-      );
-    }
-  }
-
   void _openLegal(LegalDocument document) {
     // Use the shared slide-fade route so the legal screen opens with the same
     // motion as every other navigation (not the default Material transition).
@@ -605,10 +587,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
 
-              // ── Donation + footer ────────────────────────────────────
+              // ── Version + footer ─────────────────────────────────────
               ExpansionTile(
                 key: const Key('product-version'),
-                title: const Text('OSIA $productVersion · Beta'),
+                title: Text(
+                  defaultTargetPlatform == TargetPlatform.iOS
+                      ? 'OSIA $productVersion'
+                      : 'OSIA $productVersion · Beta',
+                ),
                 subtitle: Text(
                   widget.languageController.code == 'fr'
                       ? 'Historique de développement'
@@ -622,42 +608,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       subtitle: Text(entry.key),
                     ),
                 ],
-              ),
-              const SizedBox(height: 28),
-              Center(
-                child: InkWell(
-                  onTap: _openDonation,
-                  borderRadius: BorderRadius.circular(20),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.favorite_rounded,
-                          size: 16,
-                          color: palette.accent,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          strings.makeDonation,
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w500,
-                            color: palette.accent,
-                            decoration: TextDecoration.underline,
-                            decorationColor: palette.accent.withValues(
-                              alpha: 0.5,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
               ),
               const SizedBox(height: 10),
               Center(
