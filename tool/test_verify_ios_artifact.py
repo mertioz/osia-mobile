@@ -2,7 +2,7 @@ import unittest
 from io import BytesIO
 from zipfile import ZipFile
 from datetime import datetime, timedelta, timezone
-from verify_ios_artifact import verify_metadata, verify_no_location_api
+from verify_ios_artifact import verify_metadata, verify_no_location_api, source_product_version
 
 
 class IosArtifactMetadataTests(unittest.TestCase):
@@ -29,6 +29,18 @@ class IosArtifactMetadataTests(unittest.TestCase):
             archive.writestr("Payload/Runner.app/help.txt", b"no executable")
         with ZipFile(stream) as archive, self.assertRaises(ValueError):
             verify_no_location_api(archive)
+
+    def test_source_version_advances_without_weakening_identity_checks(self):
+        self.assertEqual(source_product_version(
+            "version: 0.9.51+24\n", "const productVersion = '0.9.51';\n"), "0.9.51")
+        for pubspec, dart in [
+            ("version: 0.9.51+24\n", "const productVersion = '0.9.5';\n"),
+            ("version: 0.9.051+24\n", "const productVersion = '0.9.051';\n"),
+            ("version: 0.9.51+0\n", "const productVersion = '0.9.51';\n"),
+            ("version: 0.9.51+24\nversion: 0.9.51+24\n", "const productVersion = '0.9.51';\n"),
+        ]:
+            with self.subTest(pubspec=pubspec), self.assertRaises(ValueError):
+                source_product_version(pubspec, dart)
 
     def setUp(self):
         self.info = {"CFBundleIdentifier": "space.osia.app", "CFBundleShortVersionString": "0.9.5", "CFBundleVersion": "21"}

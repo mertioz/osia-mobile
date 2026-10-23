@@ -63,11 +63,25 @@ def verify_metadata(info: dict, profile: dict, version: str, build: str) -> dict
     }
 
 
+def source_product_version(pubspec: str, version_source: str) -> str:
+    """Require one valid native version shared by pubspec and product metadata."""
+    numeric = r"(?:0|[1-9][0-9]*)"
+    versions = re.findall(
+        rf"^version:[ \t]*({numeric}\.{numeric}\.{numeric})\+[1-9][0-9]*[ \t]*$",
+        pubspec, re.M,
+    )
+    declared = re.findall(r"^const productVersion = '([^']+)';$", version_source, re.M)
+    if len(versions) != 1 or declared != versions:
+        raise ValueError("Mobile source versions are missing, invalid or inconsistent")
+    return versions[0]
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
-    version_match = re.search(r"^version:\s*([^+\s]+)\+\d+\s*$", (root / "pubspec.yaml").read_text(), re.M)
-    if not version_match or version_match[1] != "0.9.5":
-        raise ValueError("Mobile product version must remain 0.9.5")
+    version = source_product_version(
+        (root / "pubspec.yaml").read_text(encoding="utf-8"),
+        (root / "lib/product_version.dart").read_text(encoding="utf-8"),
+    )
     build = os.environ["IOS_BUILD_NUMBER"]
     archive_app = root / "build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
     subprocess.run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(archive_app)],
@@ -88,9 +102,9 @@ def main() -> None:
             raise ValueError("Expected exactly one application in the IPA")
         info = plistlib.loads(bundle.read(info_paths[0]))
         native_files = verify_no_location_api(bundle)
-    metadata = verify_metadata(info, profile, version_match[1], build)
+    metadata = verify_metadata(info, profile, version, build)
     archive_info = plistlib.loads((archive_app / "Info.plist").read_bytes())
-    verify_metadata(archive_info, profile, version_match[1], build)
+    verify_metadata(archive_info, profile, version, build)
     metadata.update(
         source_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
         sha256=hashlib.sha256(ipa.read_bytes()).hexdigest(),

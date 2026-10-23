@@ -129,3 +129,31 @@ reconnect expectation now excludes the removed eager MCP status request;
 connector screens continue to request and render their own status. Native IDs,
 secure storage and signatures are unchanged. The generated Flutter macOS
 registrar only reflects package_info_plus; no Desktop macOS work is performed.
+
+
+## Signed Android24 and corrected iOS packaging
+
+Android product source2dc0ce269e4ec6556a4f8e201c2f3a3dcdead583 produced:
+- APK118126744bytes, SHA2565a9f3060250418553537ba29f1407315c2f27673d9d00ceff8decc5746eaeea6.
+- AAB91797749bytes, SHA256d0fbeaddd4e2ee84e616d71695e683e787d6bd4132d4d23e1fef4400b77221b3.
+APK v2 certificate unchanged4b6b58ed64aa30daca063a70f0f18139baf505e6ccd5707d25a7c225a8918d40;
+ZIP16KiB and all14ELF64 libraries in each artifact pass. Universal APK includes
+arm64-v8a,armeabi-v7a,x86_64; min24,target36. Bundletool1.18.3 validation and
+JAR verification pass. adb install-r over the operator's build22 returned
+Success, with no uninstall. Physical behavior is still being checked.
+
+Codemagic6adb2dee1371b66e82e9e76c built/signed iOS24 but failed before successful
+verification on a stale0.9.5-only product guard. It is not an accepted/uploaded
+corrected IPA. The verifier now compares valid source pubspec and product
+metadata, then verifies exported/archived native identity against that exact
+version. Signature/profile/team/location-API checks are preserved. The next
+iOS native build floor is25, independently rechecked against live Apple max.
+This packaging-only correction does not alter Android24 application code or
+its source SHA. Never relabel Android24 as built from the later packaging commit.
+
+The operator subsequently authorized publishing the donation information page
+without any real payment method. Site79b1ca9281a3f79550f7745902226124a012eebf
+is deployed under15339838-60a8-447c-913f-b79c10054b60, with payments unavailable
+and no checkout button. This supersedes the earlier live-checkout publication
+gate for the information page only. Future payment activation still needs
+verified setup and a distinct financial-publication approval.

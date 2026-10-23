@@ -10,6 +10,7 @@ workflows:
         - osia_app_store
       vars:
         BUNDLE_ID: space.osia.app
+        IOS_BUILD_NUMBER_MIN: 25
       flutter: 3.44.1
       xcode: 26.4
       cocoapods: 1.16.2
@@ -63,6 +64,11 @@ workflows:
               exit 1
               ;;
           esac
+          # The prior signed candidate24 failed verification before publication.
+          # Do not reuse its native build identifier on the corrected source.
+          if [ "$configured" -lt "$IOS_BUILD_NUMBER_MIN" ]; then
+            configured="$IOS_BUILD_NUMBER_MIN"
+          fi
           queried="$(app-store-connect get-latest-build-number \
             "$APP_STORE_APPLE_ID" --platform IOS --all-versions)"
           case "$queried" in
