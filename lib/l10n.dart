@@ -874,6 +874,24 @@ class OsiaStrings {
       ? '$completed / $total écrans'
       : '$completed / $total slides';
 
+  String get supportOsia => switch (languageCode) {
+    'fr' => 'Soutenir OSIA (facultatif)',
+    'zh' => '支持 OSIA（可选）',
+    'ja' => 'OSIA を支援（任意）',
+    'de' => 'OSIA unterstützen (optional)',
+    'es' => 'Apoyar OSIA (opcional)',
+    _ => 'Support OSIA (optional)',
+  };
+
+  String get pcSettingsUnavailable => switch (languageCode) {
+    'fr' => 'Les réglages du PC sont indisponibles. Réessayez.',
+    'zh' => '电脑设置暂不可用，请重试。',
+    'ja' => 'PC の設定を取得できません。再試行してください。',
+    'de' => 'PC-Einstellungen nicht verfügbar. Bitte erneut versuchen.',
+    'es' => 'Ajustes del PC no disponibles. Inténtalo de nuevo.',
+    _ => 'PC settings are unavailable. Please retry.',
+  };
+
   // ── Parameterized helpers ──
 
   String get createFolder => switch (languageCode) {

@@ -2,11 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n.dart';
 import '../legal_manifest.dart';
 import '../motion.dart';
-import '../product_version.dart';
 import '../nav.dart';
 import '../services/background_connection_service.dart';
 import '../services/notification_service.dart';
@@ -60,6 +61,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   StreamSubscription? _connSub;
   StreamSubscription? _restartStatusSub;
   Timer? _restartTimeout;
+  String? _installedVersion;
 
   /// Whether OSIA reads responses aloud automatically (OFF by default).
   bool _autoTts = false;
@@ -77,6 +79,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    PackageInfo.fromPlatform()
+        .then((info) {
+          if (mounted) setState(() => _installedVersion = info.version);
+        })
+        .catchError((Object _) {
+          // Never substitute a source constant for an unreadable installed version.
+        });
     _notificationService =
         widget.notificationService ??
         OsiaNotificationService(storage: widget.storage);
@@ -105,9 +114,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _connSub = widget.wsService.connectionStream.listen((state) {
       if (!mounted) return;
       setState(() => _connState = state);
-      if (state == ws.ConnectionState.connected) {
-        _refreshServerState();
-      }
     });
     _recoverConnection();
   }
@@ -194,16 +200,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _recoverConnection() {
     unawaited(widget.wsService.ensureConnected(reason: 'settings_open'));
-    if (widget.wsService.state == ws.ConnectionState.connected) {
-      _refreshServerState();
-    }
-  }
-
-  void _refreshServerState() {
-    widget.wsService.sendGetConfig();
-    widget.wsService.sendGetModels();
-    widget.wsService.sendGetChatGptAccount();
-    widget.wsService.sendMcpStatus();
   }
 
   void _openProviders() {
@@ -323,6 +319,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // Use the shared slide-fade route so the legal screen opens with the same
     // motion as every other navigation (not the default Material transition).
     Navigator.of(context).push(slideFadeRoute(LegalScreen(document: document)));
+  }
+
+  Future<void> _openSupport() async {
+    var opened = false;
+    try {
+      opened = await launchUrl(
+        Uri.parse('https://osia.space/donate'),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      // A failed external launch has no payment or success implication.
+    }
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(OsiaL10n.of(context).linkOpenFailed)),
+      );
+    }
   }
 
   // ── Build ───────────────────────────────────────────────────────────────
@@ -587,37 +600,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
 
-              // ── Version + footer ─────────────────────────────────────
-              ExpansionTile(
-                key: const Key('product-version'),
-                title: Text(
-                  defaultTargetPlatform == TargetPlatform.iOS
-                      ? 'OSIA $productVersion'
-                      : 'OSIA $productVersion · Beta',
+              // Developer tips have no digital rewards. iOS remains excluded
+              // pending a verified storefront-specific payment policy basis.
+              if (defaultTargetPlatform == TargetPlatform.android)
+                TextButton.icon(
+                  key: const Key('support-osia'),
+                  icon: Icon(
+                    Icons.favorite_border_rounded,
+                    size: 15,
+                    color: palette.textMuted,
+                  ),
+                  label: Text(
+                    strings.supportOsia,
+                    style: TextStyle(fontSize: 12, color: palette.textMuted),
+                  ),
+                  onPressed: _openSupport,
                 ),
-                subtitle: Text(
-                  widget.languageController.code == 'fr'
-                      ? 'Historique de développement'
-                      : 'Development history',
-                ),
-                children: [
-                  for (final entry
-                      in historicalMobileVersions.entries.toList().reversed)
-                    ListTile(
-                      title: Text(entry.value),
-                      subtitle: Text(entry.key),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 20),
               Center(
                 child: Text(
-                  'OSIA Mobile',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: palette.textMuted.withValues(alpha: 0.7),
-                    letterSpacing: 0.4,
-                  ),
+                  key: const Key('product-version'),
+                  _installedVersion == null
+                      ? 'OSIA'
+                      : defaultTargetPlatform == TargetPlatform.iOS
+                      ? 'OSIA $_installedVersion'
+                      : 'OSIA $_installedVersion — Beta',
+                  style: TextStyle(fontSize: 11, color: palette.textMuted),
                 ),
               ),
             ],

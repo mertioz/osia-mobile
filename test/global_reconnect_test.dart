@@ -454,7 +454,9 @@ void main() {
 
       expect(service.sentTypes, contains('get_config'));
       expect(service.sentTypes, contains('get_models'));
-      expect(service.sentTypes, contains('mcp_status'));
+      // Connector status belongs to the connector screen, not Settings startup.
+      expect(service.sentTypes, isNot(contains('mcp_status')));
+      await tester.pumpWidget(const SizedBox());
     },
   );
 }

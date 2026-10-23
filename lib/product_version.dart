@@ -1,6 +1,6 @@
 /// Product history presentation only. Technical package/build identities remain
 /// unchanged in diagnostics and immutable artifacts.
-const productVersion = '0.9.5';
+const productVersion = '0.9.51';
 const historicalMobileVersions = <String, String>{
   '1.0.0+1': '0.8.0',
   '1.0.1+2': '0.8.1',

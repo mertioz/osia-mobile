@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:osia_mobile/l10n.dart';
 import 'package:osia_mobile/screens/settings_screen.dart';
 import 'package:osia_mobile/services/background_connection_service.dart';
@@ -24,8 +25,14 @@ class _FakeWebSocketService extends ws.WebSocketService {
   final List<String> sentTypes = [];
   final List<String> ensureReasons = [];
 
+  ws.ConnectionState connection = ws.ConnectionState.connected;
   @override
-  ws.ConnectionState get state => ws.ConnectionState.connected;
+  ws.ConnectionState get state => connection;
+
+  void emitConnection(ws.ConnectionState value) {
+    connection = value;
+    _connCtrl.add(value);
+  }
 
   @override
   Stream<ws.ConnectionState> get connectionStream => _connCtrl.stream;
@@ -183,6 +190,13 @@ class _RecordingBackgroundConnectionService
 void main() {
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
+    PackageInfo.setMockInitialValues(
+      appName: 'OSIA',
+      packageName: 'space.osia.app',
+      version: '0.9.51',
+      buildNumber: '24',
+      buildSignature: 'test',
+    );
   });
 
   Future<
@@ -256,6 +270,64 @@ void main() {
     );
   }
 
+  testWidgets('Settings asks for one config and leaves local controls usable', (
+    tester,
+  ) async {
+    final h = await pumpSettings(tester);
+    expect(h.wsService.sentTypes.where((x) => x == 'get_config'), hasLength(1));
+    expect(h.wsService.sentTypes.where((x) => x == 'get_models'), hasLength(1));
+    expect(h.wsService.sentTypes, isNot(contains('mcp_status')));
+    expect(
+      find.text(osiaStringsForCode('en').language.toUpperCase()),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 8));
+    expect(
+      find.text(osiaStringsForCode('en').pcSettingsUnavailable),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.text(osiaStringsForCode('en').retry));
+    await tester.tap(find.text(osiaStringsForCode('en').retry));
+    await tester.pump();
+    expect(h.wsService.sentTypes.where((x) => x == 'get_config'), hasLength(2));
+    h.wsService.emitConfig();
+    await tester.pump();
+    expect(find.byKey(const Key('pc-settings-state')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('disconnect invalidates remote values and reconnect refreshes', (
+    tester,
+  ) async {
+    final h = await pumpSettings(tester);
+    h.wsService.emitConfig();
+    await tester.pump();
+    h.wsService.emitConnection(ws.ConnectionState.disconnected);
+    await tester.pump();
+    expect(find.text(osiaStringsForCode('en').disconnected), findsOneWidget);
+    h.wsService.emitConfig();
+    await tester.pump();
+    expect(find.byKey(const Key('pc-settings-state')), findsOneWidget);
+    h.wsService.emitConnection(ws.ConnectionState.connected);
+    await tester.pump();
+    expect(h.wsService.sentTypes.where((x) => x == 'get_config'), hasLength(2));
+    h.wsService.emitConfig();
+    await tester.pump();
+    expect(find.byKey(const Key('pc-settings-state')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'footer uses installed metadata and exposes no development history',
+    (tester) async {
+      await pumpSettings(tester);
+      expect(find.byType(ExpansionTile), findsNothing);
+      expect(find.textContaining('Development history'), findsNothing);
+      expect(find.text('OSIA 0.9.51 — Beta'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets(
     'disposing Settings keeps an injected app-level background attachment',
     (tester) async {
@@ -275,6 +347,18 @@ void main() {
       expect(harness.backgroundPlatform.stopCount, stopCount);
     },
   );
+
+  testWidgets('iOS footer omits Beta and external developer tips', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    await pumpSettings(tester);
+    expect(find.text('OSIA 0.9.51'), findsOneWidget);
+    expect(find.textContaining('Beta'), findsNothing);
+    expect(find.byKey(const Key('support-osia')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    debugDefaultTargetPlatformOverride = null;
+  });
 
   testWidgets('legacy permission center is absent from canonical Settings', (
     tester,

@@ -570,6 +570,10 @@ class SystemSettingsSection extends StatefulWidget {
 
 class _SystemSettingsSectionState extends State<SystemSettingsSection> {
   ws.ConfigData? _config;
+  Timer? _loadTimeout;
+  bool _unavailable = false;
+  late ws.ConnectionState _connection;
+  final Stopwatch _loadLatency = Stopwatch();
   List<ws.OsiaModel> _models = const [];
   String? _timeFormatOverride;
 
@@ -580,9 +584,16 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
   @override
   void initState() {
     super.initState();
+    _connection = widget.wsService.state;
     _configSub = widget.wsService.configStream.listen((data) {
-      if (mounted) {
+      if (mounted && _connection == ws.ConnectionState.connected) {
+        _loadTimeout?.cancel();
+        _loadLatency.stop();
+        debugPrint(
+          '[OSIA Settings] config_ms=${_loadLatency.elapsedMilliseconds}',
+        );
         setState(() {
+          _unavailable = false;
           _config = data;
           _timeFormatOverride = null;
         });
@@ -594,6 +605,14 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
       }
     });
     _connSub = widget.wsService.connectionStream.listen((state) {
+      if (!mounted) return;
+      _loadTimeout?.cancel();
+      setState(() {
+        _connection = state;
+        _config = null;
+        _timeFormatOverride = null;
+        _unavailable = false;
+      });
       if (state == ws.ConnectionState.connected) {
         _refreshServerState();
       }
@@ -603,6 +622,7 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
 
   @override
   void dispose() {
+    _loadTimeout?.cancel();
     _configSub?.cancel();
     _msgSub?.cancel();
     _connSub?.cancel();
@@ -627,13 +647,26 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
   }
 
   void _refreshServerState() {
+    if (_connection != ws.ConnectionState.connected) return;
+    _loadTimeout?.cancel();
+    _loadLatency
+      ..reset()
+      ..start();
+    setState(() => _unavailable = false);
+    // The config can render before model discovery finishes. Account and
+    // connector status are requested only by their own screens.
     widget.wsService.sendGetConfig();
     widget.wsService.sendGetModels();
+    _loadTimeout = Timer(const Duration(seconds: 8), () {
+      if (mounted) setState(() => _unavailable = true);
+    });
   }
 
   void _open(Widget screen) {
     Navigator.of(context).push(slideFadeRoute(screen)).then((_) {
-      if (mounted) widget.wsService.sendGetConfig();
+      if (!mounted) return;
+      setState(() => _config = null);
+      _refreshServerState();
     });
   }
 
@@ -644,9 +677,45 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
     final config = _config;
 
     if (config == null) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 20),
-        child: _LoadingBody(palette: palette, label: strings.loading),
+      final disconnected = _connection != ws.ConnectionState.connected;
+      return _OsiaCard(
+        palette: palette,
+        child: Column(
+          key: const Key('pc-settings-state'),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                disconnected
+                    ? strings.disconnected
+                    : _unavailable
+                    ? strings.pcSettingsUnavailable
+                    : strings.loading,
+                style: TextStyle(color: palette.textMuted),
+              ),
+            ),
+            if (disconnected || _unavailable)
+              TextButton(
+                onPressed: () {
+                  if (disconnected) {
+                    unawaited(
+                      widget.wsService.ensureConnected(
+                        reason: 'settings_retry',
+                      ),
+                    );
+                  } else {
+                    _refreshServerState();
+                  }
+                },
+                child: Text(strings.retry),
+              )
+            else ...[
+              const SizedBox(height: 8),
+              const LinearProgressIndicator(),
+            ],
+          ],
+        ),
       );
     }
 

@@ -7,10 +7,10 @@ void main() {
   test(
     'official mobile version and historical aliases retain build identity',
     () {
-      expect(productVersion, '0.9.5');
+      expect(productVersion, '0.9.51');
       expect(
         File('pubspec.yaml').readAsStringSync(),
-        contains('version: $productVersion+22'),
+        contains('version: $productVersion+24'),
       );
       final aliases = historicalMobileVersions.values.toList();
       expect(aliases.toSet().length, aliases.length);
