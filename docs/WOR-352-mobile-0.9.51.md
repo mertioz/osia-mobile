@@ -157,3 +157,79 @@ is deployed under15339838-60a8-447c-913f-b79c10054b60, with payments unavailable
 and no checkout button. This supersedes the earlier live-checkout publication
 gate for the information page only. Future payment activation still needs
 verified setup and a distinct financial-publication approval.
+
+
+## Final verified delivery and operator acceptance — 23 October
+
+The operator explicitly accepted installed Android24 and authorized direct APK
+publication. Five new objects were uploaded through the existing bounded DPAPI
+uploader under android/0.9.51/24/ without changing historical22/Windows keys or
+channels. All five private readbacks and full public GET/size/SHA256 checks pass.
+APK MIME and immutable cache headers match. Historical22 URL/size/checksum pass.
+Site release6f5473adcc8e2c069dc747ddf445d87ecc969225 deployed successfully as
+3cebc021-b3be-4d91-8b5c-7a8e68bba2ed; public EN/FR download pages now point to24.
+Windows and prior historical metadata are identical; old Android22 is retained
+in history. No automatic channel migration or uninstall is introduced.
+
+Final controlled physical proof on Pixel9a:
+- In-place installation22→24 returned Success. Pairing, language/theme and data
+  survived; no credentials were reset.
+- Connected Settings snapshot timings51/77/66ms in-app, median66ms. External
+  gesture-to-log observations134.8/158.9/192.9ms include ADB and clock calibration
+  round trips82.3–118.2ms. Do not call these Flutter first-frame timings.
+- Controlled cold app: settings snapshot49ms in-app,166.5ms gesture-to-observation;
+  launch-to-Settings navigation3291ms. Earlier uncontrolled cold runs included
+  relay errors and a phone later observed in another foreground app; they remain
+  evidence but are inconclusive for acceptance, not silently replaced by PASS.
+- PC service stopped: Disconnected and Retry visible, no stale remote tiles.
+  PC source service restored successfully in19.5s; remote categories returned;
+  observed settings snapshot5283ms after that reconnect. No universal sub100ms
+  reconnect claim. Local settings remained available while PC data was absent.
+- Actual installed footerOSIA0.9.51 — Beta, Development History absent. Optional
+  support opens the public site in the external browser, with payment unavailable.
+
+These timings use PC sourcea4ad7e5b8301a478e21ad43e9940399abd7e3b3b. Server fixes
+cover cold STT imports, blocking historical recovery, provider-read queueing and
+unnecessary replay of unrelated historical streams. Published Windows0.9.0
+contains none of the newly delivered PC source changes; its installer is unchanged.
+A controlled packet-loss/bandwidth test and a new physical Chat/Thinking/Stop
+campaign are not claimed. Automated Chat/cancellation/provider/security/transport
+coverage passed in the520test Mobile suite; prior specific operator Chat/Stop
+acceptance applies to historical21, not invented fresh per-case observations.
+
+Apple final IPA:0.9.51/build25; source16effc47995e3947ed2728519c69ffb8fbd481f5,
+32156172bytes, SHA2561fa1ec3f090c7d36d96f9496fdabf330fb27ad38802ad120265dff5f80402a53.
+Codemagic6adb326f1371b66e82e9e8b0 fully succeeded, including native archive
+codesign/profile/identity, location-API scan and Apple upload. Actual downloaded
+IPA bytes/hash/plist/location scan match CI metadata. Bundle/team
+space.osia.app/N9NG7B76U8; App Store profile expiry2027-07-24. Apple independently
+shows ready build25, UUID3109d2de-d3f9-49a6-9975-7dcf5156eb65. It replaces22 in
+the saved production0.9.51 draft; EN/FR descriptions are updated, manual release
+retained. No Add for Review or App Review action occurred. iOS device_verified=false.
+The earlier failed native24 was not reused; native25 is the next signed attempt.
+Ten actual IPA privacy manifests were inventoried. No iPhone/Keychain upgrade
+validation is inferred from Android or upload success.
+
+Play AAB24 is saved in production release5 with EN/FR notes. Publishing overview
+independently showsOSIA Mobile0.9.51(24) among12changes NOT SENT FOR REVIEW,
+replacing22 as the production pending change. Managed publishing is disabled;
+no Send12changes action occurred. Neither store is approved or store-public.
+
+Source secret scanners and relevant GitHub workflows pass. Binary scan found
+compiler/framework/symbol source-path metadata only, with zero structured
+credential findings. Those path advisories are recorded outside Git; no scanner
+rule was weakened or general credential exception added. Native artifacts,
+benchmark JSONs/screenshots, local uploader and machine state stay outside Git.
+Mobile's preexisting README modification and untracked review-completion note
+are preserved; PC's preexisting paths are untouched; site is committed/pushed.
+
+Remaining commercial-store gates: usable repeatable reviewer PC/provider access
+(Google case6-9050000041393 asks for no resubmission yet); genuine iPhone lifecycle,
+Keychain and upgrade acceptance; authentic final screenshots and complete
+age/content/privacy/review instructions; Apple's companion/LAN/WAN4.2.7 scope;
+account-holder handling of the displayed updated Paid Applications Schedule;
+actual provider account/API commercial eligibility, including ChatGPT Account,
+not assumed from tests. Distinct operator approval is still required before
+store review submission. Ko-fi onboarding and future financial activation are
+explicitly deferred by the operator; the information page is public without
+payment. WOR-352 remains In Progress, WOR-202 remains the permanent register.
