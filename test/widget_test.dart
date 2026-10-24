@@ -10,26 +10,32 @@ void main() {
     FlutterSecureStorage.setMockInitialValues(<String, String>{});
   });
 
-  testWidgets('fresh app claims and presents guide before connection', (
+  testWidgets('fresh app presents onboarding once before connection', (
     tester,
   ) async {
     await tester.pumpWidget(const OsiaApp());
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
-    expect(find.byKey(const Key('guide-screen')), findsOneWidget);
-    expect(
-      find.byKey(const Key('guide-lesson-essential.osia-role')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('onboarding-screen')), findsOneWidget);
+    expect(find.byKey(const Key('onboarding-title-welcome')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('guide-close')));
+    await tester.tap(find.byKey(const Key('onboarding-close')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.byType(ConnectionScreen), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(const OsiaApp());
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(const Key('onboarding-screen')), findsNothing);
+    expect(find.byType(ConnectionScreen), findsOneWidget);
   });
 
-  testWidgets('existing app state suppresses automatic guide', (tester) async {
+  testWidgets('existing app state suppresses automatic onboarding', (
+    tester,
+  ) async {
     FlutterSecureStorage.setMockInitialValues(<String, String>{
       'osia_language': 'en',
     });
@@ -37,7 +43,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
-    expect(find.byKey(const Key('guide-screen')), findsNothing);
+    expect(find.byKey(const Key('onboarding-screen')), findsNothing);
     expect(find.byType(ConnectionScreen), findsOneWidget);
   });
 }

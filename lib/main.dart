@@ -9,7 +9,7 @@ import 'legal_manifest.dart';
 import 'nav.dart';
 import 'screens/chat_screen.dart';
 import 'screens/connection_screen.dart';
-import 'screens/guide_screen.dart';
+import 'screens/onboarding_screen.dart';
 import 'screens/legal_screen.dart';
 import 'services/audio_service.dart';
 import 'services/background_connection_service.dart';
@@ -262,12 +262,11 @@ class _OsiaAppState extends State<OsiaApp> {
       );
     }
     if (_showAutomaticGuide && _automaticGuideProgress != null) {
-      return GuideScreen(
+      return OnboardingScreen(
         storage: _storage,
         languageCode: _languageController.code,
-        automatic: true,
-        initialProgress: _automaticGuideProgress,
-        onAutomaticClosed: () {
+        initialProgress: _automaticGuideProgress!,
+        onClosed: () {
           if (!mounted) return;
           setState(() => _showAutomaticGuide = false);
         },
