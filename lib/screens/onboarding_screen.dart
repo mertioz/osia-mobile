@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../guide/onboarding_content.dart';
 import '../guide_progress.dart';
+import '../l10n.dart';
 import '../motion.dart';
 import '../services/storage_service.dart';
 import '../theme.dart';
@@ -15,13 +16,11 @@ class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({
     super.key,
     required this.storage,
-    required this.languageCode,
     required this.initialProgress,
     required this.onClosed,
   });
 
   final StorageService storage;
-  final String languageCode;
   final GuideProgress initialProgress;
   final VoidCallback onClosed;
 
@@ -35,11 +34,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   bool _closing = false;
   bool _moving = false;
 
-  bool get _fr => widget.languageCode == 'fr';
   bool get _last => _index == onboardingSlides.length - 1;
-  String get _step => _fr
-      ? 'Étape ${_index + 1} sur ${onboardingSlides.length}'
-      : 'Step ${_index + 1} of ${onboardingSlides.length}';
 
   @override
   void dispose() {
@@ -93,10 +88,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   Widget build(BuildContext context) {
     final palette = OsiaTheme.of(context);
+    final languageCode = OsiaL10n.of(context).languageCode;
+    final step = OnboardingLabels.progress(
+      languageCode,
+      _index + 1,
+      onboardingSlides.length,
+    );
     final slide = onboardingSlides[_index];
-    final nextLabel = _last
-        ? (_fr ? 'Commencer avec OSIA' : 'Start using OSIA')
-        : (_fr ? 'Étape suivante' : 'Next step');
+    final nextLabel = (_last ? OnboardingLabels.start : OnboardingLabels.next)
+        .resolve(languageCode);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -125,9 +125,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       const Spacer(),
                       IconButton(
                         key: const Key('onboarding-close'),
-                        tooltip: _fr
-                            ? 'Fermer l’introduction'
-                            : 'Close introduction',
+                        tooltip: OnboardingLabels.close.resolve(languageCode),
                         onPressed: _closing ? null : () => unawaited(_close()),
                         color: palette.textMuted,
                         icon: const Icon(Icons.close_rounded, size: 22),
@@ -140,8 +138,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     key: const Key('onboarding-semantics'),
                     container: true,
                     liveRegion: true,
-                    label:
-                        '$_step: ${slide.title.resolve(widget.languageCode)}',
+                    label: '$step: ${slide.title.resolve(languageCode)}',
                     onIncrease: _last
                         ? null
                         : () => unawaited(_move(_index + 1)),
@@ -159,7 +156,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       onPageChanged: (index) => setState(() => _index = index),
                       itemBuilder: (context, index) => _Slide(
                         slide: onboardingSlides[index],
-                        languageCode: widget.languageCode,
+                        languageCode: languageCode,
                         palette: palette,
                       ),
                     ),
@@ -170,7 +167,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   child: Row(
                     children: [
                       Semantics(
-                        label: _step,
+                        label: step,
                         child: ExcludeSemantics(
                           child: Text(
                             '${_index + 1} / ${onboardingSlides.length}',
@@ -186,9 +183,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       Expanded(
                         child: _index == 0
                             ? Text(
-                                _fr
-                                    ? 'Glissez vers la gauche'
-                                    : 'Swipe left to continue',
+                                OnboardingLabels.swipe.resolve(languageCode),
+                                locale: Locale(languageCode),
                                 style: TextStyle(
                                   color: palette.textMuted,
                                   fontSize: 12,
@@ -260,6 +256,7 @@ class _Slide extends StatelessWidget {
               const SizedBox(height: 28),
               Text(
                 slide.title.resolve(languageCode),
+                locale: Locale(languageCode),
                 key: Key('onboarding-title-${slide.id}'),
                 style: TextStyle(
                   color: palette.textPrimary,
@@ -271,6 +268,7 @@ class _Slide extends StatelessWidget {
               const SizedBox(height: 12),
               Text(
                 slide.body.resolve(languageCode),
+                locale: Locale(languageCode),
                 key: Key('onboarding-body-${slide.id}'),
                 style: TextStyle(
                   color: palette.textMuted,

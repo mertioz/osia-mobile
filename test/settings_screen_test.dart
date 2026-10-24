@@ -240,19 +240,22 @@ void main() {
     await tester.pumpWidget(
       OsiaTheme(
         palette: osiaPaletteViolet,
-        child: OsiaL10n(
-          strings: osiaStringsForCode(languageCode),
-          child: MaterialApp(
-            home: SettingsScreen(
-              storage: storage,
-              themeController: ThemeController(),
-              languageController: languageController,
-              wsService: wsService,
-              notificationService: OsiaNotificationService(
+        child: AnimatedBuilder(
+          animation: languageController,
+          builder: (context, _) => OsiaL10n(
+            strings: languageController.strings,
+            child: MaterialApp(
+              home: SettingsScreen(
                 storage: storage,
-                client: notificationClient,
+                themeController: ThemeController(),
+                languageController: languageController,
+                wsService: wsService,
+                notificationService: OsiaNotificationService(
+                  storage: storage,
+                  client: notificationClient,
+                ),
+                backgroundConnectionService: backgroundService,
               ),
-              backgroundConnectionService: backgroundService,
             ),
           ),
         ),
@@ -618,6 +621,36 @@ void main() {
     );
     expect(harness.wsService.sentTypes, hasLength(settingsMessageCount));
   });
+
+  for (final languageCode in osiaSupportedLanguages) {
+    testWidgets('language picker applies and saves $languageCode', (
+      tester,
+    ) async {
+      final harness = await pumpSettings(
+        tester,
+        languageCode: languageCode == 'en' ? 'fr' : 'en',
+      );
+      final dropdown = find.byType(DropdownButtonFormField<String>);
+      expect(dropdown, findsOneWidget);
+      await tester.ensureVisible(dropdown);
+      await tester.tap(dropdown);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.text(osiaStringsForCode(languageCode).languageName).last,
+      );
+      await tester.pumpAndSettle();
+      expect(await harness.storage.getLanguageCode(), languageCode);
+      final context = tester.element(find.byType(SettingsScreen));
+      expect(OsiaL10n.of(context).languageCode, languageCode);
+      expect(
+        find.text(osiaStringsForCode(languageCode).settingsTitle),
+        findsOneWidget,
+      );
+      final selected = tester.widget<DropdownButtonFormField<String>>(dropdown);
+      expect(selected.initialValue, languageCode);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   for (final languageCode in <String>['en', 'fr']) {
     testWidgets(

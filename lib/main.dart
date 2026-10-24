@@ -106,16 +106,12 @@ class _OsiaAppState extends State<OsiaApp> {
       // Keep default palette on any storage error.
     }
 
-    // Restore the saved language; on first launch, auto-detect it from the
-    // device locale (EN default, FR/ZH/JA/DE/ES supported).
+    // An explicit saved language wins. Fresh installs always start in English,
+    // independently of the device locale. Only a user choice is persisted.
     try {
       final saved = await _storage.getLanguageCode();
       if (saved != null) {
         _languageController.setLanguageByCode(saved);
-      } else {
-        final detected = LanguageController.detectDeviceLanguage();
-        _languageController.setLanguageByCode(detected);
-        await _storage.setLanguageCode(detected);
       }
     } catch (_) {
       // Keep default language (English) on any storage error.
@@ -264,7 +260,6 @@ class _OsiaAppState extends State<OsiaApp> {
     if (_showAutomaticGuide && _automaticGuideProgress != null) {
       return OnboardingScreen(
         storage: _storage,
-        languageCode: _languageController.code,
         initialProgress: _automaticGuideProgress!,
         onClosed: () {
           if (!mounted) return;

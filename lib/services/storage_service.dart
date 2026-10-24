@@ -216,7 +216,7 @@ class StorageService {
   }
 
   /// Read the saved language code, or `null` if the user never picked one
-  /// (first launch — the device locale is used instead).
+  /// (first launch — the application defaults to English).
   Future<String?> getLanguageCode() async {
     return _safeRead(_keyLanguage);
   }

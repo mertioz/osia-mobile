@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 
 // ── OSIA Localization ─────────────────────────────────────────────────────
@@ -4611,7 +4609,7 @@ OsiaStrings osiaStringsForCode(String? code) {
 /// A [ChangeNotifier] that owns the currently active [OsiaStrings].
 ///
 /// Mirrors [ThemeController]: the app builds one at startup, restores the
-/// saved language (or detects it from the device locale on first launch),
+/// saved language (or keeps English on first launch),
 /// and rebuilds when the user picks a new language in settings.
 class LanguageController extends ChangeNotifier {
   OsiaStrings _strings;
@@ -4626,14 +4624,6 @@ class LanguageController extends ChangeNotifier {
     if (next.languageCode == _strings.languageCode) return;
     _strings = next;
     notifyListeners();
-  }
-
-  /// Best-match supported language for the current device locale.
-  /// Defaults to English when the device language isn't supported.
-  static String detectDeviceLanguage() {
-    final locale = ui.PlatformDispatcher.instance.locale;
-    final lang = locale.languageCode.toLowerCase();
-    return osiaSupportedLanguages.contains(lang) ? lang : 'en';
   }
 }
 

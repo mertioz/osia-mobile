@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:osia_mobile/guide/onboarding_content.dart';
 import 'package:osia_mobile/guide_progress.dart';
+import 'package:osia_mobile/l10n.dart';
 import 'package:osia_mobile/screens/onboarding_screen.dart';
 import 'package:osia_mobile/services/storage_service.dart';
 import 'package:osia_mobile/theme.dart';
@@ -44,31 +45,40 @@ void main() {
     WidgetTester tester, {
     String language = 'en',
     bool reducedMotion = false,
+    LanguageController? controller,
     VoidCallback? onClosed,
   }) async {
     final storage = StorageService();
     final launch = await GuideProgressService(storage).prepareLaunch();
     final theme = buildOsiaTheme();
+    final languageController =
+        controller ?? LanguageController(initial: osiaStringsForCode(language));
+    if (controller == null) addTearDown(languageController.dispose);
     await tester.pumpWidget(
-      OsiaTheme(
-        palette: osiaPalette,
-        child: MaterialApp(
-          theme: theme.copyWith(
-            textTheme: theme.textTheme.apply(fontFamily: 'OnboardingInter'),
-          ),
-          builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(disableAnimations: reducedMotion),
-            child: child!,
-          ),
-          home: RepaintBoundary(
-            key: const Key('onboarding-capture'),
-            child: OnboardingScreen(
-              storage: storage,
-              languageCode: language,
-              initialProgress: launch.progress,
-              onClosed: onClosed ?? () {},
+      AnimatedBuilder(
+        animation: languageController,
+        builder: (context, _) => OsiaL10n(
+          strings: languageController.strings,
+          child: OsiaTheme(
+            palette: osiaPalette,
+            child: MaterialApp(
+              theme: theme.copyWith(
+                textTheme: theme.textTheme.apply(fontFamily: 'OnboardingInter'),
+              ),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(disableAnimations: reducedMotion),
+                child: child!,
+              ),
+              home: RepaintBoundary(
+                key: const Key('onboarding-capture'),
+                child: OnboardingScreen(
+                  storage: storage,
+                  initialProgress: launch.progress,
+                  onClosed: onClosed ?? () {},
+                ),
+              ),
             ),
           ),
         ),
@@ -96,19 +106,56 @@ void main() {
     tester.platformDispatcher.clearTextScaleFactorTestValue();
   }
 
-  test('ten bilingual slides have short complete copy', () {
+  test('ten slides and all controls have explicit complete translations', () {
     expect(onboardingSlides, hasLength(10));
     expect(onboardingSlides.map((s) => s.id).toSet(), hasLength(10));
     for (final slide in onboardingSlides) {
-      for (final lang in ['en', 'fr']) {
+      expect(
+        slide.title.translations.keys,
+        unorderedEquals(osiaSupportedLanguages),
+      );
+      expect(
+        slide.body.translations.keys,
+        unorderedEquals(osiaSupportedLanguages),
+      );
+      expect(
+        slide.title.translations.values.toSet(),
+        hasLength(osiaSupportedLanguages.length),
+      );
+      expect(
+        slide.body.translations.values.toSet(),
+        hasLength(osiaSupportedLanguages.length),
+      );
+      for (final lang in osiaSupportedLanguages) {
         expect(slide.title.resolve(lang).trim(), isNotEmpty);
         expect(slide.body.resolve(lang).split('\n'), hasLength(2));
         expect(slide.body.resolve(lang).length, lessThanOrEqualTo(80));
       }
     }
+    for (final label in [
+      OnboardingLabels.close,
+      OnboardingLabels.next,
+      OnboardingLabels.start,
+      OnboardingLabels.swipe,
+      OnboardingLabels.step,
+    ]) {
+      expect(label.translations.keys, unorderedEquals(osiaSupportedLanguages));
+      expect(
+        label.translations.values.toSet(),
+        hasLength(osiaSupportedLanguages.length),
+      );
+      for (final lang in osiaSupportedLanguages) {
+        expect(label.resolve(lang).trim(), isNotEmpty);
+        expect(OnboardingLabels.progress(lang, 2, 10), isNot(contains('{')));
+      }
+    }
+    expect(
+      () => onboardingSlides.first.title.resolve('xx'),
+      throwsArgumentError,
+    );
   });
 
-  for (final language in ['en', 'fr']) {
+  for (final language in osiaSupportedLanguages) {
     testWidgets(
       '$language: every slide fits two body lines on a 320px screen',
       (tester) async {
@@ -119,7 +166,50 @@ void main() {
         await pumpOnboarding(tester, language: language);
         for (var index = 0; index < onboardingSlides.length; index++) {
           final slide = onboardingSlides[index];
+          final allowedText = <String>{
+            'OSIA',
+            '${index + 1} / 10',
+            OnboardingLabels.swipe.resolve(language),
+            for (final s in onboardingSlides) ...[
+              s.title.resolve(language),
+              s.body.resolve(language),
+            ],
+          };
+          for (final text in tester.widgetList<Text>(
+            find.descendant(
+              of: find.byType(OnboardingScreen),
+              matching: find.byType(Text),
+            ),
+          )) {
+            expect(
+              allowedText,
+              contains(text.data),
+              reason: '$language unexpected UI copy',
+            );
+          }
           final body = find.byKey(Key('onboarding-body-${slide.id}'));
+          expect(tester.widget<Text>(body).data, slide.body.resolve(language));
+          expect(
+            tester
+                .widget<Text>(find.byKey(Key('onboarding-title-${slide.id}')))
+                .data,
+            slide.title.resolve(language),
+          );
+          expect(
+            find.byTooltip(OnboardingLabels.close.resolve(language)),
+            findsOneWidget,
+          );
+          expect(
+            find.byTooltip(
+              (index == 9 ? OnboardingLabels.start : OnboardingLabels.next)
+                  .resolve(language),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(Key('onboarding-image-${slide.id}')),
+            findsOneWidget,
+          );
           final paragraph = tester.renderObject<RenderParagraph>(body);
           final painter = TextPainter(
             text: paragraph.text,
@@ -277,44 +367,76 @@ void main() {
     semantics.dispose();
   });
 
-  for (final size in [
-    const Size(320, 568),
-    const Size(390, 844),
-    const Size(844, 390),
-  ]) {
-    testWidgets('safe controls and scrollable text at 200% on $size', (
-      tester,
-    ) async {
-      tester.view.physicalSize = size;
-      tester.view.devicePixelRatio = 1;
-      tester.view.padding = size.width > size.height
-          ? const FakeViewPadding(left: 44, right: 44, bottom: 21)
-          : const FakeViewPadding(top: 47, bottom: 34);
-      tester.platformDispatcher.textScaleFactorTestValue = 2;
-      addTearDown(() => resetView(tester));
-      await pumpOnboarding(tester, language: 'fr');
-      for (var index = 0; index < onboardingSlides.length; index++) {
-        final slide = onboardingSlides[index];
-        final body = find.byKey(Key('onboarding-body-${slide.id}'));
-        await tester.ensureVisible(body);
-        await tester.pumpAndSettle();
-        final bodyRect = tester.getRect(body);
-        final arrow = tester.getRect(find.byKey(const Key('onboarding-next')));
-        expect(bodyRect.bottom, lessThanOrEqualTo(arrow.top));
-        expect(
-          arrow.bottom,
-          lessThanOrEqualTo(size.height - tester.view.padding.bottom),
-        );
-        expect(tester.takeException(), isNull, reason: slide.id);
-        if (index < onboardingSlides.length - 1) await next(tester);
-      }
-    });
+  for (final language in osiaSupportedLanguages) {
+    for (final size in [
+      const Size(320, 568),
+      const Size(390, 844),
+      const Size(844, 390),
+    ]) {
+      testWidgets(
+        '$language: safe controls and scrollable text at 200% on $size',
+        (tester) async {
+          tester.view.physicalSize = size;
+          tester.view.devicePixelRatio = 1;
+          tester.view.padding = size.width > size.height
+              ? const FakeViewPadding(left: 44, right: 44, bottom: 21)
+              : const FakeViewPadding(top: 47, bottom: 34);
+          tester.platformDispatcher.textScaleFactorTestValue = 2;
+          addTearDown(() => resetView(tester));
+          await pumpOnboarding(tester, language: language);
+          for (var index = 0; index < onboardingSlides.length; index++) {
+            final slide = onboardingSlides[index];
+            final body = find.byKey(Key('onboarding-body-${slide.id}'));
+            await tester.ensureVisible(body);
+            await tester.pumpAndSettle();
+            final bodyRect = tester.getRect(body);
+            final arrow = tester.getRect(
+              find.byKey(const Key('onboarding-next')),
+            );
+            expect(bodyRect.bottom, lessThanOrEqualTo(arrow.top));
+            expect(
+              arrow.bottom,
+              lessThanOrEqualTo(size.height - tester.view.padding.bottom),
+            );
+            expect(tester.takeException(), isNull, reason: slide.id);
+            if (index < onboardingSlides.length - 1) await next(tester);
+          }
+        },
+      );
+    }
   }
+
+  testWidgets(
+    'onboarding follows the app controller live without losing the page',
+    (tester) async {
+      final controller = LanguageController();
+      addTearDown(controller.dispose);
+      await pumpOnboarding(tester, controller: controller);
+      await next(tester);
+      for (final language in osiaSupportedLanguages.reversed) {
+        controller.setLanguageByCode(language);
+        await tester.pumpAndSettle();
+        final context = tester.element(
+          find.byKey(const Key('onboarding-screen')),
+        );
+        expect(OsiaL10n.of(context).languageCode, language);
+        expect(
+          find.text(onboardingSlides[1].title.resolve(language)),
+          findsOneWidget,
+        );
+        expect(
+          find.byTooltip(OnboardingLabels.next.resolve(language)),
+          findsOneWidget,
+        );
+        expect(find.text('2 / 10'), findsOneWidget);
+      }
+    },
+  );
 
   // Optional review captures use actual Flutter rendering and stay outside Git.
   final captureDir = Platform.environment['OSIA_ONBOARDING_CAPTURE_DIR'];
   if (captureDir != null) {
-    for (final language in ['en', 'fr']) {
+    for (final language in osiaSupportedLanguages) {
       testWidgets('capture $language onboarding for visual review', (
         tester,
       ) async {
