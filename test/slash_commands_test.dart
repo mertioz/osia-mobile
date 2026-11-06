@@ -16,17 +16,87 @@ void main() {
       'tools',
       'status',
       'help',
+      'special',
+      'skill',
+      'skillcreator',
     ]);
   });
 
+  test(
+    'extended commands appear with a compatible PC and keep their typed intent',
+    () async {
+      final catalog = await SlashCommandCatalog.load();
+      final legacy = buildSlashPaletteResults(catalog: catalog, locale: 'en');
+      expect(legacy.map((item) => item.alias), isNot(contains('special')));
+
+      final current = buildSlashPaletteResults(
+        catalog: catalog,
+        locale: 'fr',
+        chatSlashExtensionsAvailable: true,
+        currentWebAvailable: true,
+        specialMode: true,
+        models: const [
+          SlashModelChoice(
+            providerId: 'deepseek',
+            modelId: 'deepseek-flash',
+            displayName: 'DeepSeek',
+            reasoningOptions: ['off'],
+          ),
+        ],
+        conversations: const [
+          SlashConversationChoice(
+            conversationId: 'other',
+            displayTitle: 'Other',
+          ),
+        ],
+        activeProviderId: 'deepseek',
+        activeModelId: 'deepseek-flash',
+      );
+      expect(
+        current.where((item) => item.type == SlashPaletteSelectionType.command),
+        hasLength(10),
+      );
+      expect(
+        current.firstWhere((item) => item.alias == 'special').description,
+        startsWith('Réactiver'),
+      );
+
+      final create = SlashTurnDirectivesV1.fromJson({
+        'schema_version': 1,
+        'skill_creator': true,
+      });
+      expect(create.toJson()['skill_creator'], true);
+      expect(
+        () => create.validateForSend(body: '', hasAttachment: true),
+        throwsA(isA<SlashDirectiveException>()),
+      );
+      final use = create.copyWith(skillName: 'brief.md', skillCreator: false);
+      expect(use.toJson()['skill_name'], 'brief.md');
+      expect(use.toJson().containsKey('skill_creator'), isFalse);
+      expect(
+        () => SlashTurnDirectivesV1.fromJson({
+          'schema_version': 1,
+          'skill_name': '../other.md',
+        }),
+        throwsA(isA<SlashDirectiveException>()),
+      );
+    },
+  );
+
   test('palette grammar is initial-only and preserves literal slash text', () {
     expect(slashPaletteQuery('/'), '');
+    expect(slashPaletteQuery('/ '), '');
+    expect(slashPaletteQuery('/ special'), 'special');
     expect(slashPaletteQuery('  /web'), 'web');
     expect(slashPaletteQuery('//web'), isNull);
     expect(slashPaletteQuery('https://osia.space'), isNull);
     expect(slashPaletteQuery('hello /web'), isNull);
     expect(slashPaletteQuery('/UPPER'), isNull);
     expect(slashPaletteQuery('/1'), isNull);
+    expect(
+      consumeSlashPalettePrefix('/ skillcreator a new brief'),
+      'a new brief',
+    );
     expect(slashEscapedLiteralText('  //web'), '  /web');
     expect(
       consumeSlashAlias('  /web /linear find it', 'web'),

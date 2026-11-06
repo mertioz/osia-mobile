@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:osia_mobile/l10n.dart';
@@ -120,6 +121,7 @@ class _StableWebSocketService extends ws.WebSocketService {
   final List<String> ensureReasons = <String>[];
   final List<String> clientLocales = <String>[];
   final List<(String, String)> sentTurns = <(String, String)>[];
+  final List<Map<String, dynamic>?> sentDirectives = [];
   final List<(String, Object?)> settingChanges = <(String, Object?)>[];
   final List<String> deleteRequests = <String>[];
   final List<String> deleteOperationIds = <String>[];
@@ -182,6 +184,7 @@ class _StableWebSocketService extends ws.WebSocketService {
     Map<String, dynamic>? turnDirectives,
   }) {
     sentTurns.add((content, clientRequestId ?? ''));
+    sentDirectives.add(turnDirectives);
     return true;
   }
 
@@ -1427,6 +1430,61 @@ void main() {
     await tester.pump();
     expect(harness.theme.palette.key, 'emerald');
 
+    await _disposeChatHarness(tester, harness);
+  });
+
+  testWidgets('chat slash skill picker and creator use typed composer chips', (
+    tester,
+  ) async {
+    const catalogAsset = 'assets/slash_commands/catalog.v1.json';
+    final catalog = await tester.runAsync(() => rootBundle.load(catalogAsset));
+    rootBundle.evict(catalogAsset);
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMessageHandler('flutter/assets', (message) async {
+      return const StringCodec().decodeMessage(message) == catalogAsset
+          ? catalog
+          : await messenger.delegate.send('flutter/assets', message);
+    });
+    addTearDown(() {
+      messenger.setMockMessageHandler('flutter/assets', null);
+      rootBundle.evict(catalogAsset);
+    });
+    final harness = await _pumpChat(tester);
+    final service = harness.service;
+    service.handleIncomingFrameForTest({
+      'type': 'config',
+      'config': {
+        'chat_slash_extensions': 1,
+        'skills': [
+          {'name': 'quick-brief.md', 'available': true},
+        ],
+      },
+    });
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), '/skill');
+    await tester.pump();
+    await tester.tap(find.text('/skill  Use a skill'));
+    await tester.pump();
+    await tester.tap(find.text('quick-brief'));
+    await tester.pump();
+    expect(find.text('quick-brief'), findsOneWidget);
+    expect(service.sentTurns, isEmpty);
+
+    await tester.enterText(
+      find.byType(TextField),
+      '/skillcreator Make a brief skill',
+    );
+    await tester.pump();
+    await tester.tap(find.text('/skillcreator  Create a skill'));
+    await tester.pump();
+    expect(find.text('/skillcreator'), findsOneWidget);
+    await _tapGlassIconWithoutPointer(tester, Icons.arrow_upward_rounded);
+    await tester.pump();
+    expect(service.sentTurns.single.$1, 'Make a brief skill');
+    expect(service.sentDirectives.single?['skill_creator'], true);
+    expect(service.sentDirectives.single?.containsKey('skill_name'), false);
+    await tester.pump(const Duration(milliseconds: 100));
     await _disposeChatHarness(tester, harness);
   });
 }

@@ -384,12 +384,14 @@ class Conversation {
   final String title;
   final DateTime? date;
   final String? folderId;
+  final bool specialMode;
 
   const Conversation({
     required this.id,
     required this.title,
     this.date,
     this.folderId,
+    this.specialMode = false,
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
@@ -413,6 +415,7 @@ class Conversation {
           (json['folder_id'] == null || json['folder_id'].toString().isEmpty)
           ? null
           : json['folder_id'].toString(),
+      specialMode: json['special_mode'] == true,
     );
   }
 }
@@ -455,6 +458,8 @@ class ConversationsMessage extends OsiaMessage {
   final int version;
   final int snapshotRevision;
   final String operationId;
+  final String specialConversationId;
+  final String specialError;
 
   const ConversationsMessage(
     this.conversations, {
@@ -462,6 +467,8 @@ class ConversationsMessage extends OsiaMessage {
     this.version = 1,
     this.snapshotRevision = 0,
     this.operationId = '',
+    this.specialConversationId = '',
+    this.specialError = '',
   });
 }
 
@@ -944,6 +951,7 @@ class ConfigSkill {
   /// Filename including the `.md` suffix, e.g. `weather.md`.
   final String name;
   final bool enabled;
+  final bool available;
 
   /// The Markdown prose of the skill.
   final String text;
@@ -952,12 +960,14 @@ class ConfigSkill {
     required this.name,
     required this.enabled,
     required this.text,
+    this.available = true,
   });
 
   factory ConfigSkill.fromJson(Map<String, dynamic> json) => ConfigSkill(
     name: (json['name'] ?? '').toString(),
     enabled: json['enabled'] == true,
     text: (json['text'] ?? '').toString(),
+    available: json['available'] != false,
   );
 }
 
@@ -1133,6 +1143,7 @@ class ConfigData {
   /// Safe availability overlay for typed slash commands. It contains only
   /// display state and stable connector identities, never secrets or endpoints.
   final Map<String, dynamic> slashCommands;
+  final bool chatSlashExtensions;
 
   /// Safe mirror of PC settings needed by Mobile controls (e.g. `time_format`,
   /// `heartbeat_enabled`, and `ui_theme`). Credential values are discarded
@@ -1151,6 +1162,7 @@ class ConfigData {
     this.gmailRest,
     this.reasoning = const OsiaReasoningConfig(),
     this.slashCommands = const {},
+    this.chatSlashExtensions = false,
     required this.settings,
   });
 
@@ -1217,6 +1229,7 @@ class ConfigData {
         config['reasoning'] ?? settings['reasoning'],
       ),
       slashCommands: parseSlashAvailabilityOverlay(config['slash_commands']),
+      chatSlashExtensions: config['chat_slash_extensions'] == 1,
       settings: settings,
     );
   }
@@ -4185,6 +4198,40 @@ class WebSocketService {
   /// Read a fresh PC-canonical conversation snapshot for destructive counts.
   Future<ConversationsMessage> requestCanonicalConversationSnapshot() async {
     final operationId = 'snapshot_${newClientRequestId()}';
+    return _requestConversationSnapshot(operationId, {
+      'type': 'get_conversation_snapshot',
+    });
+  }
+
+  /// Request an exact, PC-owned conversation mode change.
+  Future<Conversation> setConversationSpecial({
+    required String? conversationId,
+    required bool enabled,
+  }) async {
+    final snapshot =
+        await _requestConversationSnapshot('special_${newClientRequestId()}', {
+          'type': 'set_conversation_special',
+          'conversation_id': conversationId ?? '',
+          'enabled': enabled,
+        });
+    if (snapshot.specialError.isNotEmpty) {
+      throw StateError(snapshot.specialError);
+    }
+    final id = snapshot.specialConversationId;
+    if (id.isNotEmpty && (conversationId == null || id == conversationId)) {
+      for (final conversation in snapshot.conversations) {
+        if (conversation.id == id && conversation.specialMode == enabled) {
+          return conversation;
+        }
+      }
+    }
+    throw StateError('special state not confirmed by PC');
+  }
+
+  Future<ConversationsMessage> _requestConversationSnapshot(
+    String operationId,
+    Map<String, dynamic> request,
+  ) async {
     final completer = Completer<ConversationsMessage>();
     late StreamSubscription<OsiaMessage> subscription;
     subscription = messageStream.listen((message) {
@@ -4194,10 +4241,7 @@ class WebSocketService {
         completer.complete(message);
       }
     });
-    if (!_send({
-      'type': 'get_conversation_snapshot',
-      'operation_id': operationId,
-    })) {
+    if (!_send({...request, 'operation_id': operationId})) {
       await subscription.cancel();
       throw StateError('conversation snapshot request could not be sent');
     }
@@ -7887,6 +7931,9 @@ class WebSocketService {
                 version: version,
                 snapshotRevision: snapshotRevision,
                 operationId: (json['operation_id'] ?? '').toString(),
+                specialConversationId: (json['special_conversation_id'] ?? '')
+                    .toString(),
+                specialError: (json['special_error'] ?? '').toString(),
               ),
             );
           } else {

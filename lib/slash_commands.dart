@@ -295,6 +295,8 @@ class SlashTurnDirectivesV1 {
   final List<SlashConversationRef> conversationRefs;
   final SlashModelOverride? modelOverride;
   final String? reasoningOverride;
+  final String? skillName;
+  final bool skillCreator;
 
   const SlashTurnDirectivesV1({
     this.schemaVersion = slashSchemaVersion,
@@ -303,6 +305,8 @@ class SlashTurnDirectivesV1 {
     this.conversationRefs = const [],
     this.modelOverride,
     this.reasoningOverride,
+    this.skillName,
+    this.skillCreator = false,
   });
 
   factory SlashTurnDirectivesV1.fromJson(Object? raw) {
@@ -314,6 +318,8 @@ class SlashTurnDirectivesV1 {
       'conversation_refs',
       'model_override',
       'reasoning_override',
+      'skill_name',
+      'skill_creator',
     }, 'turn_directives');
     if (json['schema_version'] != slashSchemaVersion) {
       throw const SlashDirectiveException(
@@ -347,6 +353,19 @@ class SlashTurnDirectivesV1 {
         'Niveau de raisonnement non pris en charge.',
       );
     }
+    final skillName = json['skill_name'] == null
+        ? null
+        : _boundedText(json['skill_name'], 'skill_name', 256);
+    final skillCreator = json.containsKey('skill_creator')
+        ? json['skill_creator']
+        : false;
+    if (skillCreator is! bool) {
+      throw const SlashDirectiveException(
+        'invalid_directives',
+        'skill_creator must be a boolean.',
+        'skill_creator doit être un booléen.',
+      );
+    }
     final result = SlashTurnDirectivesV1(
       connectorHints: List.unmodifiable(
         rawConnectors.map(SlashConnectorHint.fromJson),
@@ -361,6 +380,8 @@ class SlashTurnDirectivesV1 {
           ? null
           : SlashModelOverride.fromJson(json['model_override']),
       reasoningOverride: reasoning as String?,
+      skillName: skillName,
+      skillCreator: skillCreator,
     );
     result.validateBounds();
     return result;
@@ -371,14 +392,17 @@ class SlashTurnDirectivesV1 {
       conversationRefs.isEmpty &&
       !capabilityRequirements.currentWeb &&
       modelOverride == null &&
-      reasoningOverride == null;
+      reasoningOverride == null &&
+      skillName == null &&
+      !skillCreator;
 
   int get modifierCount =>
       connectorHints.length +
       conversationRefs.length +
       (capabilityRequirements.currentWeb ? 1 : 0) +
       (modelOverride == null ? 0 : 1) +
-      (reasoningOverride == null ? 0 : 1);
+      (reasoningOverride == null ? 0 : 1) +
+      (skillName != null || skillCreator ? 1 : 0);
 
   Map<String, dynamic> toJson() => {
     'schema_version': slashSchemaVersion,
@@ -387,6 +411,8 @@ class SlashTurnDirectivesV1 {
     'conversation_refs': conversationRefs.map((item) => item.toJson()).toList(),
     if (modelOverride != null) 'model_override': modelOverride!.toJson(),
     if (reasoningOverride != null) 'reasoning_override': reasoningOverride,
+    if (skillCreator) 'skill_creator': true,
+    if (skillName != null) 'skill_name': skillName,
   };
 
   String canonicalJson() {
@@ -410,10 +436,31 @@ class SlashTurnDirectivesV1 {
         },
       if (reasoningOverride != null) 'reasoning_override': reasoningOverride,
       'schema_version': slashSchemaVersion,
+      if (skillCreator) 'skill_creator': true,
+      if (skillName != null) 'skill_name': skillName,
     });
   }
 
   void validateBounds() {
+    final selected = skillName;
+    if (selected != null &&
+        (!selected.toLowerCase().endsWith('.md') ||
+            selected.contains(RegExp(r'[/\\]')) ||
+            selected.length > 256 ||
+            selected.runes.any((rune) => rune < 32))) {
+      throw const SlashDirectiveException(
+        'invalid_skill_name',
+        'Invalid skill selection.',
+        'Sélection de skill invalide.',
+      );
+    }
+    if (skillCreator && selected != null) {
+      throw const SlashDirectiveException(
+        'conflicting_skill_commands',
+        'Choose a skill or create one for this turn.',
+        'Choisissez un skill ou créez-en un pour ce tour.',
+      );
+    }
     if (connectorHints.length > 1 ||
         conversationRefs.length > 1 ||
         modifierCount > slashMaxModifiers) {
@@ -434,6 +481,13 @@ class SlashTurnDirectivesV1 {
 
   void validateForSend({required String body, required bool hasAttachment}) {
     validateBounds();
+    if (skillCreator && body.trim().isEmpty) {
+      throw const SlashDirectiveException(
+        'skill_description_required',
+        'Describe the skill you want to create.',
+        'Décris le skill que tu veux créer.',
+      );
+    }
     if (!isEmpty && body.trim().isEmpty && !hasAttachment) {
       throw const SlashDirectiveException(
         'directive_body_required',
@@ -451,6 +505,9 @@ class SlashTurnDirectivesV1 {
     bool clearModelOverride = false,
     String? reasoningOverride,
     bool clearReasoningOverride = false,
+    String? skillName,
+    bool clearSkillName = false,
+    bool? skillCreator,
   }) {
     final result = SlashTurnDirectivesV1(
       connectorHints: List.unmodifiable(connectorHints ?? this.connectorHints),
@@ -465,6 +522,8 @@ class SlashTurnDirectivesV1 {
       reasoningOverride: clearReasoningOverride
           ? null
           : (reasoningOverride ?? this.reasoningOverride),
+      skillName: clearSkillName ? null : (skillName ?? this.skillName),
+      skillCreator: skillCreator ?? this.skillCreator,
     );
     result.validateBounds();
     return result;
@@ -474,7 +533,7 @@ class SlashTurnDirectivesV1 {
 String? slashPaletteQuery(String text) {
   final trimmed = text.trimLeft();
   if (!trimmed.startsWith('/') || trimmed.startsWith('//')) return null;
-  final remainder = trimmed.substring(1);
+  final remainder = trimmed.substring(1).trimLeft();
   final whitespace = remainder.indexOf(RegExp(r'\s'));
   final token = whitespace < 0 ? remainder : remainder.substring(0, whitespace);
   if (token.length > slashMaxFilterChars ||
@@ -493,22 +552,19 @@ String slashEscapedLiteralText(String text) {
 }
 
 String consumeSlashAlias(String text, String alias) {
-  if (!slashAliasPattern.hasMatch(alias)) return text;
-  final leading = text.length - text.trimLeft().length;
-  final tail = text.substring(leading);
-  if (!tail.startsWith('/') || tail.startsWith('//')) return text;
-  final match = RegExp(r'^/([^\s]+)(?:\s+|$)').firstMatch(tail);
-  if (match == null || match.group(1) != alias) return text;
-  return text.substring(0, leading) + tail.substring(match.end).trimLeft();
+  if (!slashAliasPattern.hasMatch(alias) || slashPaletteQuery(text) != alias) {
+    return text;
+  }
+  return consumeSlashPalettePrefix(text);
 }
 
 String consumeSlashPalettePrefix(String text) {
   final query = slashPaletteQuery(text);
   if (query == null) return text;
   final leading = text.length - text.trimLeft().length;
-  final tail = text.substring(leading);
+  final remainder = text.substring(leading + 1).trimLeft();
   return text.substring(0, leading) +
-      tail.substring(1 + query.length).trimLeft();
+      remainder.substring(query.length).trimLeft();
 }
 
 class SlashCatalogEntry {
@@ -652,6 +708,7 @@ enum SlashPaletteSelectionType {
   model,
   reasoning,
   conversation,
+  skill,
 }
 
 class SlashPaletteSelection {
@@ -683,6 +740,8 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
   required String locale,
   String filter = '',
   bool currentWebAvailable = false,
+  bool chatSlashExtensionsAvailable = false,
+  bool specialMode = false,
   String activeProviderId = '',
   String activeModelId = '',
   List<SlashConnectorChoice> connectors = const [],
@@ -697,6 +756,7 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
   for (final item in catalog.entries) {
     final available = switch (item.availabilityPredicate) {
       'current_web_available' => currentWebAvailable,
+      'chat_slash_extensions' => chatSlashExtensionsAvailable,
       'selectable_models_present' => models.isNotEmpty,
       'other_conversations_present' => conversations.isNotEmpty,
       'reasoning_options_present' => models.any(
@@ -714,7 +774,11 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
         id: item.id,
         alias: item.alias,
         title: item.localizedName(locale),
-        description: item.localizedDescription(locale),
+        description: item.id == 'special.toggle' && specialMode
+            ? (locale.startsWith('fr')
+                  ? 'Réactiver la vision et la souris dans cette discussion'
+                  : 'Restore vision and mouse in this conversation')
+            : item.localizedDescription(locale),
         argumentHint:
             item.argumentHint[locale.startsWith('fr') ? 'fr' : 'en'] ??
             item.argumentHint['en'] ??
@@ -769,7 +833,10 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
   final bounded = <SlashPaletteSelection>[];
   for (final item in filtered) {
     final count = counts[item.type] ?? 0;
-    if (count >= slashMaxResultsPerCategory) continue;
+    if (item.type != SlashPaletteSelectionType.command &&
+        count >= slashMaxResultsPerCategory) {
+      continue;
+    }
     counts[item.type] = count + 1;
     bounded.add(item);
     if (bounded.length >= slashMaxResults) break;

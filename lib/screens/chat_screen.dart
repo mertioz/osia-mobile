@@ -145,6 +145,10 @@ class _ChatScreenState extends State<ChatScreen> {
   SlashCommandCatalog? _slashCatalog;
   SlashTurnDirectivesV1 _slashDirectives = const SlashTurnDirectivesV1();
   Map<String, dynamic> _slashAvailability = const {};
+  bool _chatSlashExtensions = false;
+  bool _showingSlashSkills = false;
+  bool _specialRequestPending = false;
+  List<ws.ConfigSkill> _slashSkills = const [];
   // WOR-78 Fix A (refined): focus handle for the input bar's text field, owned
   // here so the keyboard is CONDITIONAL on where the user lands — focus it on a
   // brand-new empty chat (keyboard opens to type the first message), unfocus it
@@ -466,6 +470,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _onSlashPaletteChanged() {
     final open = _slashPaletteController.isOpen;
+    if (!open) _showingSlashSkills = false;
     if (!mounted || open == _slashPaletteOpen) return;
     setState(() => _slashPaletteOpen = open);
   }
@@ -539,6 +544,9 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         setState(() {
           _connState = state;
+          if (state != ws.ConnectionState.connected) {
+            _chatSlashExtensions = false;
+          }
           // Fresh banner-switcher key on every connection-state change so a
           // reappearing banner never collides with a still-animating one.
           _bannerSeq++;
@@ -647,6 +655,8 @@ class _ChatScreenState extends State<ChatScreen> {
           _reasoning = cfg.reasoning;
           _reasoningConfigLoaded = true;
           _slashAvailability = cfg.slashCommands;
+          _chatSlashExtensions = cfg.chatSlashExtensions;
+          _slashSkills = cfg.skills;
         });
         _pushModelSelectorReasoning(cfg.reasoning);
         _updateSlashPalette();
@@ -4039,6 +4049,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool get _canSend {
     final text = _textCtrl.text.trim();
     return !_activeWork &&
+        !_specialRequestPending &&
         !_attachmentInteractionLocked &&
         (text.isNotEmpty || _pendingAttachments.isNotEmpty);
   }
@@ -4066,6 +4077,16 @@ class _ChatScreenState extends State<ChatScreen> {
   bool get _showThinkingTrailer => _thinking && _streamingIndex == null;
 
   String get _slashLocale => widget.languageController.code;
+
+  bool get _chatSlashAvailable =>
+      _connState == ws.ConnectionState.connected && _chatSlashExtensions;
+
+  bool get _conversationSpecialMode =>
+      canonicalConversationForActiveId(
+        _conversations,
+        _activeConversationId,
+      )?.specialMode ??
+      false;
 
   List<SlashConnectorChoice> get _slashConnectorChoices {
     final raw = _slashAvailability['connectors'];
@@ -4151,14 +4172,23 @@ class _ChatScreenState extends State<ChatScreen> {
   void _updateSlashPalette() {
     final catalog = _slashCatalog;
     final query = slashPaletteQuery(_textCtrl.text);
-    if (catalog == null || query == null || _activeWork) {
+    if (catalog == null ||
+        query == null ||
+        _activeWork ||
+        _specialRequestPending) {
       _slashPaletteController.close();
+      return;
+    }
+    if (_showingSlashSkills && _chatSlashAvailable) {
+      _showSlashSkillChoices();
       return;
     }
     final results = buildSlashPaletteResults(
       catalog: catalog,
       locale: _slashLocale,
       filter: query,
+      chatSlashExtensionsAvailable: _chatSlashAvailable,
+      specialMode: _conversationSpecialMode,
       currentWebAvailable:
           _connState == ws.ConnectionState.connected &&
           _slashAvailability['current_web_available'] == true,
@@ -4174,6 +4204,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _onComposerChanged(String _) {
+    _showingSlashSkills = false;
     setState(() {});
     _updateSlashPalette();
   }
@@ -4212,6 +4243,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _onSlashSelection(SlashPaletteSelection selection) {
     if (!selection.enabled || _activeWork) return;
+    if (selection.type == SlashPaletteSelectionType.skill) {
+      if (_chatSlashAvailable) _applySlashSkill(selection.value as String);
+      return;
+    }
     if (selection.type == SlashPaletteSelectionType.connector) {
       final connector = selection.value as SlashConnectorChoice;
       _applySlashDirectives(
@@ -4281,6 +4316,15 @@ class _ChatScreenState extends State<ChatScreen> {
         _showSlashReasoning();
       case 'select_conversation_reference_v1':
         _showSlashConversations();
+      case 'toggle_conversation_special_v1':
+        unawaited(_toggleConversationSpecial());
+      case 'select_skill_v1':
+        if (!_chatSlashAvailable) return;
+        _showingSlashSkills = true;
+        _showSlashSkillChoices();
+        _wsService.sendGetConfig();
+      case 'create_skill_for_turn_v1':
+        if (_chatSlashAvailable) _applySlashSkill(null);
       case 'show_safe_tools_v1':
       case 'show_safe_status_v1':
       case 'show_available_help_v1':
@@ -4301,6 +4345,126 @@ class _ChatScreenState extends State<ChatScreen> {
         _textCtrl.text = remaining;
         _slashPaletteController.close();
         unawaited(_showSlashInformation(selection.id));
+    }
+  }
+
+  void _showSlashNotice(String french, String english) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(_slashLocale.startsWith('fr') ? french : english)),
+    );
+  }
+
+  Future<void> _toggleConversationSpecial() async {
+    if (!_chatSlashAvailable || _specialRequestPending) return;
+    final conversationId = _activeConversationId;
+    final selectionEpoch = _conversationSelectionEpoch;
+    final enabled = !_conversationSpecialMode;
+    setState(() {
+      _specialRequestPending = true;
+      _textCtrl.text = consumeSlashPalettePrefix(_textCtrl.text);
+      _textCtrl.selection = TextSelection.collapsed(
+        offset: _textCtrl.text.length,
+      );
+    });
+    _slashPaletteController.close();
+    try {
+      final conversation = await _wsService.setConversationSpecial(
+        conversationId: conversationId,
+        enabled: enabled,
+      );
+      if (!mounted ||
+          selectionEpoch != _conversationSelectionEpoch ||
+          _activeConversationId != conversationId) {
+        return;
+      }
+      if (conversationId == null) {
+        setState(() {
+          _activeConversationId = conversation.id;
+          _activeConversationTitle = conversation.title;
+        });
+      }
+      if (enabled) {
+        _showSlashNotice(
+          'Vision et souris désactivées dans cette discussion.',
+          'Vision and mouse disabled in this conversation.',
+        );
+      } else {
+        _showSlashNotice(
+          'Vision et souris réactivées dans cette discussion.',
+          'Vision and mouse restored in this conversation.',
+        );
+      }
+    } on StateError catch (error) {
+      if (!mounted || selectionEpoch != _conversationSelectionEpoch) return;
+      if (error.message == 'conversation_busy') {
+        _showSlashNotice(
+          'Attends la fin du tour avant de modifier /special.',
+          'Wait for the turn to finish before changing /special.',
+        );
+      } else {
+        _showSlashNotice(
+          'Impossible de modifier /special dans cette discussion.',
+          'Could not change /special in this conversation.',
+        );
+      }
+    } on TimeoutException {
+      if (!mounted || selectionEpoch != _conversationSelectionEpoch) return;
+      _showSlashNotice(
+        'Le PC n’a pas confirmé le changement.',
+        'The PC did not confirm the change.',
+      );
+    } finally {
+      if (mounted) setState(() => _specialRequestPending = false);
+    }
+  }
+
+  void _showSlashSkillChoices() {
+    final rows = [
+      for (final skill in _slashSkills)
+        if (skill.name.toLowerCase().endsWith('.md') && skill.name.length > 3)
+          SlashPaletteSelection(
+            type: SlashPaletteSelectionType.skill,
+            id: skill.name,
+            title: skill.name.substring(0, skill.name.length - 3),
+            enabled: skill.available,
+            value: skill.name,
+          ),
+    ];
+    if (rows.isEmpty) {
+      rows.add(
+        SlashPaletteSelection(
+          type: SlashPaletteSelectionType.skill,
+          id: 'no-skills',
+          title: _slashLocale.startsWith('fr')
+              ? 'Crée un skill avec /skillcreator.'
+              : 'Create a skill with /skillcreator.',
+          enabled: false,
+        ),
+      );
+    }
+    _slashPaletteController.show(rows, _onSlashSelection, limit: null);
+  }
+
+  void _applySlashSkill(String? name) {
+    try {
+      _applySlashDirectives(
+        _slashDirectives.copyWith(
+          skillName: name,
+          clearSkillName: name == null,
+          skillCreator: name == null,
+        ),
+        name == null ? 'skillcreator' : 'skill',
+      );
+      if (name == null && _textCtrl.text.trim().isEmpty) {
+        _showSlashNotice(
+          'Décris le skill que tu veux créer.',
+          'Describe the skill you want to create.',
+        );
+      }
+    } on SlashDirectiveException catch (error) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message(_slashLocale))));
     }
   }
 
@@ -4432,6 +4596,20 @@ class _ChatScreenState extends State<ChatScreen> {
     if (reasoning != null) {
       rows.add(ComposerDirective(id: 'reasoning', label: reasoning));
     }
+    final skill = _slashDirectives.skillName;
+    if (skill != null) {
+      rows.add(
+        ComposerDirective(
+          id: 'skill',
+          label: skill.substring(0, skill.length - 3),
+        ),
+      );
+    }
+    if (_slashDirectives.skillCreator) {
+      rows.add(
+        const ComposerDirective(id: 'skillcreator', label: '/skillcreator'),
+      );
+    }
     return rows;
   }
 
@@ -4445,6 +4623,8 @@ class _ChatScreenState extends State<ChatScreen> {
         'conversation' => _slashDirectives.copyWith(conversationRefs: const []),
         'model' => _slashDirectives.copyWith(clearModelOverride: true),
         'reasoning' => _slashDirectives.copyWith(clearReasoningOverride: true),
+        'skill' => _slashDirectives.copyWith(clearSkillName: true),
+        'skillcreator' => _slashDirectives.copyWith(skillCreator: false),
         _ => _slashDirectives,
       };
     });
@@ -4535,6 +4715,8 @@ class _ChatScreenState extends State<ChatScreen> {
         final entries = buildSlashPaletteResults(
           catalog: catalog,
           locale: _slashLocale,
+          chatSlashExtensionsAvailable: _chatSlashAvailable,
+          specialMode: _conversationSpecialMode,
           currentWebAvailable:
               _connState == ws.ConnectionState.connected &&
               _slashAvailability['current_web_available'] == true,
@@ -4657,7 +4839,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendText() async {
     _wsService.setClientLocale(widget.languageController.code);
-    if (_activeWork) return;
+    if (_activeWork || _specialRequestPending) return;
     final text = slashEscapedLiteralText(_textCtrl.text).trim();
     final attachments = List<PreparedAttachment>.of(_pendingAttachments);
     final hasFiles = attachments.isNotEmpty;
@@ -4679,6 +4861,13 @@ class _ChatScreenState extends State<ChatScreen> {
     final hasImage = attachments.any(
       (attachment) => attachment.detectedCategory == 'image',
     );
+    if (hasImage && _conversationSpecialMode) {
+      _showSlashNotice(
+        'Utilise /special pour réactiver la vision avant d’envoyer une image.',
+        'Use /special to restore vision before sending an image.',
+      );
+      return;
+    }
     if (exactModel != null && hasImage) {
       final compatible = _models.any(
         (model) =>

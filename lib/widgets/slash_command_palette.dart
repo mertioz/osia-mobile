@@ -14,9 +14,10 @@ class SlashCommandPaletteController extends ChangeNotifier {
 
   void show(
     List<SlashPaletteSelection> entries,
-    ValueChanged<SlashPaletteSelection> onSelected,
-  ) {
-    _entries = List.unmodifiable(entries.take(slashMaxResults));
+    ValueChanged<SlashPaletteSelection> onSelected, {
+    int? limit = slashMaxResults,
+  }) {
+    _entries = List.unmodifiable(limit == null ? entries : entries.take(limit));
     _selectedIndex = 0;
     _onSelected = onSelected;
     notifyListeners();
@@ -206,6 +207,7 @@ class SlashCommandPalette extends StatelessWidget {
     SlashPaletteSelectionType.model => Icons.smart_toy_outlined,
     SlashPaletteSelectionType.reasoning => Icons.psychology_outlined,
     SlashPaletteSelectionType.conversation => Icons.chat_bubble_outline_rounded,
+    SlashPaletteSelectionType.skill => Icons.extension_outlined,
     SlashPaletteSelectionType.command => Icons.terminal_rounded,
   };
 
@@ -213,6 +215,7 @@ class SlashCommandPalette extends StatelessWidget {
     SlashPaletteSelectionType.connector =>
       locale.startsWith('fr') ? 'CONNECTEURS' : 'CONNECTORS',
     SlashPaletteSelectionType.conversation => 'CONVERSATIONS',
+    SlashPaletteSelectionType.skill => 'SKILLS',
     SlashPaletteSelectionType.model =>
       locale.startsWith('fr') ? 'MODÈLES' : 'MODELS',
     SlashPaletteSelectionType.reasoning =>

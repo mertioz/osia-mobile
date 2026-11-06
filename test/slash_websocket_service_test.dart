@@ -2,6 +2,52 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:osia_mobile/services/websocket_service.dart';
 
 void main() {
+  test(
+    'special mode waits for the exact canonical conversation acknowledgement',
+    () async {
+      final frames = <Map<String, dynamic>>[];
+      final service = WebSocketService(
+        ip: '127.0.0.1',
+        token: 'test-token',
+        autoReconnect: false,
+        sendFrameForTest: (frame) {
+          frames.add(frame);
+          return true;
+        },
+      );
+      addTearDown(service.dispose);
+      final pending = service.setConversationSpecial(
+        conversationId: 'conv-1',
+        enabled: true,
+      );
+      final request = frames.single;
+      expect(request['type'], 'set_conversation_special');
+      expect(request['conversation_id'], 'conv-1');
+      expect(request['enabled'], true);
+      service.handleIncomingFrameForTest({
+        'type': 'conversations',
+        'operation_id': 'different-operation',
+        'special_conversation_id': 'conv-2',
+        'items': [
+          {'id': 'conv-2', 'special_mode': true},
+        ],
+      });
+      service.handleIncomingFrameForTest({
+        'type': 'conversations',
+        'operation_id': request['operation_id'],
+        'special_conversation_id': 'conv-1',
+        'items': [
+          {'id': 'conv-1', 'special_mode': true},
+          {'id': 'conv-2', 'special_mode': false},
+        ],
+      });
+      final confirmed = await pending;
+      expect(confirmed.id, 'conv-1');
+      expect(confirmed.specialMode, true);
+      expect(Conversation.fromJson({'id': 'old'}).specialMode, false);
+    },
+  );
+
   test('text and attachment retry payloads carry exact optional directives', () {
     final frames = <Map<String, dynamic>>[];
     final service = WebSocketService(
