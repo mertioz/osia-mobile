@@ -10,13 +10,7 @@ const int slashMaxResults = 24;
 const int slashMaxResultsPerCategory = 8;
 const int slashMaxTitleChars = 120;
 const int slashMaxProjectChars = 80;
-const Set<String> slashReasoningLevels = {
-  'auto',
-  'off',
-  'low',
-  'medium',
-  'high',
-};
+final RegExp slashReasoningOptionPattern = RegExp(r'^[a-z][a-z0-9_-]{0,31}$');
 final RegExp slashAliasPattern = RegExp(r'^[a-z][a-z0-9-]{0,31}$');
 final RegExp _partialAliasPattern = RegExp(r'^(?:[a-z][a-z0-9-]{0,31})?$');
 
@@ -346,7 +340,8 @@ class SlashTurnDirectivesV1 {
     }
     final reasoning = json['reasoning_override'];
     if (reasoning != null &&
-        (reasoning is! String || !slashReasoningLevels.contains(reasoning))) {
+        (reasoning is! String ||
+            !slashReasoningOptionPattern.hasMatch(reasoning))) {
       throw const SlashDirectiveException(
         'unsupported_reasoning',
         'Unsupported reasoning level.',
@@ -400,8 +395,7 @@ class SlashTurnDirectivesV1 {
       connectorHints.length +
       conversationRefs.length +
       (capabilityRequirements.currentWeb ? 1 : 0) +
-      (modelOverride == null ? 0 : 1) +
-      (reasoningOverride == null ? 0 : 1) +
+      (modelOverride != null || reasoningOverride != null ? 1 : 0) +
       (skillName != null || skillCreator ? 1 : 0);
 
   Map<String, dynamic> toJson() => {
@@ -543,6 +537,27 @@ String? slashPaletteQuery(String text) {
   return token;
 }
 
+class ConversationMention {
+  final int start;
+  final int end;
+  final String query;
+
+  const ConversationMention(this.start, this.end, this.query);
+}
+
+ConversationMention? conversationMention(String text, int cursor) {
+  if (cursor < 1 || cursor > text.length) return null;
+  final start = text.lastIndexOf('@', cursor - 1);
+  if (start < 0 ||
+      cursor - start > slashMaxFilterChars + 1 ||
+      (start > 0 && text.substring(start - 1, start).trim().isNotEmpty)) {
+    return null;
+  }
+  final query = text.substring(start + 1, cursor);
+  if (query.contains('\n') || query.contains('\r')) return null;
+  return ConversationMention(start, cursor, query.trim());
+}
+
 String slashEscapedLiteralText(String text) {
   final leading = text.length - text.trimLeft().length;
   if (text.substring(leading).startsWith('//')) {
@@ -674,22 +689,6 @@ class SlashConnectorChoice {
   });
 }
 
-class SlashModelChoice {
-  final String providerId;
-  final String modelId;
-  final String displayName;
-  final List<String> reasoningOptions;
-  final bool acceptsImages;
-
-  const SlashModelChoice({
-    required this.providerId,
-    required this.modelId,
-    required this.displayName,
-    this.reasoningOptions = const [],
-    this.acceptsImages = false,
-  });
-}
-
 class SlashConversationChoice {
   final String conversationId;
   final String displayTitle;
@@ -742,11 +741,8 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
   bool currentWebAvailable = false,
   bool chatSlashExtensionsAvailable = false,
   bool specialMode = false,
-  String activeProviderId = '',
-  String activeModelId = '',
+  bool modelsAvailable = false,
   List<SlashConnectorChoice> connectors = const [],
-  List<SlashModelChoice> models = const [],
-  List<SlashConversationChoice> conversations = const [],
 }) {
   final boundedFilter = filter.length <= slashMaxFilterChars
       ? filter
@@ -757,14 +753,7 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
     final available = switch (item.availabilityPredicate) {
       'current_web_available' => currentWebAvailable,
       'chat_slash_extensions' => chatSlashExtensionsAvailable,
-      'selectable_models_present' => models.isNotEmpty,
-      'other_conversations_present' => conversations.isNotEmpty,
-      'reasoning_options_present' => models.any(
-        (model) =>
-            model.providerId == activeProviderId &&
-            model.modelId == activeModelId &&
-            model.reasoningOptions.isNotEmpty,
-      ),
+      'selectable_models_present' => modelsAvailable,
       _ => true,
     };
     if (!available) continue;
@@ -797,25 +786,10 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
         description: item.usable
             ? (locale.startsWith('fr') ? 'Disponible' : 'Available')
             : '${locale.startsWith('fr') ? 'Indisponible' : 'Unavailable'} · '
-                  '${_connectorStateLabel(item.state, locale)}',
+                  '${slashConnectorStateLabel(item.state, locale)}',
         enabled: item.usable,
         value: item,
         handlerContract: 'select_connector_hint_v1',
-      ),
-    ),
-  );
-  rows.addAll(
-    conversations.map(
-      (item) => SlashPaletteSelection(
-        type: SlashPaletteSelectionType.conversation,
-        id: 'conversation.${item.conversationId}',
-        alias: 'conversation',
-        title: item.displayTitle.isEmpty
-            ? (locale.startsWith('fr') ? 'Sans titre' : 'Untitled')
-            : item.displayTitle,
-        description: item.displayProject,
-        value: item,
-        handlerContract: 'select_conversation_reference_v1',
       ),
     ),
   );
@@ -831,7 +805,20 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
             .toList();
   final counts = <SlashPaletteSelectionType, int>{};
   final bounded = <SlashPaletteSelection>[];
-  for (final item in filtered) {
+  final ordered = query.isEmpty
+      ? filtered
+      : [
+          ...filtered.where((item) => item.alias.toLowerCase() == query),
+          ...filtered.where(
+            (item) =>
+                item.alias.toLowerCase() != query &&
+                item.alias.toLowerCase().startsWith(query),
+          ),
+          ...filtered.where(
+            (item) => !item.alias.toLowerCase().startsWith(query),
+          ),
+        ];
+  for (final item in ordered) {
     final count = counts[item.type] ?? 0;
     if (item.type != SlashPaletteSelectionType.command &&
         count >= slashMaxResultsPerCategory) {
@@ -844,7 +831,7 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
   return List.unmodifiable(bounded);
 }
 
-String _connectorStateLabel(String state, String locale) {
+String slashConnectorStateLabel(String state, String locale) {
   if (!locale.startsWith('fr')) return state;
   return switch (state) {
     'disconnected' => 'déconnecté',

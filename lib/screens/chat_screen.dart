@@ -146,7 +146,8 @@ class _ChatScreenState extends State<ChatScreen> {
   SlashTurnDirectivesV1 _slashDirectives = const SlashTurnDirectivesV1();
   Map<String, dynamic> _slashAvailability = const {};
   bool _chatSlashExtensions = false;
-  bool _showingSlashSkills = false;
+  String _slashStage = '';
+  bool _fullSlashReasoning = false;
   bool _specialRequestPending = false;
   List<ws.ConfigSkill> _slashSkills = const [];
   // WOR-78 Fix A (refined): focus handle for the input bar's text field, owned
@@ -470,7 +471,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _onSlashPaletteChanged() {
     final open = _slashPaletteController.isOpen;
-    if (!open) _showingSlashSkills = false;
+    if (!open) _slashStage = '';
     if (!mounted || open == _slashPaletteOpen) return;
     setState(() => _slashPaletteOpen = open);
   }
@@ -546,6 +547,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _connState = state;
           if (state != ws.ConnectionState.connected) {
             _chatSlashExtensions = false;
+            _fullSlashReasoning = false;
           }
           // Fresh banner-switcher key on every connection-state change so a
           // reappearing banner never collides with a still-animating one.
@@ -656,6 +658,8 @@ class _ChatScreenState extends State<ChatScreen> {
           _reasoningConfigLoaded = true;
           _slashAvailability = cfg.slashCommands;
           _chatSlashExtensions = cfg.chatSlashExtensions;
+          _fullSlashReasoning =
+              cfg.settings['slash_reasoning_model_options'] == true;
           _slashSkills = cfg.skills;
         });
         _pushModelSelectorReasoning(cfg.reasoning);
@@ -1212,6 +1216,7 @@ class _ChatScreenState extends State<ChatScreen> {
             _activeConversationTitle = active.title;
           }
         });
+        if (_composerMention != null) _updateSlashPalette();
       case ws.ActiveConversationMessage(
         :final id,
         :final title,
@@ -1621,6 +1626,7 @@ class _ChatScreenState extends State<ChatScreen> {
             widget.storage.setSelectedModel(current);
           }
         });
+        _updateSlashPalette();
         // If the model selector sheet is currently open, push the fresh
         // list into it so it stops spinning.
         final notifier = _modelSelectorNotifier;
@@ -4116,74 +4122,32 @@ class _ChatScreenState extends State<ChatScreen> {
         .toList(growable: false);
   }
 
-  List<SlashModelChoice> get _slashModelChoices {
+  Iterable<ws.OsiaModel> get _slashModels {
     if (_connState != ws.ConnectionState.connected) return const [];
     final needsImage = _pendingAttachments.any(
       (attachment) => attachment.detectedCategory == 'image',
     );
-    return _models
-        .where(
-          (model) =>
-              model.selectable &&
-              (model.provider ?? '').isNotEmpty &&
-              (!needsImage || model.inputModalities.contains('image')),
-        )
-        .map(
-          (model) => SlashModelChoice(
-            providerId: model.provider!,
-            modelId: model.id,
-            displayName: model.label,
-            reasoningOptions: model.reasoningOptions
-                .map((option) => option.id)
-                .where(slashReasoningLevels.contains)
-                .toList(growable: false),
-            acceptsImages: model.inputModalities.contains('image'),
-          ),
-        )
-        .toList(growable: false);
+    return _models.where(
+      (model) =>
+          model.selectable &&
+          (model.provider ?? '').isNotEmpty &&
+          (!needsImage || model.inputModalities.contains('image')),
+    );
   }
 
-  List<SlashConversationChoice> get _slashConversationChoices {
-    final folders = {
-      for (final folder in _conversationFolders) folder.id: folder.name,
-    };
-    final choices = <SlashConversationChoice>[];
-    for (final conversation in _conversations) {
-      if (conversation.id.isEmpty || conversation.id == _activeConversationId) {
-        continue;
-      }
-      final title = conversation.title;
-      final project = folders[conversation.folderId] ?? '';
-      choices.add(
-        SlashConversationChoice(
-          conversationId: conversation.id,
-          displayTitle: title.length <= slashMaxTitleChars
-              ? title
-              : title.substring(0, slashMaxTitleChars),
-          displayProject: project.length <= slashMaxProjectChars
-              ? project
-              : project.substring(0, slashMaxProjectChars),
-        ),
-      );
-    }
-    return choices;
+  ConversationMention? get _composerMention {
+    final selection = _textCtrl.selection;
+    if (selection.isValid && !selection.isCollapsed) return null;
+    return conversationMention(
+      _textCtrl.text,
+      selection.isValid ? selection.extentOffset : _textCtrl.text.length,
+    );
   }
 
-  void _updateSlashPalette() {
+  List<SlashPaletteSelection> _slashCommandRows(String query) {
     final catalog = _slashCatalog;
-    final query = slashPaletteQuery(_textCtrl.text);
-    if (catalog == null ||
-        query == null ||
-        _activeWork ||
-        _specialRequestPending) {
-      _slashPaletteController.close();
-      return;
-    }
-    if (_showingSlashSkills && _chatSlashAvailable) {
-      _showSlashSkillChoices();
-      return;
-    }
-    final results = buildSlashPaletteResults(
+    if (catalog == null) return const [];
+    return buildSlashPaletteResults(
       catalog: catalog,
       locale: _slashLocale,
       filter: query,
@@ -4192,20 +4156,87 @@ class _ChatScreenState extends State<ChatScreen> {
       currentWebAvailable:
           _connState == ws.ConnectionState.connected &&
           _slashAvailability['current_web_available'] == true,
-      activeProviderId:
-          _slashDirectives.modelOverride?.providerId ?? _selectedProvider ?? '',
-      activeModelId:
-          _slashDirectives.modelOverride?.modelId ?? _selectedModel ?? '',
       connectors: _slashConnectorChoices,
-      models: _slashModelChoices,
-      conversations: _slashConversationChoices,
+      modelsAvailable: _slashModels.isNotEmpty,
     );
-    _slashPaletteController.show(results, _onSlashSelection);
+  }
+
+  void _showConversationMentions(String query) {
+    final folders = {
+      for (final folder in _conversationFolders) folder.id: folder.name,
+    };
+    final french = _slashLocale.startsWith('fr');
+    final needle = query.toLowerCase();
+    final rows = <SlashPaletteSelection>[];
+    for (final conversation in _conversations) {
+      if (conversation.id.isEmpty || conversation.id == _activeConversationId) {
+        continue;
+      }
+      final title = conversation.title;
+      final project = folders[conversation.folderId] ?? '';
+      if (!title.toLowerCase().contains(needle) &&
+          !project.toLowerCase().contains(needle)) {
+        continue;
+      }
+      rows.add(
+        SlashPaletteSelection(
+          type: SlashPaletteSelectionType.conversation,
+          id: conversation.id,
+          title: title.isEmpty ? (french ? 'Sans titre' : 'Untitled') : title,
+          description: project,
+          value: SlashConversationChoice(
+            conversationId: conversation.id,
+            displayTitle: title.length <= slashMaxTitleChars
+                ? title
+                : title.substring(0, slashMaxTitleChars),
+            displayProject: project.length <= slashMaxProjectChars
+                ? project
+                : project.substring(0, slashMaxProjectChars),
+          ),
+        ),
+      );
+      if (rows.length >= slashMaxResults) break;
+    }
+    if (rows.isEmpty) {
+      rows.add(
+        SlashPaletteSelection(
+          type: SlashPaletteSelectionType.conversation,
+          id: 'no-conversation',
+          title: french
+              ? 'Aucune discussion correspondante.'
+              : 'No matching conversations.',
+          enabled: false,
+        ),
+      );
+    }
+    _slashPaletteController.show(rows, _onSlashSelection);
+  }
+
+  void _updateSlashPalette() {
+    if (_activeWork || _specialRequestPending) {
+      _slashPaletteController.close();
+      return;
+    }
+    if (_slashStage == 'skills' && _chatSlashAvailable) {
+      _showSlashSkillChoices();
+      return;
+    }
+    if (_slashStage.isNotEmpty) return;
+    final mention = _composerMention;
+    if (mention != null) {
+      _showConversationMentions(mention.query);
+      return;
+    }
+    final query = slashPaletteQuery(_textCtrl.text);
+    if (query == null) {
+      _slashPaletteController.close();
+      return;
+    }
+    _slashPaletteController.show(_slashCommandRows(query), _onSlashSelection);
   }
 
   void _onComposerChanged(String _) {
-    _showingSlashSkills = false;
-    setState(() {});
+    _slashStage = '';
     _updateSlashPalette();
   }
 
@@ -4243,108 +4274,102 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _onSlashSelection(SlashPaletteSelection selection) {
     if (!selection.enabled || _activeWork) return;
-    if (selection.type == SlashPaletteSelectionType.skill) {
-      if (_chatSlashAvailable) _applySlashSkill(selection.value as String);
-      return;
-    }
-    if (selection.type == SlashPaletteSelectionType.connector) {
-      final connector = selection.value as SlashConnectorChoice;
-      _applySlashDirectives(
-        _slashDirectives.copyWith(
-          connectorHints: [SlashConnectorHint(connector.connectorId)],
-        ),
-        selection.alias,
-      );
-      return;
-    }
-    if (selection.type == SlashPaletteSelectionType.model) {
-      if (selection.id == 'model.auto') {
-        _applySlashDirectives(
-          _slashDirectives.copyWith(clearModelOverride: true),
-          'model',
-        );
-        return;
+    try {
+      switch (selection.type) {
+        case SlashPaletteSelectionType.skill:
+          if (_chatSlashAvailable) _applySlashSkill(selection.value as String);
+          return;
+        case SlashPaletteSelectionType.connector:
+          final connector = selection.value as SlashConnectorChoice;
+          _applySlashDirectives(
+            _slashDirectives.copyWith(
+              connectorHints: [SlashConnectorHint(connector.connectorId)],
+            ),
+          );
+          return;
+        case SlashPaletteSelectionType.model:
+          if (selection.id == 'model.auto') {
+            _applySlashDirectives(
+              _slashDirectives.copyWith(
+                clearModelOverride: true,
+                clearReasoningOverride: true,
+              ),
+            );
+          } else {
+            _showSlashReasoning(selection.value as ws.OsiaModel);
+          }
+          return;
+        case SlashPaletteSelectionType.reasoning:
+          final (model, level) = selection.value as (ws.OsiaModel, String);
+          _applySlashDirectives(
+            _slashDirectives.copyWith(
+              modelOverride: SlashModelOverride(
+                providerId: model.provider!,
+                modelId: model.id,
+              ),
+              reasoningOverride: level,
+            ),
+          );
+          return;
+        case SlashPaletteSelectionType.conversation:
+          final mention = _composerMention;
+          if (mention == null) return;
+          final choice = selection.value as SlashConversationChoice;
+          _applySlashDirectives(
+            _slashDirectives.copyWith(
+              conversationRefs: [
+                SlashConversationRef(
+                  conversationId: choice.conversationId,
+                  displayTitle: choice.displayTitle,
+                  displayProject: choice.displayProject,
+                ),
+              ],
+            ),
+            mention: mention,
+          );
+          return;
+        case SlashPaletteSelectionType.command:
+          break;
       }
-      final model = selection.value as SlashModelChoice;
-      _applySlashDirectives(
-        _slashDirectives.copyWith(
-          modelOverride: SlashModelOverride(
-            providerId: model.providerId,
-            modelId: model.modelId,
-          ),
-        ),
-        'model',
-      );
-      return;
-    }
-    if (selection.type == SlashPaletteSelectionType.reasoning) {
-      _applySlashDirectives(
-        _slashDirectives.copyWith(reasoningOverride: selection.value as String),
-        'reasoning',
-      );
-      return;
-    }
-    if (selection.type == SlashPaletteSelectionType.conversation) {
-      final conversation = selection.value as SlashConversationChoice;
-      _applySlashDirectives(
-        _slashDirectives.copyWith(
-          conversationRefs: [
-            SlashConversationRef(
-              conversationId: conversation.conversationId,
-              displayTitle: conversation.displayTitle,
-              displayProject: conversation.displayProject,
-            ),
-          ],
-        ),
-        'conversation',
-      );
-      return;
-    }
-    switch (selection.handlerContract) {
-      case 'set_current_web_requirement_v1':
-        _applySlashDirectives(
-          _slashDirectives.copyWith(
-            capabilityRequirements: const SlashCapabilityRequirements(
-              currentWeb: true,
-            ),
-          ),
-          selection.alias,
-        );
-      case 'select_exact_model_v1':
-        _showSlashModels();
-      case 'select_reasoning_level_v1':
-        _showSlashReasoning();
-      case 'select_conversation_reference_v1':
-        _showSlashConversations();
-      case 'toggle_conversation_special_v1':
-        unawaited(_toggleConversationSpecial());
-      case 'select_skill_v1':
-        if (!_chatSlashAvailable) return;
-        _showingSlashSkills = true;
-        _showSlashSkillChoices();
-        _wsService.sendGetConfig();
-      case 'create_skill_for_turn_v1':
-        if (_chatSlashAvailable) _applySlashSkill(null);
-      case 'show_safe_tools_v1':
-      case 'show_safe_status_v1':
-      case 'show_available_help_v1':
-        final remaining = consumeSlashPalettePrefix(_textCtrl.text);
-        if (!_slashDirectives.isEmpty || remaining.trim().isNotEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                _slashLocale.startsWith('fr')
-                    ? 'Les commandes d’information doivent être utilisées seules.'
-                    : 'Informational commands must be used alone.',
+      switch (selection.handlerContract) {
+        case 'set_current_web_requirement_v1':
+          _applySlashDirectives(
+            _slashDirectives.copyWith(
+              capabilityRequirements: const SlashCapabilityRequirements(
+                currentWeb: true,
               ),
             ),
           );
+        case 'select_exact_model_v1':
+          _showSlashModels();
+        case 'toggle_conversation_special_v1':
+          unawaited(_toggleConversationSpecial());
+        case 'select_skill_v1':
+          if (!_chatSlashAvailable) return;
+          _slashStage = 'skills';
+          _showSlashSkillChoices();
+          _wsService.sendGetConfig();
+        case 'create_skill_for_turn_v1':
+          if (_chatSlashAvailable) _applySlashSkill(null);
+        case 'show_safe_status_v1':
+        case 'show_available_help_v1':
+          final remaining = consumeSlashPalettePrefix(_textCtrl.text);
+          if (!_slashDirectives.isEmpty || remaining.trim().isNotEmpty) {
+            _showSlashNotice(
+              'Les commandes d’information doivent être utilisées seules.',
+              'Informational commands must be used alone.',
+            );
+            _slashPaletteController.close();
+            return;
+          }
+          _textCtrl.text = remaining;
           _slashPaletteController.close();
-          return;
-        }
-        _textCtrl.text = remaining;
-        _slashPaletteController.close();
-        unawaited(_showSlashInformation(selection.id));
+          unawaited(_showSlashInformation(selection.id));
+      }
+    } on SlashDirectiveException catch (error) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message(_slashLocale))));
     }
   }
 
@@ -4398,13 +4423,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted || selectionEpoch != _conversationSelectionEpoch) return;
       if (error.message == 'conversation_busy') {
         _showSlashNotice(
-          'Attends la fin du tour avant de modifier /special.',
-          'Wait for the turn to finish before changing /special.',
+          'Attends la fin du tour avant de modifier /disablevision.',
+          'Wait for the turn to finish before changing /disablevision.',
         );
       } else {
         _showSlashNotice(
-          'Impossible de modifier /special dans cette discussion.',
-          'Could not change /special in this conversation.',
+          'Impossible de modifier /disablevision dans cette discussion.',
+          'Could not change /disablevision in this conversation.',
         );
       }
     } on TimeoutException {
@@ -4446,123 +4471,95 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _applySlashSkill(String? name) {
-    try {
-      _applySlashDirectives(
-        _slashDirectives.copyWith(
-          skillName: name,
-          clearSkillName: name == null,
-          skillCreator: name == null,
-        ),
-        name == null ? 'skillcreator' : 'skill',
+    _applySlashDirectives(
+      _slashDirectives.copyWith(
+        skillName: name,
+        clearSkillName: name == null,
+        skillCreator: name == null,
+      ),
+    );
+    if (name == null && _textCtrl.text.trim().isEmpty) {
+      _showSlashNotice(
+        'Décris le skill que tu veux créer.',
+        'Describe the skill you want to create.',
       );
-      if (name == null && _textCtrl.text.trim().isEmpty) {
-        _showSlashNotice(
-          'Décris le skill que tu veux créer.',
-          'Describe the skill you want to create.',
-        );
-      }
-    } on SlashDirectiveException catch (error) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message(_slashLocale))));
     }
   }
 
   void _showSlashModels() {
+    _slashStage = 'models';
+    final french = _slashLocale.startsWith('fr');
     final rows = <SlashPaletteSelection>[
       SlashPaletteSelection(
         type: SlashPaletteSelectionType.model,
         id: 'model.auto',
-        title: _slashLocale.startsWith('fr') ? 'Automatique' : 'Automatic',
+        title: french ? 'Modèle configuré' : 'Configured model',
       ),
-      ..._slashModelChoices
-          .take(slashMaxResultsPerCategory - 1)
-          .map(
-            (model) => SlashPaletteSelection(
-              type: SlashPaletteSelectionType.model,
-              id: '${model.providerId}:${model.modelId}',
-              title: model.displayName,
-              description: model.providerId,
-              value: model,
-            ),
-          ),
+      for (final model in _slashModels)
+        SlashPaletteSelection(
+          type: SlashPaletteSelectionType.model,
+          id: '${model.provider}:${model.id}',
+          title: model.label,
+          description: _slashProviderLabel(french, provider: model.provider),
+          value: model,
+        ),
     ];
-    _slashPaletteController.show(rows, _onSlashSelection);
-  }
-
-  void _showSlashConversations() {
-    final rows = _slashConversationChoices
-        .take(slashMaxResultsPerCategory)
-        .map(
-          (conversation) => SlashPaletteSelection(
-            type: SlashPaletteSelectionType.conversation,
-            id: conversation.conversationId,
-            title: conversation.displayTitle.isEmpty
-                ? (_slashLocale.startsWith('fr') ? 'Sans titre' : 'Untitled')
-                : conversation.displayTitle,
-            description: conversation.displayProject,
-            value: conversation,
-          ),
-        )
-        .toList(growable: false);
-    _slashPaletteController.show(rows, _onSlashSelection);
-  }
-
-  void _showSlashReasoning() {
-    final model = _slashDirectives.modelOverride;
-    final selectedProvider = model?.providerId ?? _selectedProvider ?? '';
-    final selectedModel = model?.modelId ?? _selectedModel ?? '';
-    final choice = _slashModelChoices.cast<SlashModelChoice?>().firstWhere(
-      (item) =>
-          item?.providerId == selectedProvider &&
-          item?.modelId == selectedModel,
-      orElse: () => null,
+    _slashPaletteController.show(
+      rows,
+      _onSlashSelection,
+      searchHint: french ? 'Rechercher un modèle…' : 'Search models…',
     );
-    final supported = choice?.reasoningOptions ?? const <String>[];
-    if (choice == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _slashLocale.startsWith('fr')
-                ? 'Ce modèle ne publie aucun niveau de raisonnement.'
-                : 'This model publishes no reasoning levels.',
+  }
+
+  void _showSlashReasoning(ws.OsiaModel model) {
+    _slashStage = 'effort';
+    final strings = OsiaL10n.of(context);
+    final labels = <String, String>{'auto': strings.reasoningDefault};
+    const legacy = {'auto', 'off', 'low', 'medium', 'high'};
+    for (final option in model.reasoningOptions) {
+      if (!slashReasoningOptionPattern.hasMatch(option.id) ||
+          (!_fullSlashReasoning && !legacy.contains(option.id))) {
+        continue;
+      }
+      final localized = ModelReasoningOption(option.id).label(strings);
+      labels[option.id] = localized == option.id ? option.label : localized;
+    }
+    _slashPaletteController.show(
+      [
+        for (final option in labels.entries)
+          SlashPaletteSelection(
+            type: SlashPaletteSelectionType.reasoning,
+            id: 'reasoning.${option.key}',
+            title: option.value,
+            description: option.key == 'auto' ? model.label : '',
+            value: (model, option.key),
           ),
+      ],
+      _onSlashSelection,
+      limit: null,
+    );
+    _inputFocusNode.requestFocus();
+  }
+
+  void _applySlashDirectives(
+    SlashTurnDirectivesV1 directives, {
+    ConversationMention? mention,
+  }) {
+    final source = _textCtrl.text;
+    final text = mention == null
+        ? consumeSlashPalettePrefix(source)
+        : source.replaceRange(mention.start, mention.end, '');
+    setState(() {
+      _slashDirectives = directives;
+      _textCtrl.value = TextEditingValue(
+        text: text,
+        selection: TextSelection.collapsed(
+          offset: mention?.start ?? text.length,
         ),
       );
-      _slashPaletteController.close();
-      return;
-    }
-    final rows = const ['auto', 'off', 'low', 'medium', 'high']
-        .where((level) => level == 'auto' || supported.contains(level))
-        .map(
-          (level) => SlashPaletteSelection(
-            type: SlashPaletteSelectionType.reasoning,
-            id: 'reasoning.$level',
-            title: level,
-            value: level,
-          ),
-        )
-        .toList(growable: false);
-    _slashPaletteController.show(rows, _onSlashSelection);
-  }
-
-  void _applySlashDirectives(SlashTurnDirectivesV1 directives, String alias) {
-    try {
-      directives.validateBounds();
-      setState(() {
-        _slashDirectives = directives;
-        _textCtrl.text = consumeSlashPalettePrefix(_textCtrl.text);
-        _textCtrl.selection = TextSelection.collapsed(
-          offset: _textCtrl.text.length,
-        );
-      });
-      _slashPaletteController.close();
-      _inputFocusNode.requestFocus();
-    } on SlashDirectiveException catch (error) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message(_slashLocale))));
-    }
+    });
+    _slashPaletteController.close();
+    _inputFocusNode.requestFocus();
   }
 
   List<ComposerDirective> get _composerDirectiveChips {
@@ -4590,11 +4587,13 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     final model = _slashDirectives.modelOverride;
     if (model != null) {
-      rows.add(ComposerDirective(id: 'model', label: model.modelId));
-    }
-    final reasoning = _slashDirectives.reasoningOverride;
-    if (reasoning != null) {
-      rows.add(ComposerDirective(id: 'reasoning', label: reasoning));
+      final level = _slashDirectives.reasoningOverride;
+      final effort = level == null
+          ? ''
+          : ' · ${ModelReasoningOption(level).label(OsiaL10n.of(context))}';
+      rows.add(
+        ComposerDirective(id: 'model', label: '${model.modelId}$effort'),
+      );
     }
     final skill = _slashDirectives.skillName;
     if (skill != null) {
@@ -4621,8 +4620,10 @@ class _ChatScreenState extends State<ChatScreen> {
           capabilityRequirements: const SlashCapabilityRequirements(),
         ),
         'conversation' => _slashDirectives.copyWith(conversationRefs: const []),
-        'model' => _slashDirectives.copyWith(clearModelOverride: true),
-        'reasoning' => _slashDirectives.copyWith(clearReasoningOverride: true),
+        'model' => _slashDirectives.copyWith(
+          clearModelOverride: true,
+          clearReasoningOverride: true,
+        ),
         'skill' => _slashDirectives.copyWith(clearSkillName: true),
         'skillcreator' => _slashDirectives.copyWith(skillCreator: false),
         _ => _slashDirectives,
@@ -4657,7 +4658,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _reasoning.defaultLevel;
   }
 
-  String _slashProviderLabel(bool localeFr) {
+  String _slashProviderLabel(bool localeFr, {String? provider}) {
     if (_connState != ws.ConnectionState.connected) {
       return localeFr ? 'Fournisseur indisponible' : 'Unavailable provider';
     }
@@ -4670,8 +4671,13 @@ class _ChatScreenState extends State<ChatScreen> {
           'deepseek': 'DeepSeek',
           'mistral': 'Mistral',
           'ollama': 'Ollama',
+          'lmstudio': 'LM Studio',
+          'openrouter': 'OpenRouter',
+          'xai': 'xAI',
           'local': 'Local',
-        }[_selectedProvider] ??
+        }[provider ?? _selectedProvider] ??
+        provider ??
+        _selectedProvider ??
         (localeFr ? 'Fournisseur indisponible' : 'Unavailable provider');
   }
 
@@ -4688,152 +4694,142 @@ class _ChatScreenState extends State<ChatScreen> {
     };
   }
 
-  String _slashFamilyLabel(Object? value, bool localeFr) {
-    return switch (value?.toString()) {
-      'web_search' => localeFr ? 'Recherche web' : 'Web search',
-      'local_commands' => localeFr ? 'Commandes locales' : 'Local commands',
-      'local_files' => localeFr ? 'Fichiers locaux' : 'Local files',
-      'connected_connectors' =>
-        localeFr ? 'Connecteurs connectés' : 'Connected connectors',
-      'read_only_information' =>
-        localeFr ? 'Informations en lecture seule' : 'Read-only information',
-      'governed_actions' =>
-        localeFr ? 'Actions contrôlées' : 'Governed actions',
-      _ => localeFr ? 'Capacité' : 'Capability',
-    };
-  }
-
   Future<void> _showSlashInformation(String commandId) async {
-    final localeFr = _slashLocale.startsWith('fr');
-    final allConnectors = _slashConnectorChoices;
-    final connectors = allConnectors.take(8).toList();
-    final lines = <String>[];
-    var title = localeFr ? 'Aide' : 'Help';
-    if (commandId == 'help.info') {
-      final catalog = _slashCatalog;
-      if (catalog != null) {
-        final entries = buildSlashPaletteResults(
-          catalog: catalog,
-          locale: _slashLocale,
-          chatSlashExtensionsAvailable: _chatSlashAvailable,
-          specialMode: _conversationSpecialMode,
-          currentWebAvailable:
-              _connState == ws.ConnectionState.connected &&
-              _slashAvailability['current_web_available'] == true,
-          activeProviderId:
-              _slashDirectives.modelOverride?.providerId ??
-              _selectedProvider ??
-              '',
-          activeModelId:
-              _slashDirectives.modelOverride?.modelId ?? _selectedModel ?? '',
-          connectors: _slashConnectorChoices,
-          models: _slashModelChoices,
-          conversations: _slashConversationChoices,
-        );
-        lines.addAll(
-          entries
-              .where(
-                (entry) =>
-                    entry.enabled &&
-                    entry.type != SlashPaletteSelectionType.conversation,
-              )
-              .map((entry) {
-                final hint = entry.argumentHint.isEmpty
-                    ? ''
-                    : ' <${entry.argumentHint}>';
-                return '/${entry.alias}$hint — ${entry.description}';
-              }),
-        );
-      }
-    } else if (commandId == 'tools.info') {
-      title = localeFr ? 'Outils' : 'Tools';
-      final rawFamilies = _slashAvailability['capability_families'];
-      if (rawFamilies is List) {
-        lines.addAll(
-          rawFamilies
-              .take(24)
-              .map((value) => _slashFamilyLabel(value, localeFr)),
-        );
-      }
-      lines.addAll(
-        allConnectors
-            .where((item) => item.usable)
-            .take(8)
-            .map((item) => item.displayName),
-      );
-    } else {
-      title = localeFr ? 'État' : 'Status';
-      final currentModel = _connState == ws.ConnectionState.connected
-          ? _slashCurrentModel
-          : null;
-      final families = _slashAvailability['capability_families'];
-      lines.add('Surface: Mobile');
-      lines.add(
-        '${localeFr ? 'Routage' : 'Routing'}: '
-        '${_aiHierarchyEnabled ? (localeFr ? 'automatique' : 'automatic') : 'exact'}',
-      );
-      lines.add(
-        '${localeFr ? 'Fournisseur' : 'Provider'}: '
-        '${_slashProviderLabel(localeFr)}',
-      );
-      lines.add(
-        '${localeFr ? 'Modèle' : 'Model'}: '
-        '${currentModel?.label ?? (localeFr ? 'Sélection indisponible' : 'Unavailable selection')}',
-      );
-      lines.add(
-        '${localeFr ? 'Raisonnement' : 'Reasoning'}: '
-        '${currentModel == null ? (localeFr ? 'indisponible' : 'unavailable') : _currentSlashReasoning}',
-      );
-      lines.add(
-        '${localeFr ? 'Fournisseur prêt' : 'Provider ready'}: '
-        '${currentModel?.selectable == true ? (localeFr ? 'oui' : 'yes') : (localeFr ? 'non' : 'no')}',
-      );
-      lines.add(
-        '${localeFr ? 'Connecteurs' : 'Connectors'}: ${connectors.length}',
-      );
-      lines.add(
-        '${localeFr ? 'Familles de capacités' : 'Capability families'}: '
-        '${_connState == ws.ConnectionState.connected && families is List ? families.length : 0}',
-      );
-      for (final connector in connectors) {
-        final state = localeFr
-            ? switch (connector.state) {
-                'connected' => 'connecté',
-                'disconnected' => 'déconnecté',
-                'failed' => 'échec',
-                'authorization_required' => 'autorisation requise',
-                'configuration_missing' => 'configuration manquante',
-                'offline' => 'hors ligne',
-                _ => 'indisponible',
-              }
-            : connector.state;
-        final family = localeFr
-            ? switch (connector.family) {
-                'Mail' => 'Courrier',
-                'Connector' => 'Connecteur',
-                _ => 'Capacité',
-              }
-            : connector.family;
-        lines.add('${connector.displayName} · $state · $family');
-      }
-      lines.add('Transport: ${_slashTransportLabel(localeFr)}');
-    }
+    final french = _slashLocale.startsWith('fr');
+    final help = commandId == 'help.info';
+    final title = help
+        ? (french ? 'Aide' : 'Help')
+        : (french ? 'État d’OSIA' : 'OSIA status');
     if (!mounted) return;
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 420),
-          child: SingleChildScrollView(child: Text(lines.join('\n'))),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(localeFr ? 'Fermer' : 'Close'),
+      builder: (context) {
+        final palette = OsiaTheme.of(context);
+        return AlertDialog(
+          title: Text(title),
+          backgroundColor: palette.surface,
+          surfaceTintColor: Colors.transparent,
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 420),
+            child: SingleChildScrollView(
+              child: help
+                  ? Text(
+                      [
+                        french
+                            ? '@ discussion  ·  Référencer une discussion'
+                            : '@ conversation  ·  Reference a conversation',
+                        for (final entry in _slashCommandRows(''))
+                          if (entry.enabled)
+                            '/${entry.alias}${entry.argumentHint.isEmpty ? '' : ' ${entry.argumentHint}'}  ·  ${entry.description}',
+                      ].join('\n\n'),
+                    )
+                  : _slashStatusCards(palette, french),
+            ),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(french ? 'Fermer' : 'Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _slashStatusCards(OsiaPalette palette, bool french) {
+    Widget card(String title, List<(String, String)> rows) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: palette.surfaceElevated,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                color: palette.accent,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            for (final (label, value) in rows)
+              Padding(
+                padding: const EdgeInsets.only(top: 7),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: TextStyle(color: palette.textMuted),
+                      ),
+                    ),
+                    if (value.isNotEmpty)
+                      Expanded(child: Text(value, textAlign: TextAlign.end)),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    final model = _connState == ws.ConnectionState.connected
+        ? _slashCurrentModel
+        : null;
+    final connectors = _slashConnectorChoices;
+    final ready = connectors.where((item) => item.usable).length;
+    final connectorLabel = french ? 'Connecteurs' : 'Connectors';
+    final effort = ModelReasoningOption(
+      _currentSlashReasoning,
+    ).label(OsiaL10n.of(context));
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        card(french ? 'Modèle' : 'Model', [
+          (_slashProviderLabel(french), model?.label ?? '—'),
+          (french ? 'Raisonnement' : 'Reasoning', model == null ? '—' : effort),
+          (
+            french ? 'Disponibilité' : 'Availability',
+            model?.selectable == true
+                ? (french ? 'Prêt' : 'Ready')
+                : (french ? 'Indisponible' : 'Unavailable'),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        card(french ? 'Discussion' : 'Chat', [
+          (
+            french ? 'Connexion au PC' : 'PC connection',
+            _slashTransportLabel(french),
+          ),
+          (
+            french ? 'Routage' : 'Routing',
+            _aiHierarchyEnabled
+                ? (french ? 'Automatique' : 'Automatic')
+                : (french ? 'Modèle sélectionné' : 'Selected model'),
+          ),
+          (
+            french ? 'Vision et souris' : 'Vision and mouse',
+            _conversationSpecialMode
+                ? (french ? 'Désactivées' : 'Disabled')
+                : (french ? 'Actives' : 'Enabled'),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        card('$connectorLabel · $ready/${connectors.length}', [
+          if (connectors.isEmpty)
+            (french ? 'Aucun connecteur' : 'No connectors', ''),
+          for (final connector in connectors.take(8))
+            (
+              connector.displayName,
+              slashConnectorStateLabel(connector.state, _slashLocale),
+            ),
+        ]),
+      ],
     );
   }
 
@@ -4863,8 +4859,8 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (hasImage && _conversationSpecialMode) {
       _showSlashNotice(
-        'Utilise /special pour réactiver la vision avant d’envoyer une image.',
-        'Use /special to restore vision before sending an image.',
+        'Utilise /disablevision pour réactiver la vision avant d’envoyer une image.',
+        'Use /disablevision to restore vision before sending an image.',
       );
       return;
     }
@@ -6292,48 +6288,51 @@ class _ChatScreenState extends State<ChatScreen> {
             left: 12,
             right: 12,
             bottom: MediaQuery.of(context).padding.bottom + 10,
-            child: GlassInputBar(
-              key: _inputBarKey,
-              textController: _textCtrl,
-              focusNode: _inputFocusNode,
-              enabled: !_attachmentInteractionLocked,
-              hintText: null,
-              auxiliaryControlsEnabled: !_activeWork,
-              isRecording: _audioService.isRecording,
-              hasText: _canSend,
-              onSend: _submitComposer,
-              stopMode: _activeWork,
-              stopRequested: _stopRequested,
-              onStop: _stopActiveWork,
-              onMicTap: _toggleRecording,
-              onAttach: _onAttach,
-              modelLabel: _currentModelLabel(strings),
-              onModelTap: _openModelSelector,
-              onChanged: _onComposerChanged,
-              onSubmitted: _activeWork ? null : (_) => _submitComposer(),
-              onKeyEvent: _onSlashKey,
-              onTapOutside: (_) => _slashPaletteController.close(),
-              directives: _composerDirectiveChips,
-              onRemoveDirective: _activeWork ? null : _removeSlashDirective,
-              pendingAttachments: [
-                for (final file in _pendingAttachments)
-                  ComposerAttachment(
-                    displayName: file.displayName,
-                    byteSize: file.byteSize,
-                  ),
-              ],
-              onRemoveAttachment: _activeWork
-                  ? null
-                  : (index) => unawaited(_removePendingAttachment(index)),
-              onClearAttachments: _activeWork
-                  ? null
-                  : () => unawaited(_clearPendingAttachments()),
-              attachmentStatus: _documentAttachmentStatusLabel(strings),
-              attachmentProgress: _attachmentProgress?.fraction ?? 0,
-              attachmentBusy: _attachmentInteractionLocked,
-              onCancelAttachment: _attachmentBusy
-                  ? _cancelAttachmentTransfer
-                  : null,
+            child: ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _textCtrl,
+              builder: (context, _, _) => GlassInputBar(
+                key: _inputBarKey,
+                textController: _textCtrl,
+                focusNode: _inputFocusNode,
+                enabled: !_attachmentInteractionLocked,
+                hintText: null,
+                auxiliaryControlsEnabled: !_activeWork,
+                isRecording: _audioService.isRecording,
+                hasText: _canSend,
+                onSend: _submitComposer,
+                stopMode: _activeWork,
+                stopRequested: _stopRequested,
+                onStop: _stopActiveWork,
+                onMicTap: _toggleRecording,
+                onAttach: _onAttach,
+                modelLabel: _currentModelLabel(strings),
+                onModelTap: _openModelSelector,
+                onChanged: _onComposerChanged,
+                onSubmitted: _activeWork ? null : (_) => _submitComposer(),
+                onKeyEvent: _onSlashKey,
+                onTapOutside: (_) => _slashPaletteController.close(),
+                directives: _composerDirectiveChips,
+                onRemoveDirective: _activeWork ? null : _removeSlashDirective,
+                pendingAttachments: [
+                  for (final file in _pendingAttachments)
+                    ComposerAttachment(
+                      displayName: file.displayName,
+                      byteSize: file.byteSize,
+                    ),
+                ],
+                onRemoveAttachment: _activeWork
+                    ? null
+                    : (index) => unawaited(_removePendingAttachment(index)),
+                onClearAttachments: _activeWork
+                    ? null
+                    : () => unawaited(_clearPendingAttachments()),
+                attachmentStatus: _documentAttachmentStatusLabel(strings),
+                attachmentProgress: _attachmentProgress?.fraction ?? 0,
+                attachmentBusy: _attachmentInteractionLocked,
+                onCancelAttachment: _attachmentBusy
+                    ? _cancelAttachmentTransfer
+                    : null,
+              ),
             ),
           ),
         ],

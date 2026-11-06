@@ -11,12 +11,9 @@ void main() {
     expect(catalog.entries.map((entry) => entry.alias), [
       'web',
       'model',
-      'reasoning',
-      'conversation',
-      'tools',
       'status',
       'help',
-      'special',
+      'disablevision',
       'skill',
       'skillcreator',
     ]);
@@ -27,7 +24,10 @@ void main() {
     () async {
       final catalog = await SlashCommandCatalog.load();
       final legacy = buildSlashPaletteResults(catalog: catalog, locale: 'en');
-      expect(legacy.map((item) => item.alias), isNot(contains('special')));
+      expect(
+        legacy.map((item) => item.alias),
+        isNot(contains('disablevision')),
+      );
 
       final current = buildSlashPaletteResults(
         catalog: catalog,
@@ -35,29 +35,14 @@ void main() {
         chatSlashExtensionsAvailable: true,
         currentWebAvailable: true,
         specialMode: true,
-        models: const [
-          SlashModelChoice(
-            providerId: 'deepseek',
-            modelId: 'deepseek-flash',
-            displayName: 'DeepSeek',
-            reasoningOptions: ['off'],
-          ),
-        ],
-        conversations: const [
-          SlashConversationChoice(
-            conversationId: 'other',
-            displayTitle: 'Other',
-          ),
-        ],
-        activeProviderId: 'deepseek',
-        activeModelId: 'deepseek-flash',
+        modelsAvailable: true,
       );
       expect(
         current.where((item) => item.type == SlashPaletteSelectionType.command),
-        hasLength(10),
+        hasLength(7),
       );
       expect(
-        current.firstWhere((item) => item.alias == 'special').description,
+        current.firstWhere((item) => item.alias == 'disablevision').description,
         startsWith('Réactiver'),
       );
 
@@ -86,7 +71,7 @@ void main() {
   test('palette grammar is initial-only and preserves literal slash text', () {
     expect(slashPaletteQuery('/'), '');
     expect(slashPaletteQuery('/ '), '');
-    expect(slashPaletteQuery('/ special'), 'special');
+    expect(slashPaletteQuery('/ disablevision'), 'disablevision');
     expect(slashPaletteQuery('  /web'), 'web');
     expect(slashPaletteQuery('//web'), isNull);
     expect(slashPaletteQuery('https://osia.space'), isNull);
@@ -167,6 +152,7 @@ void main() {
         modelId: 'gpt',
       ),
       reasoningOverride: 'high',
+      skillCreator: true,
     );
     expect(fifth.validateBounds, throwsA(isA<SlashDirectiveException>()));
     const modifier = SlashTurnDirectivesV1(
@@ -230,8 +216,6 @@ void main() {
         catalog: catalog,
         locale: 'fr',
         currentWebAvailable: false,
-        models: const [],
-        conversations: const [],
         connectors: const [
           SlashConnectorChoice(
             connectorId: 'linear',
@@ -254,7 +238,7 @@ void main() {
   );
 
   test(
-    'connector and conversation title collision remain category-distinct',
+    'slash filters keep connectors separate from conversation mentions',
     () async {
       final catalog = await SlashCommandCatalog.load();
       final results = buildSlashPaletteResults(
@@ -271,18 +255,33 @@ void main() {
             usable: true,
           ),
         ],
-        conversations: const [
-          SlashConversationChoice(
-            conversationId: 'conv-linear',
-            displayTitle: 'Linear',
-            displayProject: 'Delivery',
-          ),
-        ],
       );
-      expect(results.map((item) => item.type).toSet(), {
-        SlashPaletteSelectionType.connector,
-        SlashPaletteSelectionType.conversation,
-      });
+      expect(results.single.type, SlashPaletteSelectionType.connector);
+      const prefix = 'Compare 🙂 @Linear';
+      const draft = '$prefix puis résume.';
+      final mention = conversationMention(draft, prefix.length)!;
+      expect(mention.query, 'Linear');
+      expect(
+        draft.replaceRange(mention.start, mention.end, ''),
+        'Compare 🙂  puis résume.',
+      );
+      expect(conversationMention('name@example.com', 16), isNull);
+      expect(conversationMention('@@literal', 9), isNull);
     },
   );
+
+  test('exact model and advanced effort share one typed slot', () {
+    for (final level in ['xhigh', 'max', 'ultra']) {
+      final selection = SlashTurnDirectivesV1.fromJson({
+        'schema_version': 1,
+        'model_override': {
+          'provider_id': 'chatgpt_account',
+          'model_id': 'gpt-6.1-sol',
+        },
+        'reasoning_override': level,
+      });
+      expect(selection.modifierCount, 1);
+      expect(selection.toJson()['reasoning_override'], level);
+    }
+  });
 }

@@ -304,6 +304,23 @@ Map<String, dynamic> _canonicalTurnFrame({
   };
 }
 
+Future<void> _mockSlashCatalog(WidgetTester tester) async {
+  const asset = 'assets/slash_commands/catalog.v1.json';
+  final catalog = await tester.runAsync(() => rootBundle.load(asset));
+  rootBundle.evict(asset);
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  messenger.setMockMessageHandler('flutter/assets', (message) async {
+    return const StringCodec().decodeMessage(message) == asset
+        ? catalog
+        : await messenger.delegate.send('flutter/assets', message);
+  });
+  addTearDown(() {
+    messenger.setMockMessageHandler('flutter/assets', null);
+    rootBundle.evict(asset);
+  });
+}
+
 Future<_Harness> _pumpChat(
   WidgetTester tester, {
   bool reducedMotion = false,
@@ -1436,20 +1453,7 @@ void main() {
   testWidgets('chat slash skill picker and creator use typed composer chips', (
     tester,
   ) async {
-    const catalogAsset = 'assets/slash_commands/catalog.v1.json';
-    final catalog = await tester.runAsync(() => rootBundle.load(catalogAsset));
-    rootBundle.evict(catalogAsset);
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMessageHandler('flutter/assets', (message) async {
-      return const StringCodec().decodeMessage(message) == catalogAsset
-          ? catalog
-          : await messenger.delegate.send('flutter/assets', message);
-    });
-    addTearDown(() {
-      messenger.setMockMessageHandler('flutter/assets', null);
-      rootBundle.evict(catalogAsset);
-    });
+    await _mockSlashCatalog(tester);
     final harness = await _pumpChat(tester);
     final service = harness.service;
     service.handleIncomingFrameForTest({
@@ -1487,4 +1491,104 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await _disposeChatHarness(tester, harness);
   });
+
+  testWidgets(
+    'chat picks Max after a model search and references a conversation with @',
+    (tester) async {
+      await _mockSlashCatalog(tester);
+      final harness = await _pumpChat(tester);
+      final service = harness.service;
+      service.handleIncomingFrameForTest({
+        'type': 'config',
+        'config': {
+          'chat_slash_extensions': 1,
+          'slash_reasoning_model_options': true,
+        },
+      });
+      service.handleIncomingFrameForTest({
+        'type': 'models_list',
+        'current': 'gpt-6.1-sol',
+        'current_provider': 'chatgpt_account',
+        'models': [
+          for (var i = 0; i < 40; i++)
+            {'id': 'test-$i', 'displayName': 'Test $i', 'providerId': 'ollama'},
+          {
+            'id': 'gpt-6.1-sol',
+            'displayName': 'GPT-6.1 Sol',
+            'providerId': 'chatgpt_account',
+            'reasoning': {
+              'options': [
+                for (final id in ['auto', 'low', 'xhigh', 'max', 'ultra'])
+                  {'id': id},
+              ],
+            },
+          },
+        ],
+      });
+      _emitConversationList(service, [
+        ('conv-nav', 'Navigation test'),
+        ('conv-other', 'Projet test'),
+      ]);
+      await tester.pump();
+
+      await tester.enterText(find.byType(TextField), '/status');
+      await tester.pump(const Duration(milliseconds: 160));
+      await tester.tap(find.text('/status  Status'));
+      await tester.pumpAndSettle();
+      expect(find.text('OSIA status'), findsOneWidget);
+      expect(find.text('PC connection'), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), '/model');
+      await tester.pump(const Duration(milliseconds: 160));
+      await tester.tap(find.text('/model  Model'));
+      await tester.pump();
+      await tester.enterText(
+        find.byKey(const Key('slash-model-search')),
+        '6.1 sol',
+      );
+      await tester.pump();
+      final palette = find.byKey(const Key('slash-command-palette'));
+      await tester.tap(
+        find.descendant(of: palette, matching: find.text('GPT-6.1 Sol')),
+      );
+      await tester.pump();
+      expect(
+        find.descendant(of: palette, matching: find.text('Ultra')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.descendant(of: palette, matching: find.text('Max')),
+      );
+      await tester.pump();
+      expect(find.text('gpt-6.1-sol · Max'), findsOneWidget);
+
+      const prefix = 'Reprends 🙂 @pro';
+      await tester.showKeyboard(find.byType(TextField));
+      tester.testTextInput.updateEditingValue(
+        TextEditingValue(
+          text: '$prefix demain',
+          selection: TextSelection.collapsed(offset: prefix.length),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 160));
+      await tester.tap(
+        find.descendant(of: palette, matching: find.text('Projet test')),
+      );
+      await tester.pump();
+      await _tapGlassIconWithoutPointer(tester, Icons.arrow_upward_rounded);
+      await tester.pump(const Duration(milliseconds: 120));
+      expect(service.sentTurns.single.$1, 'Reprends 🙂  demain');
+      expect(service.sentDirectives.single?['reasoning_override'], 'max');
+      expect(service.sentDirectives.single?['model_override'], {
+        'provider_id': 'chatgpt_account',
+        'model_id': 'gpt-6.1-sol',
+      });
+      final references =
+          service.sentDirectives.single?['conversation_refs'] as List;
+      expect(references.single['conversation_id'], 'conv-other');
+      await _disposeChatHarness(tester, harness);
+    },
+  );
 }
