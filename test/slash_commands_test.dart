@@ -13,7 +13,7 @@ void main() {
       'model',
       'status',
       'help',
-      'disablevision',
+      'vision',
       'skill',
       'skillcreator',
     ]);
@@ -26,7 +26,7 @@ void main() {
       final legacy = buildSlashPaletteResults(catalog: catalog, locale: 'en');
       expect(
         legacy.map((item) => item.alias),
-        isNot(contains('disablevision')),
+        isNot(contains('vision')),
       );
 
       final current = buildSlashPaletteResults(
@@ -42,7 +42,7 @@ void main() {
         hasLength(7),
       );
       expect(
-        current.firstWhere((item) => item.alias == 'disablevision').description,
+        current.firstWhere((item) => item.alias == 'vision').description,
         startsWith('Réactiver'),
       );
 
@@ -71,7 +71,7 @@ void main() {
   test('palette grammar is initial-only and preserves literal slash text', () {
     expect(slashPaletteQuery('/'), '');
     expect(slashPaletteQuery('/ '), '');
-    expect(slashPaletteQuery('/ disablevision'), 'disablevision');
+    expect(slashPaletteQuery('/ vision'), 'vision');
     expect(slashPaletteQuery('  /web'), 'web');
     expect(slashPaletteQuery('//web'), isNull);
     expect(slashPaletteQuery('https://osia.space'), isNull);

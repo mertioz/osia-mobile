@@ -4423,13 +4423,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted || selectionEpoch != _conversationSelectionEpoch) return;
       if (error.message == 'conversation_busy') {
         _showSlashNotice(
-          'Attends la fin du tour avant de modifier /disablevision.',
-          'Wait for the turn to finish before changing /disablevision.',
+          'Attends la fin du tour avant de modifier /vision.',
+          'Wait for the turn to finish before changing /vision.',
         );
       } else {
         _showSlashNotice(
-          'Impossible de modifier /disablevision dans cette discussion.',
-          'Could not change /disablevision in this conversation.',
+          'Impossible de modifier /vision dans cette discussion.',
+          'Could not change /vision in this conversation.',
         );
       }
     } on TimeoutException {
@@ -4859,8 +4859,8 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (hasImage && _conversationSpecialMode) {
       _showSlashNotice(
-        'Utilise /disablevision pour réactiver la vision avant d’envoyer une image.',
-        'Use /disablevision to restore vision before sending an image.',
+        'Utilise /vision pour réactiver la vision avant d’envoyer une image.',
+        'Use /vision to restore vision before sending an image.',
       );
       return;
     }
