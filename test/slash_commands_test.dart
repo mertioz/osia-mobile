@@ -13,7 +13,7 @@ void main() {
       'model',
       'status',
       'help',
-      'vision',
+      'mousecontrol',
       'skill',
       'skillcreator',
     ]);
@@ -23,18 +23,21 @@ void main() {
     'extended commands appear with a compatible PC and keep their typed intent',
     () async {
       final catalog = await SlashCommandCatalog.load();
-      final legacy = buildSlashPaletteResults(catalog: catalog, locale: 'en');
-      expect(
-        legacy.map((item) => item.alias),
-        isNot(contains('vision')),
+      final legacy = buildSlashPaletteResults(
+        catalog: catalog,
+        locale: 'en',
+        chatSlashExtensionsAvailable: true,
       );
+      expect(legacy.map((item) => item.alias), isNot(contains('mousecontrol')));
+      expect(legacy.map((item) => item.alias), contains('skill'));
 
       final current = buildSlashPaletteResults(
         catalog: catalog,
         locale: 'fr',
         chatSlashExtensionsAvailable: true,
+        mouseControlAvailable: true,
         currentWebAvailable: true,
-        specialMode: true,
+        mouseControlDisabled: true,
         modelsAvailable: true,
       );
       expect(
@@ -42,8 +45,8 @@ void main() {
         hasLength(7),
       );
       expect(
-        current.firstWhere((item) => item.alias == 'vision').description,
-        startsWith('Réactiver'),
+        current.firstWhere((item) => item.alias == 'mousecontrol').description,
+        'Réactiver le contrôle de la souris dans cette discussion',
       );
 
       final create = SlashTurnDirectivesV1.fromJson({
@@ -71,7 +74,7 @@ void main() {
   test('palette grammar is initial-only and preserves literal slash text', () {
     expect(slashPaletteQuery('/'), '');
     expect(slashPaletteQuery('/ '), '');
-    expect(slashPaletteQuery('/ vision'), 'vision');
+    expect(slashPaletteQuery('/ mousecontrol'), 'mousecontrol');
     expect(slashPaletteQuery('  /web'), 'web');
     expect(slashPaletteQuery('//web'), isNull);
     expect(slashPaletteQuery('https://osia.space'), isNull);

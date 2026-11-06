@@ -146,6 +146,7 @@ class _ChatScreenState extends State<ChatScreen> {
   SlashTurnDirectivesV1 _slashDirectives = const SlashTurnDirectivesV1();
   Map<String, dynamic> _slashAvailability = const {};
   bool _chatSlashExtensions = false;
+  bool _mouseControlCommand = false;
   String _slashStage = '';
   bool _fullSlashReasoning = false;
   bool _specialRequestPending = false;
@@ -547,6 +548,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _connState = state;
           if (state != ws.ConnectionState.connected) {
             _chatSlashExtensions = false;
+            _mouseControlCommand = false;
             _fullSlashReasoning = false;
           }
           // Fresh banner-switcher key on every connection-state change so a
@@ -658,6 +660,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _reasoningConfigLoaded = true;
           _slashAvailability = cfg.slashCommands;
           _chatSlashExtensions = cfg.chatSlashExtensions;
+          _mouseControlCommand = cfg.conversationMouseControl;
           _fullSlashReasoning =
               cfg.settings['slash_reasoning_model_options'] == true;
           _slashSkills = cfg.skills;
@@ -4087,7 +4090,10 @@ class _ChatScreenState extends State<ChatScreen> {
   bool get _chatSlashAvailable =>
       _connState == ws.ConnectionState.connected && _chatSlashExtensions;
 
-  bool get _conversationSpecialMode =>
+  bool get _mouseControlAvailable =>
+      _connState == ws.ConnectionState.connected && _mouseControlCommand;
+
+  bool get _conversationMouseControlDisabled =>
       canonicalConversationForActiveId(
         _conversations,
         _activeConversationId,
@@ -4152,7 +4158,8 @@ class _ChatScreenState extends State<ChatScreen> {
       locale: _slashLocale,
       filter: query,
       chatSlashExtensionsAvailable: _chatSlashAvailable,
-      specialMode: _conversationSpecialMode,
+      mouseControlAvailable: _mouseControlAvailable,
+      mouseControlDisabled: _conversationMouseControlDisabled,
       currentWebAvailable:
           _connState == ws.ConnectionState.connected &&
           _slashAvailability['current_web_available'] == true,
@@ -4342,8 +4349,8 @@ class _ChatScreenState extends State<ChatScreen> {
           );
         case 'select_exact_model_v1':
           _showSlashModels();
-        case 'toggle_conversation_special_v1':
-          unawaited(_toggleConversationSpecial());
+        case 'toggle_conversation_mouse_control_v1':
+          unawaited(_toggleConversationMouseControl());
         case 'select_skill_v1':
           if (!_chatSlashAvailable) return;
           _slashStage = 'skills';
@@ -4379,11 +4386,11 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _toggleConversationSpecial() async {
-    if (!_chatSlashAvailable || _specialRequestPending) return;
+  Future<void> _toggleConversationMouseControl() async {
+    if (!_mouseControlAvailable || _specialRequestPending) return;
     final conversationId = _activeConversationId;
     final selectionEpoch = _conversationSelectionEpoch;
-    final enabled = !_conversationSpecialMode;
+    final enabled = !_conversationMouseControlDisabled;
     setState(() {
       _specialRequestPending = true;
       _textCtrl.text = consumeSlashPalettePrefix(_textCtrl.text);
@@ -4410,26 +4417,26 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       if (enabled) {
         _showSlashNotice(
-          'Vision et souris désactivées dans cette discussion.',
-          'Vision and mouse disabled in this conversation.',
+          'Contrôle de la souris désactivé dans cette discussion.',
+          'Mouse control disabled in this conversation.',
         );
       } else {
         _showSlashNotice(
-          'Vision et souris réactivées dans cette discussion.',
-          'Vision and mouse restored in this conversation.',
+          'Contrôle de la souris réactivé dans cette discussion.',
+          'Mouse control restored in this conversation.',
         );
       }
     } on StateError catch (error) {
       if (!mounted || selectionEpoch != _conversationSelectionEpoch) return;
       if (error.message == 'conversation_busy') {
         _showSlashNotice(
-          'Attends la fin du tour avant de modifier /vision.',
-          'Wait for the turn to finish before changing /vision.',
+          'Attends la fin du tour avant de modifier /mousecontrol.',
+          'Wait for the turn to finish before changing /mousecontrol.',
         );
       } else {
         _showSlashNotice(
-          'Impossible de modifier /vision dans cette discussion.',
-          'Could not change /vision in this conversation.',
+          'Impossible de modifier /mousecontrol dans cette discussion.',
+          'Could not change /mousecontrol in this conversation.',
         );
       }
     } on TimeoutException {
@@ -4813,10 +4820,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 : (french ? 'Modèle sélectionné' : 'Selected model'),
           ),
           (
-            french ? 'Vision et souris' : 'Vision and mouse',
-            _conversationSpecialMode
-                ? (french ? 'Désactivées' : 'Disabled')
-                : (french ? 'Actives' : 'Enabled'),
+            _mouseControlCommand
+                ? (french ? 'Contrôle de la souris' : 'Mouse control')
+                : (french ? 'Mode vision et souris' : 'Vision and mouse mode'),
+            _conversationMouseControlDisabled
+                ? (french ? 'Désactivé' : 'Disabled')
+                : (french ? 'Actif' : 'Enabled'),
           ),
         ]),
         const SizedBox(height: 8),
@@ -4857,10 +4866,12 @@ class _ChatScreenState extends State<ChatScreen> {
     final hasImage = attachments.any(
       (attachment) => attachment.detectedCategory == 'image',
     );
-    if (hasImage && _conversationSpecialMode) {
+    if (hasImage &&
+        !_mouseControlCommand &&
+        _conversationMouseControlDisabled) {
       _showSlashNotice(
-        'Utilise /vision pour réactiver la vision avant d’envoyer une image.',
-        'Use /vision to restore vision before sending an image.',
+        'Réactive la vision sur le PC connecté avant d’envoyer une image.',
+        'Restore vision on the connected PC before sending an image.',
       );
       return;
     }

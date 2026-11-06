@@ -1144,6 +1144,7 @@ class ConfigData {
   /// display state and stable connector identities, never secrets or endpoints.
   final Map<String, dynamic> slashCommands;
   final bool chatSlashExtensions;
+  final bool conversationMouseControl;
 
   /// Safe mirror of PC settings needed by Mobile controls (e.g. `time_format`,
   /// `heartbeat_enabled`, and `ui_theme`). Credential values are discarded
@@ -1163,6 +1164,7 @@ class ConfigData {
     this.reasoning = const OsiaReasoningConfig(),
     this.slashCommands = const {},
     this.chatSlashExtensions = false,
+    this.conversationMouseControl = false,
     required this.settings,
   });
 
@@ -1230,6 +1232,7 @@ class ConfigData {
       ),
       slashCommands: parseSlashAvailabilityOverlay(config['slash_commands']),
       chatSlashExtensions: config['chat_slash_extensions'] == 1,
+      conversationMouseControl: config['conversation_mouse_control'] == true,
       settings: settings,
     );
   }

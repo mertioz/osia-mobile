@@ -3,7 +3,7 @@ import 'package:osia_mobile/services/websocket_service.dart';
 
 void main() {
   test(
-    'special mode waits for the exact canonical conversation acknowledgement',
+    'mouse control uses the existing canonical conversation acknowledgement',
     () async {
       final frames = <Map<String, dynamic>>[];
       final service = WebSocketService(
@@ -47,6 +47,18 @@ void main() {
       expect(Conversation.fromJson({'id': 'old'}).specialMode, false);
     },
   );
+
+  test('only the mouse-control-capable PC advertises the new command', () {
+    final legacy = ConfigData.fromJson({'chat_slash_extensions': 1});
+    final current = ConfigData.fromJson({
+      'chat_slash_extensions': 1,
+      'conversation_mouse_control': true,
+    });
+    expect(legacy.chatSlashExtensions, isTrue);
+    expect(legacy.conversationMouseControl, isFalse);
+    expect(current.chatSlashExtensions, isTrue);
+    expect(current.conversationMouseControl, isTrue);
+  });
 
   test('text and attachment retry payloads carry exact optional directives', () {
     final frames = <Map<String, dynamic>>[];

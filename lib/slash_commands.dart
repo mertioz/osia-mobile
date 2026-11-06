@@ -740,7 +740,8 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
   String filter = '',
   bool currentWebAvailable = false,
   bool chatSlashExtensionsAvailable = false,
-  bool specialMode = false,
+  bool mouseControlAvailable = false,
+  bool mouseControlDisabled = false,
   bool modelsAvailable = false,
   List<SlashConnectorChoice> connectors = const [],
 }) {
@@ -753,6 +754,7 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
     final available = switch (item.availabilityPredicate) {
       'current_web_available' => currentWebAvailable,
       'chat_slash_extensions' => chatSlashExtensionsAvailable,
+      'conversation_mouse_control' => mouseControlAvailable,
       'selectable_models_present' => modelsAvailable,
       _ => true,
     };
@@ -763,10 +765,10 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
         id: item.id,
         alias: item.alias,
         title: item.localizedName(locale),
-        description: item.id == 'special.toggle' && specialMode
+        description: item.id == 'mouse_control.toggle' && mouseControlDisabled
             ? (locale.startsWith('fr')
-                  ? 'Réactiver la vision et la souris dans cette discussion'
-                  : 'Restore vision and mouse in this conversation')
+                  ? 'Réactiver le contrôle de la souris dans cette discussion'
+                  : "Restore OSIA's mouse control in this conversation")
             : item.localizedDescription(locale),
         argumentHint:
             item.argumentHint[locale.startsWith('fr') ? 'fr' : 'en'] ??
