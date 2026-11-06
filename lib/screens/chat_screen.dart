@@ -1407,6 +1407,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   providerId: m.providerId,
                   modelId: m.modelId,
                   effectiveReasoning: m.effectiveReasoning,
+                  screenshotIds: m.screenshotIds,
                   // A user and its reply share turn identity. Only the reply
                   // owns Thinking, including when restoring retained snapshots.
                   executionTrace: m.role != 'assistant'
@@ -2227,10 +2228,14 @@ class _ChatScreenState extends State<ChatScreen> {
           modelId: event.modelId,
           effectiveReasoning: event.effectiveReasoning,
           executionTrace: liveTrace,
+          screenshotIds: event.screenshotIds,
         );
       } else if (_entries.isNotEmpty &&
           !_entries.last.isUser &&
-          _entries.last.content == text) {
+          _entries.last.content == text &&
+          ((_entries.last.screenshotIds.isEmpty &&
+                  event.screenshotIds?.isNotEmpty != true) ||
+              _entries.last.messageId == event.messageId)) {
         // A history reload landed after the server persisted this reply, so
         // _entries already ends with it — reuse that entry rather than append
         // a duplicate streaming bubble (WOR-53). It is already shown in full.
@@ -2245,6 +2250,7 @@ class _ChatScreenState extends State<ChatScreen> {
           modelId: event.modelId,
           effectiveReasoning: event.effectiveReasoning,
           executionTrace: liveTrace,
+          screenshotIds: event.screenshotIds,
         );
         _streamingIndex = _entries.length - 1;
         _setTypeTarget(text, fullyRevealed: true);
@@ -2265,6 +2271,7 @@ class _ChatScreenState extends State<ChatScreen> {
             modelId: event.modelId,
             effectiveReasoning: event.effectiveReasoning,
             executionTrace: liveTrace,
+            screenshotIds: event.screenshotIds ?? const [],
           ),
         );
         _streamingIndex = _entries.length - 1;
@@ -2282,6 +2289,57 @@ class _ChatScreenState extends State<ChatScreen> {
       // Drive the reveal off the timer (it self-pins the scroll while writing).
       _ensureTypewriter();
     }
+  }
+
+  Future<void> _openChatScreenshot(
+    _ChatEntry entry,
+    String screenshotId,
+  ) async {
+    final french = OsiaL10n.of(context).languageCode == 'fr';
+    final label = french ? 'Capture d’écran' : 'Screenshot';
+    final unavailable = french
+        ? 'Capture indisponible.'
+        : 'Screenshot unavailable.';
+    final preview = _wsService.requestChatScreenshot(
+      conversationId: entry.conversationId,
+      turnId: entry.turnId,
+      messageId: entry.messageId,
+      screenshotId: screenshotId,
+    );
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(label),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: FutureBuilder<Uint8List>(
+            future: preview,
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return Text(unavailable);
+              }
+              final data = snapshot.data;
+              if (data == null) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              return ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * .65,
+                ),
+                child: InteractiveViewer(
+                  child: Image.memory(
+                    data,
+                    fit: BoxFit.contain,
+                    semanticLabel: label,
+                    errorBuilder: (_, _, _) => Text(unavailable),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
   }
 
   /// Feature 2: start the typewriter reveal timer if there is buffered text not
@@ -5925,6 +5983,9 @@ class _ChatScreenState extends State<ChatScreen> {
                           }
                           final entry = _entries[index];
                           final isAssistant = !entry.isUser && !entry.isSystem;
+                          final screenshotLabel = strings.languageCode == 'fr'
+                              ? 'Capture d’écran'
+                              : 'Screenshot';
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
@@ -5985,6 +6046,23 @@ class _ChatScreenState extends State<ChatScreen> {
                                       )
                                     : null,
                               ),
+                              if (isAssistant && entry.screenshotIds.isNotEmpty)
+                                Wrap(
+                                  children: [
+                                    for (final (index, screenshotId)
+                                        in entry.screenshotIds.indexed)
+                                      TextButton.icon(
+                                        icon: const Icon(Icons.image_outlined),
+                                        label: Text(
+                                          '$screenshotLabel ${index + 1}',
+                                        ),
+                                        onPressed: () => _openChatScreenshot(
+                                          entry,
+                                          screenshotId,
+                                        ),
+                                      ),
+                                  ],
+                                ),
                             ],
                           );
                         },
@@ -6896,6 +6974,7 @@ class _ChatEntry {
   final String modelId;
   final String effectiveReasoning;
   final ExecutionTraceSnapshot? executionTrace;
+  final List<String> screenshotIds;
 
   const _ChatEntry({
     required this.content,
@@ -6912,6 +6991,7 @@ class _ChatEntry {
     this.modelId = '',
     this.effectiveReasoning = '',
     this.executionTrace,
+    this.screenshotIds = const [],
   });
 
   _ChatEntry copyWith({
@@ -6927,6 +7007,7 @@ class _ChatEntry {
     String? modelId,
     String? effectiveReasoning,
     ExecutionTraceSnapshot? executionTrace,
+    List<String>? screenshotIds,
   }) {
     return _ChatEntry(
       content: content ?? this.content,
@@ -6943,6 +7024,7 @@ class _ChatEntry {
       modelId: modelId ?? this.modelId,
       effectiveReasoning: effectiveReasoning ?? this.effectiveReasoning,
       executionTrace: executionTrace ?? this.executionTrace,
+      screenshotIds: screenshotIds ?? this.screenshotIds,
     );
   }
 }

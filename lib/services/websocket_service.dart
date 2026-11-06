@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -19,6 +20,30 @@ import 'storage_service.dart';
 import 'transport_coordinator.dart';
 import 'webrtc_direct_transport.dart';
 import 'webrtc_signaling.dart';
+
+const _screenshotChunkBytes = 20 * 1024;
+const _screenshotPreviewBytes = 96 * 1024;
+final _screenshotIdPattern = RegExp(r'^[a-f0-9]{32}$');
+
+List<String> _screenshotIds(Object? value) {
+  if (value is! List) return const [];
+  return value
+      .whereType<Map>()
+      .map((item) => item['id'])
+      .whereType<String>()
+      .where(_screenshotIdPattern.hasMatch)
+      .toList(growable: false);
+}
+
+class _ScreenshotTransfer {
+  final Map<String, String> identity;
+  final result = Completer<Uint8List>();
+  final bytes = BytesBuilder(copy: false);
+  int nextIndex = 0;
+  int count = 0;
+
+  _ScreenshotTransfer(this.identity);
+}
 
 // ── WOR-75 diagnostic flag ────────────────────────────────────────────────
 
@@ -496,6 +521,7 @@ class HistoryMessage {
   final String providerId;
   final String modelId;
   final String effectiveReasoning;
+  final List<String> screenshotIds;
   const HistoryMessage({
     required this.role,
     required this.content,
@@ -508,6 +534,7 @@ class HistoryMessage {
     this.providerId = '',
     this.modelId = '',
     this.effectiveReasoning = '',
+    this.screenshotIds = const [],
   });
 
   factory HistoryMessage.fromJson(Map<String, dynamic> json) {
@@ -536,6 +563,7 @@ class HistoryMessage {
       providerId: (json['provider_id'] ?? json['provider'] ?? '').toString(),
       modelId: (json['model_id'] ?? json['model'] ?? '').toString(),
       effectiveReasoning: (json['effective_reasoning'] ?? '').toString(),
+      screenshotIds: _screenshotIds(json['screenshots']),
       executionTrace: ExecutionTraceSnapshot.parseHistory(
         json['execution_trace'],
       ),
@@ -1904,6 +1932,7 @@ class ConvStreamEvent {
   final String? delta;
   final bool done;
   final bool error;
+  final List<String>? screenshotIds;
 
   /// Legacy marker for a terminal (done/error) frame that arrived WITHOUT a
   /// conversation_id. Current correlation rules ignore those ambiguous frames
@@ -1922,6 +1951,7 @@ class ConvStreamEvent {
     this.delta,
     this.done = false,
     this.error = false,
+    this.screenshotIds,
     this.untagged = false,
   });
 }
@@ -4076,6 +4106,77 @@ class WebSocketService {
     _send({'type': 'load_conversation', 'id': id});
   }
 
+  final _screenshotTransfers = <String, _ScreenshotTransfer>{};
+
+  Future<Uint8List> requestChatScreenshot({
+    required String conversationId,
+    required String turnId,
+    required String messageId,
+    required String screenshotId,
+  }) async {
+    final requestId = 'screenshot_${newClientRequestId()}';
+    final identity = {
+      'request_id': requestId,
+      'conversation_id': conversationId,
+      'turn_id': turnId,
+      'message_id': messageId,
+      'screenshot_id': screenshotId,
+    };
+    final transfer = _ScreenshotTransfer(identity);
+    _screenshotTransfers[requestId] = transfer;
+    try {
+      if (!_send({'type': 'get_chat_screenshot', ...identity})) {
+        throw StateError('screenshot request could not be sent');
+      }
+      return await transfer.result.future.timeout(const Duration(seconds: 12));
+    } finally {
+      _screenshotTransfers.remove(requestId);
+    }
+  }
+
+  void _receiveChatScreenshot(Map<String, dynamic> frame) {
+    final transfer = _screenshotTransfers[frame['request_id']];
+    if (transfer == null ||
+        transfer.result.isCompleted ||
+        transfer.identity.entries.any(
+          (entry) => frame[entry.key] != entry.value,
+        )) {
+      return;
+    }
+    final index = frame['index'];
+    final count = frame['count'];
+    final data = frame['data'];
+    if (frame['error'] != null ||
+        index != transfer.nextIndex ||
+        count is! int ||
+        count < 1 ||
+        count > (_screenshotPreviewBytes / _screenshotChunkBytes).ceil() ||
+        index is! int ||
+        index >= count ||
+        (transfer.count != 0 && transfer.count != count) ||
+        data is! String ||
+        data.length > ((_screenshotChunkBytes + 2) ~/ 3) * 4) {
+      transfer.result.completeError(StateError('screenshot unavailable'));
+      return;
+    }
+    try {
+      final chunk = base64Decode(data);
+      if (chunk.isEmpty ||
+          chunk.length > _screenshotChunkBytes ||
+          transfer.bytes.length + chunk.length > _screenshotPreviewBytes) {
+        throw const FormatException('invalid screenshot size');
+      }
+      transfer.count = count;
+      transfer.nextIndex++;
+      transfer.bytes.add(chunk);
+      if (transfer.nextIndex == count) {
+        transfer.result.complete(transfer.bytes.takeBytes());
+      }
+    } on FormatException catch (error) {
+      transfer.result.completeError(error);
+    }
+  }
+
   /// Ask the server to start a new conversation.
   void sendNewConversation() {
     _send({'type': 'new_conversation'});
@@ -4605,6 +4706,14 @@ class WebSocketService {
     if (_disposed) return;
     disconnect();
     _disposed = true;
+    for (final transfer in _screenshotTransfers.values) {
+      if (!transfer.result.isCompleted) {
+        transfer.result.completeError(
+          StateError('screenshot connection closed'),
+        );
+      }
+    }
+    _screenshotTransfers.clear();
     _drainTimer?.cancel();
     _drainTimer = null;
     _outQueue.clear();
@@ -5336,6 +5445,7 @@ class WebSocketService {
     String clientRequestId = '',
     String turnId = '',
     String messageId = '',
+    List<String>? screenshotIds,
   }) {
     if (convId == null || convId.isEmpty || _convStreamCtrl.isClosed) return;
     if (_shouldIgnoreConversationFrame(
@@ -5371,6 +5481,7 @@ class WebSocketService {
         modelId: _modelByRequest[clientRequestId] ?? '',
         effectiveReasoning: _reasoningByRequest[clientRequestId] ?? '',
         delta: text,
+        screenshotIds: screenshotIds,
       ),
     );
   }
@@ -7554,9 +7665,12 @@ class WebSocketService {
                 clientRequestId: clientRequestId,
                 turnId: turnId,
                 messageId: messageId,
+                screenshotIds: _screenshotIds(json['screenshots']),
               );
             }
           }
+        case 'chat_screenshot_chunk':
+          _receiveChatScreenshot(json);
         case 'response_chunk':
           if (content != null && content.isNotEmpty) {
             if (!_pendingChatCancellationRequests.contains(clientRequestId)) {
