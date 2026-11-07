@@ -2637,12 +2637,13 @@ class WebSocketService {
 
   void _requestCanonicalApplicationReplay(String streamId, int afterSequence) {
     if (!_pendingApplicationReplayStreams.add(streamId)) return;
-    _send(<String, dynamic>{
+    final sent = _send(<String, dynamic>{
       'type': 'event_replay_request',
       'schema_version': 1,
       'stream_id': streamId,
       'after_sequence': afterSequence,
     });
+    if (!sent) _pendingApplicationReplayStreams.remove(streamId);
   }
 
   bool _acceptCanonicalApplicationEvent(Map<String, dynamic> json) {
@@ -4926,14 +4927,10 @@ class WebSocketService {
     return true;
   }
 
-  void _beginProgressReconnect() {
+  void _markProgressOffline() {
     _browserProgressLive = false;
     _documentProgressLive = false;
     _awaitingDocumentSnapshot = true;
-  }
-
-  void _markProgressOffline() {
-    _beginProgressReconnect();
   }
 
   static String _documentScopeKey(String scopeType, String scopeId) =>
@@ -5348,7 +5345,6 @@ class WebSocketService {
     _completeRelayReady(false);
     _resetRelayE2eState();
     _relayReadyCompleter = null;
-    _markProgressOffline();
     if (channel != null) {
       debugPrint('[OSIA WS] Closing current socket ($reason).');
       try {
@@ -5366,6 +5362,12 @@ class WebSocketService {
   void _setState(ConnectionState newState) {
     if (_disposed || _connectionCtrl.isClosed) return;
     if (_state == newState) return;
+    if (newState != ConnectionState.connected) {
+      // Only the outstanding requests belong to the lost transport. Keep
+      // applied cursors so the next transport requests the exact missing suffix.
+      _pendingApplicationReplayStreams.clear();
+      _markProgressOffline();
+    }
     _state = newState;
     _connectionCtrl.add(newState);
   }
@@ -8290,7 +8292,6 @@ class WebSocketService {
     _relayReadyCompleter = null;
     if (directTransportActive) return;
     _publishCommittedTransport(CommittedTransportState.switching);
-    _markProgressOffline();
     _setState(ConnectionState.disconnected);
     if (relayDroppedWhileConnected && !_intentionalClose) {
       if (!_errorCtrl.isClosed) _errorCtrl.add(kRelayUnreachableError);

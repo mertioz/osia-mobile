@@ -1,6 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:osia_mobile/services/transport_coordinator.dart';
 import 'package:osia_mobile/services/websocket_service.dart';
 
 void main() {
@@ -124,5 +127,54 @@ void main() {
     expect(chat, contains('browserProgressStream'));
     expect(chat, contains('_BrowserProgressProjection'));
     expect(chat, contains('chat-browser-progress'));
+  });
+
+  test('browser progress follows a fresh PC session after direct reconnect', () async {
+    const token = 'synthetic-pair-token';
+    final serverId = sha256
+        .convert(utf8.encode('osia-permission-server-v1\u0000$token'))
+        .toString();
+    final service = WebSocketService(
+      ip: '127.0.0.1', token: token, autoReconnect: false,
+    );
+    addTearDown(service.dispose);
+    final sessions = <String>[];
+    final subscription = service.browserProgressStream.listen(
+      (progress) => sessions.add(progress.sessionId),
+    );
+    addTearDown(subscription.cancel);
+
+    void emit(String session, int sequence) {
+      service.handleIncomingFrameForTest(<String, dynamic>{
+        'type': 'browser_progress',
+        'schema_version': 1,
+        'event_id': '$session-$sequence',
+        'sequence': sequence,
+        'server_id': serverId,
+        'session_id': session,
+        'browser_session_id': '',
+        'run_id': 'chat',
+        'plan_revision': 0,
+        'authorization_revision': 0,
+        'safe_operation_phase': 'snapshot',
+        'safe_site_display': '',
+        'safe_progress_text': 'Browser state refreshed',
+        'artifact_safe_summary': null,
+        'terminal': false,
+      });
+    }
+
+    service.markDirectTransportConnectedForTest(ApplicationTransportKind.lan);
+    emit('before', 2);
+    emit('unexpected', 1);
+    await Future<void>.delayed(Duration.zero);
+    expect(sessions, ['before']);
+
+    service.disconnect();
+    service.markDirectTransportConnectedForTest(ApplicationTransportKind.lan);
+    emit('after', 1);
+    emit('before', 3);
+    await Future<void>.delayed(Duration.zero);
+    expect(sessions, ['before', 'after']);
   });
 }

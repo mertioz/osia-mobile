@@ -2892,10 +2892,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _showConversationDeleteInProgress(strings);
       return;
     }
-    if (_wsService.isConversationBusy(conv.id)) {
-      _showConversationDeleteFailure(strings);
-      return;
-    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(

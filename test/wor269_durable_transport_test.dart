@@ -159,6 +159,63 @@ void main() {
     service.dispose();
   });
 
+  test('a rejected gap request can be sent again', () async {
+    final requests = <Map<String, dynamic>>[];
+    final service = WebSocketService(
+      ip: '127.0.0.1',
+      token: 'test-token',
+      autoReconnect: false,
+      sendFrameForTest: (frame) {
+        if (frame['type'] != 'event_replay_request') return true;
+        requests.add(frame);
+        return requests.length > 1;
+      },
+    );
+    addTearDown(service.dispose);
+    service.handleIncomingFrameForTest(
+      _event('turn_accepted', 1, recovered: true),
+    );
+    service.handleIncomingFrameForTest(_event('response_chunk', 3));
+    service.handleIncomingFrameForTest(_event('response_chunk', 4));
+    service.handleIncomingFrameForTest(_event('response_chunk', 5));
+    await _flushAcks();
+
+    expect(requests, hasLength(2));
+    expect(requests.first, requests.last);
+    expect(requests.last['after_sequence'], 1);
+  });
+
+  test('a new transport can retry a gap with the same cursor', () async {
+    final requests = <Map<String, dynamic>>[];
+    final service = WebSocketService(
+      ip: '127.0.0.1',
+      token: 'test-token',
+      autoReconnect: false,
+      connectAttemptForTest: () async => true,
+      sendFrameForTest: (frame) {
+        if (frame['type'] == 'event_replay_request') requests.add(frame);
+        return true;
+      },
+    );
+    addTearDown(service.dispose);
+    await service.ensureConnected();
+    service.handleIncomingFrameForTest(
+      _event('turn_accepted', 1, recovered: true),
+    );
+    service.handleIncomingFrameForTest(_event('response_chunk', 3));
+    expect(requests, hasLength(1));
+
+    service.handleChannelDoneForTest();
+    await service.ensureConnected();
+    service.handleIncomingFrameForTest(_event('response_chunk', 3));
+    await _flushAcks();
+
+    expect(requests, hasLength(2));
+    expect(requests.first, requests.last);
+    expect(requests.last['after_sequence'], 1);
+    expect(service.isSamePendingRequest(_conversationId, _requestId), isTrue);
+  });
+
   test('event id collision across streams is rejected without ACK', () async {
     final sent = <Map<String, dynamic>>[];
     final service = _service(sent);

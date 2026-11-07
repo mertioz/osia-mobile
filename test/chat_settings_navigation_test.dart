@@ -711,6 +711,39 @@ void main() {
     },
   );
 
+  testWidgets('single delete delegates an active turn to the PC', (
+    tester,
+  ) async {
+    final harness = await _pumpChat(tester);
+    _emitConversationList(harness.service, <(String, String)>[
+      ('conv-nav', 'Navigation test'),
+      ('conv-second', 'Working conversation'),
+    ], revision: 10);
+    harness.service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'conversation_busy_changed',
+      'conversation_id': 'conv-second',
+      'busy': true,
+    });
+    await tester.pump();
+    expect(harness.service.isConversationBusy('conv-second'), isTrue);
+    await _openDrawer(tester);
+    await _confirmSingleDelete(tester, 'conv-second');
+
+    expect(harness.service.deleteRequests, ['conv-second']);
+    harness.service.handleIncomingFrameForTest(<String, dynamic>{
+      'type': 'conversation_deleted',
+      'id': 'conv-second',
+      'success': true,
+      'operation_id': harness.service.deleteOperationIds.single,
+      'snapshot_revision': 11,
+    });
+    await tester.pump();
+    expect(harness.service.isConversationBusy('conv-second'), isFalse);
+    expect(find.byKey(const ValueKey('conv_conv-second')), findsNothing);
+    expect(find.byKey(const ValueKey('conv_conv-nav')), findsOneWidget);
+    await _disposeChatHarness(tester, harness);
+  });
+
   testWidgets('single delete revision rejects stale lists without a tombstone', (
     tester,
   ) async {
