@@ -741,6 +741,7 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
   bool currentWebAvailable = false,
   bool chatSlashExtensionsAvailable = false,
   bool mouseControlAvailable = false,
+  bool contextCompactionAvailable = false,
   bool mouseControlDisabled = false,
   bool modelsAvailable = false,
   List<SlashConnectorChoice> connectors = const [],
@@ -755,6 +756,7 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
       'current_web_available' => currentWebAvailable,
       'chat_slash_extensions' => chatSlashExtensionsAvailable,
       'conversation_mouse_control' => mouseControlAvailable,
+      'conversation_context_compaction' => contextCompactionAvailable,
       'selectable_models_present' => modelsAvailable,
       _ => true,
     };

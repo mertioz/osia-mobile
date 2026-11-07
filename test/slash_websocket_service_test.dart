@@ -60,6 +60,46 @@ void main() {
     expect(current.conversationMouseControl, isTrue);
   });
 
+  test('context compaction waits for the exact PC acknowledgement', () async {
+    final frames = <Map<String, dynamic>>[];
+    final service = WebSocketService(
+      ip: '127.0.0.1',
+      token: 'test-token',
+      autoReconnect: false,
+      sendFrameForTest: (frame) {
+        frames.add(frame);
+        return true;
+      },
+    );
+    addTearDown(service.dispose);
+    final pending = service.compactConversationContext('conv-1');
+    final request = frames.single;
+    expect(request['type'], 'compact_conversation_context');
+    expect(request['conversation_id'], 'conv-1');
+    service.handleIncomingFrameForTest({
+      'type': 'conversations',
+      'operation_id': 'unrelated',
+      'compact_conversation_id': 'conv-2',
+      'compact_changed': false,
+      'items': [],
+    });
+    service.handleIncomingFrameForTest({
+      'type': 'conversations',
+      'operation_id': request['operation_id'],
+      'compact_conversation_id': 'conv-1',
+      'compact_changed': true,
+      'items': [],
+    });
+    expect(await pending, isTrue);
+    expect(ConfigData.fromJson({}).conversationContextCompaction, isFalse);
+    expect(
+      ConfigData.fromJson({
+        'conversation_context_compaction': true,
+      }).conversationContextCompaction,
+      isTrue,
+    );
+  });
+
   test('text and attachment retry payloads carry exact optional directives', () {
     final frames = <Map<String, dynamic>>[];
     final service = WebSocketService(

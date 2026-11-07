@@ -147,6 +147,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Map<String, dynamic> _slashAvailability = const {};
   bool _chatSlashExtensions = false;
   bool _mouseControlCommand = false;
+  bool _contextCompactionCommand = false;
+  String? _compactingConversationId;
   String _slashStage = '';
   bool _fullSlashReasoning = false;
   bool _specialRequestPending = false;
@@ -661,6 +663,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _slashAvailability = cfg.slashCommands;
           _chatSlashExtensions = cfg.chatSlashExtensions;
           _mouseControlCommand = cfg.conversationMouseControl;
+          _contextCompactionCommand = cfg.conversationContextCompaction;
           _fullSlashReasoning =
               cfg.settings['slash_reasoning_model_options'] == true;
           _slashSkills = cfg.skills;
@@ -4155,6 +4158,9 @@ class _ChatScreenState extends State<ChatScreen> {
       filter: query,
       chatSlashExtensionsAvailable: _chatSlashAvailable,
       mouseControlAvailable: _mouseControlAvailable,
+      contextCompactionAvailable:
+          _connState == ws.ConnectionState.connected &&
+          _contextCompactionCommand,
       mouseControlDisabled: _conversationMouseControlDisabled,
       currentWebAvailable:
           _connState == ws.ConnectionState.connected &&
@@ -4347,6 +4353,8 @@ class _ChatScreenState extends State<ChatScreen> {
           _showSlashModels();
         case 'toggle_conversation_mouse_control_v1':
           unawaited(_toggleConversationMouseControl());
+        case 'compact_conversation_context_v1':
+          unawaited(_compactContext(consumeSlashPalettePrefix(_textCtrl.text)));
         case 'select_skill_v1':
           if (!_chatSlashAvailable) return;
           _slashStage = 'skills';
@@ -4380,6 +4388,56 @@ class _ChatScreenState extends State<ChatScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(_slashLocale.startsWith('fr') ? french : english)),
     );
+  }
+
+  Future<void> _compactContext(String remaining) async {
+    if (_activeWork || _compactingConversationId != null) return;
+    if (remaining.trim().isNotEmpty ||
+        _pendingAttachments.isNotEmpty ||
+        !_slashDirectives.isEmpty) {
+      _showSlashNotice(
+        'Utilise /compact seul, sans texte ni pièce jointe.',
+        'Use /compact on its own, without text or attachments.',
+      );
+      _slashPaletteController.close();
+      return;
+    }
+    if (!_contextCompactionCommand ||
+        _connState != ws.ConnectionState.connected) {
+      _showSlashNotice(
+        'Cette commande demande une connexion à un PC OSIA compatible.',
+        'This command requires a connection to a compatible OSIA PC.',
+      );
+      return;
+    }
+    final id = _activeConversationId;
+    if (id == null || id.isEmpty) {
+      _showSlashNotice(
+        'Ouvre une discussion pour compacter son contexte.',
+        'Open a conversation to compact its context.',
+      );
+      return;
+    }
+    final epoch = _conversationSelectionEpoch;
+    _compactingConversationId = id;
+    _textCtrl.clear();
+    _slashPaletteController.close();
+    try {
+      final changed = await _wsService.compactConversationContext(id);
+      if (!mounted || _conversationSelectionEpoch != epoch) return;
+      _showSlashNotice(
+        changed ? 'Contexte compacté.' : 'Le contexte est déjà court.',
+        changed ? 'Context compacted.' : 'The context is already short.',
+      );
+    } catch (_) {
+      if (!mounted || _conversationSelectionEpoch != epoch) return;
+      _showSlashNotice(
+        'La compaction du contexte a échoué.',
+        'Context compaction failed.',
+      );
+    } finally {
+      _compactingConversationId = null;
+    }
   }
 
   Future<void> _toggleConversationMouseControl() async {
@@ -4841,6 +4899,14 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _sendText() async {
     _wsService.setClientLocale(widget.languageController.code);
     if (_activeWork || _specialRequestPending) return;
+    if (_textCtrl.text.trim().toLowerCase() == '/compact') {
+      await _compactContext('');
+      return;
+    }
+    if (_compactingConversationId != null &&
+        _compactingConversationId == _activeConversationId) {
+      return;
+    }
     final text = slashEscapedLiteralText(_textCtrl.text).trim();
     final attachments = List<PreparedAttachment>.of(_pendingAttachments);
     final hasFiles = attachments.isNotEmpty;

@@ -460,6 +460,9 @@ class ConversationsMessage extends OsiaMessage {
   final String operationId;
   final String specialConversationId;
   final String specialError;
+  final String compactConversationId;
+  final bool compactChanged;
+  final String compactError;
 
   const ConversationsMessage(
     this.conversations, {
@@ -469,6 +472,9 @@ class ConversationsMessage extends OsiaMessage {
     this.operationId = '',
     this.specialConversationId = '',
     this.specialError = '',
+    this.compactConversationId = '',
+    this.compactChanged = false,
+    this.compactError = '',
   });
 }
 
@@ -1145,6 +1151,7 @@ class ConfigData {
   final Map<String, dynamic> slashCommands;
   final bool chatSlashExtensions;
   final bool conversationMouseControl;
+  final bool conversationContextCompaction;
 
   /// Safe mirror of PC settings needed by Mobile controls (e.g. `time_format`,
   /// `heartbeat_enabled`, and `ui_theme`). Credential values are discarded
@@ -1165,6 +1172,7 @@ class ConfigData {
     this.slashCommands = const {},
     this.chatSlashExtensions = false,
     this.conversationMouseControl = false,
+    this.conversationContextCompaction = false,
     required this.settings,
   });
 
@@ -1233,6 +1241,8 @@ class ConfigData {
       slashCommands: parseSlashAvailabilityOverlay(config['slash_commands']),
       chatSlashExtensions: config['chat_slash_extensions'] == 1,
       conversationMouseControl: config['conversation_mouse_control'] == true,
+      conversationContextCompaction:
+          config['conversation_context_compaction'] == true,
       settings: settings,
     );
   }
@@ -4232,10 +4242,29 @@ class WebSocketService {
     throw StateError('special state not confirmed by PC');
   }
 
+  Future<bool> compactConversationContext(String conversationId) async {
+    final snapshot = await _requestConversationSnapshot(
+      'compact_${newClientRequestId()}',
+      {
+        'type': 'compact_conversation_context',
+        'conversation_id': conversationId,
+      },
+      timeout: const Duration(seconds: 140),
+    );
+    if (snapshot.compactConversationId != conversationId) {
+      throw StateError('context compaction identity mismatch');
+    }
+    if (snapshot.compactError.isNotEmpty) {
+      throw StateError(snapshot.compactError);
+    }
+    return snapshot.compactChanged;
+  }
+
   Future<ConversationsMessage> _requestConversationSnapshot(
     String operationId,
-    Map<String, dynamic> request,
-  ) async {
+    Map<String, dynamic> request, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
     final completer = Completer<ConversationsMessage>();
     late StreamSubscription<OsiaMessage> subscription;
     subscription = messageStream.listen((message) {
@@ -4250,7 +4279,7 @@ class WebSocketService {
       throw StateError('conversation snapshot request could not be sent');
     }
     try {
-      return await completer.future.timeout(const Duration(seconds: 5));
+      return await completer.future.timeout(timeout);
     } finally {
       await subscription.cancel();
     }
@@ -7939,6 +7968,10 @@ class WebSocketService {
                 specialConversationId: (json['special_conversation_id'] ?? '')
                     .toString(),
                 specialError: (json['special_error'] ?? '').toString(),
+                compactConversationId: (json['compact_conversation_id'] ?? '')
+                    .toString(),
+                compactChanged: json['compact_changed'] == true,
+                compactError: (json['compact_error'] ?? '').toString(),
               ),
             );
           } else {

@@ -14,6 +14,7 @@ void main() {
       'status',
       'help',
       'mousecontrol',
+      'compact',
       'skill',
       'skillcreator',
     ]);
