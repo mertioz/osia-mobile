@@ -394,7 +394,8 @@ class ProvidersScreen extends StatefulWidget {
   State<ProvidersScreen> createState() => _ProvidersScreenState();
 }
 
-class _ProvidersScreenState extends State<ProvidersScreen> {
+class _ProvidersScreenState extends State<ProvidersScreen>
+    with WidgetsBindingObserver {
   /// Latest config snapshot from the PC. `null` until the first reply lands —
   /// the screen shows a loader until then so nothing is edited "blind".
   ws.ConfigData? _config;
@@ -408,6 +409,7 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _chatGptAccount = widget.wsService.chatGptAccountState;
     // Subscribe BEFORE requesting so the (broadcast, non-replaying) reply
     // can't slip through before we're listening.
@@ -427,10 +429,19 @@ class _ProvidersScreenState extends State<ProvidersScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _configSub?.cancel();
     _connSub?.cancel();
     _chatGptSub?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        widget.wsService.state == ws.ConnectionState.connected) {
+      widget.wsService.sendGetChatGptAccount();
+    }
   }
 
   void _recoverConnection() {
@@ -1605,6 +1616,11 @@ class _ChatGptAccountCardState extends State<_ChatGptAccountCard> {
                 style: TextStyle(color: palette.textMuted, fontSize: 12.5),
               ),
             ],
+            if (_state.error == 'provider_error')
+              Text(
+                strings.chatGptError(_state.error),
+                style: TextStyle(color: palette.textMuted, fontSize: 12.5),
+              ),
             if (_state.quotaWindows.isEmpty && _state.usagePercent != null) ...[
               const SizedBox(height: 4),
               Text(
@@ -1651,6 +1667,11 @@ class _ChatGptAccountCardState extends State<_ChatGptAccountCard> {
                   FilledButton(
                     onPressed: _openLogin,
                     child: Text(strings.chatGptOpenLogin),
+                  )
+                else
+                  FilledButton(
+                    onPressed: widget.wsService.sendChatGptAccountLogin,
+                    child: Text(strings.chatGptConnect),
                   ),
                 if (_state.loginCancellable)
                   OutlinedButton(

@@ -283,7 +283,7 @@ void main() {
       final pubspec = _read('pubspec.yaml');
       final workflow = _read('codemagic.yaml');
 
-      expect(pubspec, contains('version: 0.9.52+28'));
+      expect(pubspec, contains('version: 0.9.53+30'));
       expect(pubspec, isNot(contains('version: 1.0.1+2')));
       final candidateStart = workflow.indexOf('  ios-release-candidate:\n');
       final internalStart = workflow.indexOf('  ios-testflight-internal:\n');

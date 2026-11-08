@@ -17,6 +17,7 @@ class _AccountWebSocketService extends ws.WebSocketService {
   int loginCalls = 0;
   int cancelCalls = 0;
   int logoutCalls = 0;
+  int accountReads = 0;
   final writes = <(String, Object?)>[];
   final ws.ChatGptAccountState cachedAccount;
 
@@ -48,7 +49,7 @@ class _AccountWebSocketService extends ws.WebSocketService {
   void sendGetApiKeys() {}
 
   @override
-  void sendGetChatGptAccount() {}
+  void sendGetChatGptAccount() => accountReads++;
 
   @override
   void sendChatGptAccountLogin() => loginCalls++;
@@ -247,6 +248,19 @@ void main() {
       expect(find.text('ABCD-EFGH'), findsOneWidget);
       expect(find.text(strings.chatGptOpenLogin), findsOneWidget);
       expect(find.text(strings.cancel), findsOneWidget);
+      final readsBeforeBrowser = service.accountReads;
+      for (final lifecycle in [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+        AppLifecycleState.hidden,
+        AppLifecycleState.inactive,
+        AppLifecycleState.resumed,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(lifecycle);
+      }
+      await tester.pump();
+      expect(service.accountReads, readsBeforeBrowser + 1);
       await tester.tap(find.text(strings.cancel));
       expect(service.cancelCalls, 1);
 
