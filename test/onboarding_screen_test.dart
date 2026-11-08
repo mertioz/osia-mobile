@@ -306,7 +306,6 @@ void main() {
       final saved = GuideProgress.tryDecode(await storage.getGuideState())!;
       expect(saved.finished, isTrue);
       expect(saved.outcome, 'completed');
-      expect(saved.essentialCompleted, isEmpty);
       expect(closed, 1);
       expect(
         (await GuideProgressService(storage).prepareLaunch()).showAutomatically,

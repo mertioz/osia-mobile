@@ -224,48 +224,20 @@ void main() {
     );
   });
 
-  test('Codemagic excludes only host-sensitive guide goldens', () {
+  test('Codemagic runs the Flutter suite before signing', () {
     final workflow = _read('codemagic.yaml');
-    final guideTests = _read('test/guide_asset_capture_test.dart');
-    final testStep = RegExp(
+    final testSteps = RegExp(
       r'- name: Run Flutter tests\n\s+script:\s*([^\n]+)',
-    ).firstMatch(workflow);
-
-    expect(testStep, isNotNull);
-    final testCommand = testStep!.group(1)!.trim();
-    expect(testCommand, 'flutter test --exclude-tags guide-golden');
-    final excludedTagMatches = RegExp(
-      r'--exclude-tags(?:=|\s+)([^\s]+)',
     ).allMatches(workflow);
-    expect(excludedTagMatches, hasLength(2));
-    expect(excludedTagMatches.map((match) => match.group(1)).toSet(), <String?>{
-      'guide-golden',
-    });
+    expect(testSteps.map((step) => step.group(1)!.trim()), [
+      'flutter test',
+      'flutter test',
+    ]);
+    expect(workflow, isNot(contains('--exclude-tags')));
     expect(workflow, isNot(contains('|| true')));
     expect(workflow, isNot(contains('continue_on_error')));
     expect(workflow, isNot(contains('ignore_failure')));
     expect(workflow, isNot(contains('allow_failure')));
-
-    expect(guideTests, contains("const _guideGoldenTag = 'guide-golden';"));
-    expect(
-      RegExp(r'tags:\s*_guideGoldenTag').allMatches(guideTests),
-      hasLength(3),
-    );
-    expect(RegExp(r'testWidgets\(').allMatches(guideTests), hasLength(3));
-    expect(RegExp(r'matchesGoldenFile\(').allMatches(guideTests), hasLength(3));
-    expect(guideTests, isNot(contains('skip:')));
-    expect(guideTests, isNot(contains('Platform.isMacOS')));
-    final testConfig = File('dart_test.yaml');
-    expect(testConfig.existsSync(), isTrue);
-    final testConfiguration = _read(testConfig.path);
-    expect(testConfiguration, 'tags:\n  guide-golden:\n');
-    expect(testConfiguration, isNot(contains('skip')));
-    expect(
-      testConfiguration,
-      isNot(
-        matches(RegExp(r'exclude[_-]tags?:.*guide-golden', multiLine: true)),
-      ),
-    );
 
     final tests = workflow.indexOf('- name: Run Flutter tests');
     final initialize = workflow.indexOf('- name: Initialize signing keychain');
@@ -302,7 +274,7 @@ void main() {
       final pubspec = _read('pubspec.yaml');
       final workflow = _read('codemagic.yaml');
 
-      expect(pubspec, contains('version: 0.9.51+24'));
+      expect(pubspec, contains('version: 0.9.52+28'));
       expect(pubspec, isNot(contains('version: 1.0.1+2')));
       final candidateStart = workflow.indexOf('  ios-release-candidate:\n');
       final internalStart = workflow.indexOf('  ios-testflight-internal:\n');

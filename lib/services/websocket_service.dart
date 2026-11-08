@@ -613,6 +613,9 @@ class OsiaModel {
   final List<OsiaModelReasoningOption> reasoningOptions;
   final String selectedReasoning;
 
+  bool get visibleInPicker =>
+      selectable || (provider == 'ollama' && availability == 'installed');
+
   const OsiaModel({
     required this.id,
     required this.label,
@@ -734,7 +737,7 @@ class ModelProviderCatalogueEntry {
               .where(
                 (model) =>
                     model.id.trim().isNotEmpty &&
-                    model.selectable &&
+                    model.visibleInPicker &&
                     seen.add('${model.provider ?? id}\u0000${model.id}'),
               )
               .toList()
@@ -871,6 +874,13 @@ class ModelsListMessage extends OsiaMessage {
 /// This mirrors the backend WOR-77 schema additively. Old servers may omit the
 /// field entirely; in that case mobile treats reasoning as provider defaults.
 class OsiaReasoningConfig {
+  /// Mirrors the PC's provider-qualified overrides for shared model IDs.
+  static String modelKey(String? provider, String modelId) =>
+      modelId.isNotEmpty &&
+          (provider == 'chatgpt_account' || provider == 'openrouter')
+      ? '$provider:$modelId'
+      : modelId;
+
   // Match PC config normalization. The canonical catalogue and server own
   // acceptance for the selected model; transport must retain new option IDs.
   static final _levelSyntax = RegExp(
@@ -8075,7 +8085,7 @@ class WebSocketService {
                     .where(
                       (model) =>
                           model.id.trim().isNotEmpty &&
-                          model.selectable &&
+                          model.visibleInPicker &&
                           seenModels.add(
                             '${model.provider ?? ''}\u0000${model.id}',
                           ),

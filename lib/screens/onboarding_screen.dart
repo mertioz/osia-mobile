@@ -10,18 +10,21 @@ import '../services/storage_service.dart';
 import '../theme.dart';
 import '../widgets/accent_logo.dart';
 
-/// First-launch presentation, using the existing launch claim and storage.
-/// Detailed guides remain available from Settings without curriculum changes.
+/// First-launch presentation, also available from Settings.
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({
     super.key,
-    required this.storage,
-    required this.initialProgress,
+    required StorageService this.storage,
+    required GuideProgress this.initialProgress,
     required this.onClosed,
   });
 
-  final StorageService storage;
-  final GuideProgress initialProgress;
+  const OnboardingScreen.replay({super.key, required this.onClosed})
+    : storage = null,
+      initialProgress = null;
+
+  final StorageService? storage;
+  final GuideProgress? initialProgress;
   final VoidCallback onClosed;
 
   @override
@@ -45,13 +48,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Future<void> _close({bool completed = false}) async {
     if (_closing) return;
     setState(() => _closing = true);
-    final service = GuideProgressService(widget.storage);
-    // Do not mark the full essential manual as read after this introduction.
-    final progress = completed
-        ? widget.initialProgress.copyWith(finished: true, outcome: 'completed')
-        : widget.initialProgress;
     try {
-      await service.markClosed(progress);
+      final storage = widget.storage;
+      final progress = widget.initialProgress;
+      if (storage != null && progress != null) {
+        await GuideProgressService(storage).markClosed(
+          completed
+              ? progress.copyWith(finished: true, outcome: 'completed')
+              : progress,
+        );
+      }
     } catch (_) {
       // The first-launch claim already prevents automatic replay.
     } finally {

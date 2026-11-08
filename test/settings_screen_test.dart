@@ -587,7 +587,7 @@ void main() {
     },
   );
 
-  testWidgets('Help opens the offline guide without changing app settings', (
+  testWidgets('Help replays the introduction without changing app settings', (
     tester,
   ) async {
     final harness = await pumpSettings(tester, notificationsEnabled: true);
@@ -595,6 +595,7 @@ void main() {
     await harness.storage.setThemeKey('rose');
     await harness.storage.setAutoTts(true);
     await harness.storage.setSelectedModel('demo-provider/demo-model');
+    final savedGuideState = await harness.storage.getGuideState();
     final settingsMessageCount = harness.wsService.sentTypes.length;
 
     await tester.scrollUntilVisible(
@@ -604,10 +605,10 @@ void main() {
     await tester.tap(find.byKey(const Key('show-mobile-guide')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.byKey(const Key('guide-screen')), findsOneWidget);
-    expect(find.text('OSIA Mobile guide'), findsOneWidget);
+    expect(find.byKey(const Key('onboarding-screen')), findsOneWidget);
+    expect(find.byKey(const Key('onboarding-progress')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('guide-close')));
+    await tester.tap(find.byKey(const Key('onboarding-close')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.byType(SettingsScreen), findsOneWidget);
@@ -615,6 +616,7 @@ void main() {
     expect(await harness.storage.getThemeKey(), 'rose');
     expect(await harness.storage.getAutoTts(), isTrue);
     expect(await harness.storage.getNotificationsEnabled(), isTrue);
+    expect(await harness.storage.getGuideState(), savedGuideState);
     expect(
       await harness.storage.getSelectedModel(),
       'demo-provider/demo-model',

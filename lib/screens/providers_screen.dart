@@ -102,7 +102,8 @@ const Map<String, String> _kProviderNames = {
   'xai': 'Grok / xAI',
   'groq': 'GroqCloud',
   'mistral': 'Mistral',
-  'ollama': 'Local (Ollama)',
+  'openrouter': 'OpenRouter',
+  'ollama': 'Local (Ollama / LM Studio)',
 };
 
 /// Resolve a model id to its provider using the PC catalogue, with a conservative name fallback for older snapshots.
@@ -171,6 +172,7 @@ const String _kUrlDeepSeek = 'https://platform.deepseek.com/api_keys';
 const String _kUrlXai = 'https://console.x.ai';
 const String _kUrlGroq = 'https://console.groq.com/keys';
 const String _kUrlMistral = 'https://console.mistral.ai/api-keys';
+const String _kUrlOpenRouter = 'https://openrouter.ai/settings/keys';
 bool get _liveApiAvailable => false;
 
 /// The providers shown under each category.
@@ -191,7 +193,8 @@ List<ProviderEntry> providersFor(ProviderCategory category) {
         ProviderEntry('Grok / xAI', 'xai', _kUrlXai),
         ProviderEntry('GroqCloud', 'groq', _kUrlGroq),
         ProviderEntry('Mistral', 'mistral', _kUrlMistral),
-        ProviderEntry('Ollama', null, null),
+        ProviderEntry('OpenRouter', 'openrouter', _kUrlOpenRouter),
+        ProviderEntry('Ollama / LM Studio', null, null),
       ];
     case ProviderCategory.tts:
       return const [

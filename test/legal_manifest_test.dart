@@ -74,7 +74,7 @@ void main() {
     expect(sha256.convert(bytes).toString(), currentLegalManifest.contentSha256);
     expect(
       currentLegalManifest.contentSha256,
-      '0bbe9ce0744e647a5ed840f2c1b824bbaf3bdf519847f2bf16b9d20bfb1a9670',
+      'bc7cf249228bf82d0cd54ef5aa38d311a3b9e14778e2a990e35af2879ac8dd94',
     );
   });
 
@@ -103,10 +103,10 @@ void main() {
             .allMatches(legalNotice.replaceAll(RegExp(r'\n-\s+'), ' '))
             .map((match) => match.group(0))
             .toSet(),
-        {'69008 Lyon', locale == 'en' ? '94107 USA' : '94107 États-Unis'},
+        {'69006 Lyon', locale == 'en' ? '94107 USA' : '94107 États-Unis'},
       );
-      expect(legalNotice, contains('86 rue de Montagny'));
-      expect(legalNotice, contains('69008 Lyon'));
+      expect(legalNotice, contains('30 Avenue Maréchal Foch, Bureau 3'));
+      expect(legalNotice, contains('69006 Lyon'));
       expect(
         legalNotice,
         contains(locale == 'en'
@@ -117,8 +117,8 @@ void main() {
         final markdown = (pages[key] as Map<String, dynamic>)['markdown'] as String;
         expect(markdown, isNot(contains('07 59 54 40 53')));
         expect(markdown, isNot(contains('+33 7 59 54 40 53')));
-        expect(markdown, isNot(contains('86 rue de Montagny')));
-        expect(markdown, isNot(contains('69008 Lyon')));
+        expect(markdown, isNot(contains('30 Avenue Maréchal Foch, Bureau 3')));
+        expect(markdown, isNot(contains('69006 Lyon')));
       }
     }
   });

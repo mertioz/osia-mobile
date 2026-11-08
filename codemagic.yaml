@@ -34,7 +34,7 @@ workflows:
       - name: Analyze Flutter source
         script: flutter analyze
       - name: Run Flutter tests
-        script: flutter test --exclude-tags guide-golden
+        script: flutter test
       - name: Install CocoaPods dependencies
         script: |
           set -e
@@ -144,7 +144,7 @@ workflows:
       - name: Analyze Flutter source
         script: flutter analyze
       - name: Run Flutter tests
-        script: flutter test --exclude-tags guide-golden
+        script: flutter test
       - name: Install CocoaPods dependencies
         script: |
           set -e

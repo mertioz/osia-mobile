@@ -15,7 +15,7 @@ import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
 import 'legal_screen.dart';
-import 'guide_screen.dart';
+import 'onboarding_screen.dart';
 import 'memory_screen.dart';
 import 'providers_screen.dart';
 
@@ -214,14 +214,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ).push(slideFadeRoute(MemoryScreen(wsService: widget.wsService)));
   }
 
-  void _openGuide() {
-    Navigator.of(context).push(
-      slideFadeRoute(
-        GuideScreen(
-          storage: widget.storage,
-          languageCode: widget.languageController.code,
-        ),
-      ),
+  void _openIntroduction() {
+    final navigator = Navigator.of(context);
+    navigator.push(
+      slideFadeRoute(OnboardingScreen.replay(onClosed: () => navigator.pop())),
     );
   }
 
@@ -556,12 +552,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   key: const Key('show-mobile-guide'),
                   icon: Icons.menu_book_rounded,
                   title: widget.languageController.code == 'fr'
-                      ? 'Revoir le guide OSIA Mobile'
-                      : 'Show OSIA Mobile guide',
-                  subtitle: widget.languageController.code == 'fr'
-                      ? 'Hors ligne · progression conservée'
-                      : 'Offline · progress preserved',
-                  onTap: _openGuide,
+                      ? 'Revoir la présentation'
+                      : 'Replay the introduction',
+                  onTap: _openIntroduction,
                   palette: palette,
                 ),
               ),

@@ -74,8 +74,6 @@ class OsiaStrings {
   final String conversations;
   final String newChat;
   final String noConversationsYet;
-  final String sayHello;
-  final String typeMessageOrMic;
   final String messageHint;
   final String deleteConversationTitle;
   final String deleteConversationBodyTemplate; // {title}
@@ -489,8 +487,6 @@ class OsiaStrings {
     required this.conversations,
     required this.newChat,
     required this.noConversationsYet,
-    required this.sayHello,
-    required this.typeMessageOrMic,
     required this.messageHint,
     required this.deleteConversationTitle,
     required this.deleteConversationBodyTemplate,
@@ -824,54 +820,6 @@ class OsiaStrings {
     required this.themeGreen,
   });
 
-  // ── Guide shell (EN/FR canonical, English fallback elsewhere) ──
-  String get guideTitle =>
-      languageCode == 'fr' ? 'Guide OSIA Mobile' : 'OSIA Mobile guide';
-  String get guideClose =>
-      languageCode == 'fr' ? 'Fermer le guide' : 'Close guide';
-  String get guideChooseJourney => languageCode == 'fr'
-      ? 'Choisissez votre parcours'
-      : 'Choose your journey';
-  String get guideHomeIntro => languageCode == 'fr'
-      ? 'Commencez simplement ou approfondissez un sujet à votre rythme.'
-      : 'Start simply or explore one subject in depth at your own pace.';
-  String get guideContents =>
-      languageCode == 'fr' ? 'Table des matières' : 'Table of contents';
-  String get guideHome =>
-      languageCode == 'fr' ? 'Accueil du guide' : 'Guide home';
-  String get guideSwipeHint => languageCode == 'fr'
-      ? 'Faites glisser horizontalement pour continuer.'
-      : 'Swipe horizontally to continue.';
-  String get guideResume => languageCode == 'fr' ? 'Reprendre' : 'Resume';
-  String get guideViewJourney =>
-      languageCode == 'fr' ? 'Voir le parcours' : 'View journey';
-  String get guideSlides =>
-      languageCode == 'fr' ? 'Écrans du guide' : 'Guide slides';
-  String get guideCategories =>
-      languageCode == 'fr' ? 'Catégories du guide' : 'Guide categories';
-
-  String guideSlideProgress(int current, int total) => languageCode == 'fr'
-      ? 'Écran $current sur $total'
-      : 'Slide $current of $total';
-
-  String guideProgressLabel(int current, int total) => languageCode == 'fr'
-      ? 'Progression : écran $current sur $total'
-      : 'Progress: slide $current of $total';
-
-  String guideSlideAnnouncement(int current, int total, String title) =>
-      languageCode == 'fr'
-      ? 'Écran $current sur $total : $title'
-      : 'Slide $current of $total: $title';
-
-  String guideCompletedProgress(int completed, int total) =>
-      languageCode == 'fr'
-      ? '$completed sur $total écrans terminés'
-      : '$completed of $total slides completed';
-
-  String guideCompactProgress(int completed, int total) => languageCode == 'fr'
-      ? '$completed / $total écrans'
-      : '$completed / $total slides';
-
   String get supportOsia => switch (languageCode) {
     'fr' => 'Soutenir OSIA (facultatif)',
     'zh' => '支持 OSIA（可选）',
@@ -888,6 +836,15 @@ class OsiaStrings {
     'de' => 'PC-Einstellungen nicht verfügbar. Bitte erneut versuchen.',
     'es' => 'Ajustes del PC no disponibles. Inténtalo de nuevo.',
     _ => 'PC settings are unavailable. Please retry.',
+  };
+
+  String get modelUnavailableOnPc => switch (languageCode) {
+    'fr' => 'Indisponible sur le PC',
+    'zh' => '电脑端不可用',
+    'ja' => 'PC で利用できません',
+    'de' => 'Auf dem PC nicht verfügbar',
+    'es' => 'No disponible en el PC',
+    _ => 'Unavailable on the PC',
   };
 
   // ── Parameterized helpers ──
@@ -2171,8 +2128,6 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   conversations: 'Conversations',
   newChat: 'New chat',
   noConversationsYet: 'No conversations yet',
-  sayHello: 'Say hello to OSIA',
-  typeMessageOrMic: 'Type a message or use the mic.',
   messageHint: 'Message OSIA…',
   deleteConversationTitle: 'Delete conversation?',
   deleteConversationBodyTemplate: '"{title}" will be permanently deleted.',
@@ -2586,8 +2541,6 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   conversations: 'Conversations',
   newChat: 'Nouveau chat',
   noConversationsYet: 'Aucune conversation pour le moment',
-  sayHello: 'Dites bonjour à OSIA',
-  typeMessageOrMic: 'Tapez un message ou utilisez le micro.',
   messageHint: 'Message OSIA…',
   deleteConversationTitle: 'Supprimer la conversation ?',
   deleteConversationBodyTemplate: '« {title} » sera supprimée définitivement.',
@@ -2998,8 +2951,6 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   conversations: '对话',
   newChat: '新对话',
   noConversationsYet: '暂无对话',
-  sayHello: '向 OSIA 打个招呼',
-  typeMessageOrMic: '输入消息或使用麦克风。',
   messageHint: '发送给 OSIA…',
   deleteConversationTitle: '删除对话？',
   deleteConversationBodyTemplate: '"{title}" 将被永久删除。',
@@ -3383,8 +3334,6 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   conversations: '会話',
   newChat: '新しいチャット',
   noConversationsYet: 'まだ会話がありません',
-  sayHello: 'OSIA に挨拶しましょう',
-  typeMessageOrMic: 'メッセージを入力するか、マイクを使用してください。',
   messageHint: 'OSIA にメッセージ…',
   deleteConversationTitle: '会話を削除しますか？',
   deleteConversationBodyTemplate: '「{title}」は完全に削除されます。',
@@ -3787,9 +3736,6 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   conversations: 'Unterhaltungen',
   newChat: 'Neuer Chat',
   noConversationsYet: 'Noch keine Unterhaltungen',
-  sayHello: 'Sag Hallo zu OSIA',
-  typeMessageOrMic:
-      'Geben Sie eine Nachricht ein oder nutzen Sie das Mikrofon.',
   messageHint: 'Nachricht an OSIA…',
   deleteConversationTitle: 'Unterhaltung löschen?',
   deleteConversationBodyTemplate: '„{title}" wird dauerhaft gelöscht.',
@@ -4215,8 +4161,6 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   conversations: 'Conversaciones',
   newChat: 'Nuevo chat',
   noConversationsYet: 'Aún no hay conversaciones',
-  sayHello: 'Saluda a OSIA',
-  typeMessageOrMic: 'Escribe un mensaje o usa el micrófono.',
   messageHint: 'Mensaje a OSIA…',
   deleteConversationTitle: '¿Eliminar conversación?',
   deleteConversationBodyTemplate: '«{title}» se eliminará permanentemente.',

@@ -57,7 +57,7 @@ const currentLegalManifest = OsiaLegalManifest(
   materialChange: true,
   termsAcceptanceRequired: false,
   privacyNoticeRequired: false,
-  contentSha256: "0bbe9ce0744e647a5ed840f2c1b824bbaf3bdf519847f2bf16b9d20bfb1a9670",
+  contentSha256: "bc7cf249228bf82d0cd54ef5aa38d311a3b9e14778e2a990e35af2879ac8dd94",
   termsUrls: {
     "en": "https://osia.space/en/legal/terms",
     "fr": "https://osia.space/legal/terms",

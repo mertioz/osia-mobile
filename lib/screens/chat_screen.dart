@@ -20,7 +20,6 @@ import '../services/relay_service.dart';
 import '../services/storage_service.dart';
 import '../services/websocket_service.dart' as ws;
 import '../theme.dart';
-import '../widgets/accent_logo.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/content_report_dialog.dart';
 import '../widgets/connection_badge.dart';
@@ -4713,7 +4712,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     final provider = (_selectedProvider ?? '').trim().toLowerCase();
     final modelId = (_selectedModel ?? '').trim();
-    final key = provider == 'chatgpt_account' ? '$provider:$modelId' : modelId;
+    final key = ws.OsiaReasoningConfig.modelKey(provider, modelId);
     return _reasoning.models[key] ??
         _reasoning.providers[provider] ??
         _reasoning.defaultLevel;
@@ -4734,7 +4733,7 @@ class _ChatScreenState extends State<ChatScreen> {
           'ollama': 'Ollama',
           'lmstudio': 'LM Studio',
           'openrouter': 'OpenRouter',
-          'xai': 'xAI',
+          'xai': 'Grok / xAI',
           'local': 'Local',
         }[provider ?? _selectedProvider] ??
         provider ??
@@ -5990,9 +5989,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     final provider = (model.provider ?? '').trim();
     if (provider.isEmpty) return;
-    final key = provider == 'chatgpt_account'
-        ? 'chatgpt_account:${model.id}'
-        : model.id;
+    final key = ws.OsiaReasoningConfig.modelKey(provider, model.id);
     final next = _reasoning.withModelOverride(key, optionId);
     setState(() => _reasoning = next);
     _pushModelSelectorReasoning(next);
@@ -6186,7 +6183,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         !_thinking &&
                         !_noResponse &&
                         _liveExecutionTrace == null
-                    ? _buildEmptyState(palette, strings)
+                    ? const SizedBox.expand()
                     : ListView.builder(
                         controller: _scrollCtrl,
                         // Rubber-band overscroll on both iOS and Android;
@@ -6406,36 +6403,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     ? _cancelAttachmentTransfer
                     : null,
               ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptyState(OsiaPalette palette, OsiaStrings strings) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // OSIA logo, shown directly — no disc, no glow. Centred square asset.
-          SizedBox(width: 64, height: 64, child: const AccentLogo()),
-          const SizedBox(height: 16),
-          Text(
-            strings.sayHello,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
-              color: palette.textPrimary.withValues(alpha: 0.85),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            strings.typeMessageOrMic,
-            style: TextStyle(
-              fontSize: 13,
-              color: palette.textMuted.withValues(alpha: 0.8),
             ),
           ),
         ],

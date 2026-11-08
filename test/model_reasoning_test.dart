@@ -55,6 +55,23 @@ void main() {
 
   group('OsiaReasoningConfig', () {
     test(
+      'keeps OpenRouter reasoning separate from the same model ID on Groq',
+      () {
+        const id = 'openai/gpt-oss-120b';
+        final config = const ws.OsiaReasoningConfig()
+            .withModelOverride(
+              ws.OsiaReasoningConfig.modelKey('groq', id),
+              'low',
+            )
+            .withModelOverride(
+              ws.OsiaReasoningConfig.modelKey('openrouter', id),
+              'high',
+            );
+        expect(config.models, {id: 'low', 'openrouter:$id': 'high'});
+      },
+    );
+
+    test(
       'retains runtime-defined option IDs through config and local edits',
       () {
         final config = ws.OsiaReasoningConfig.fromJson({

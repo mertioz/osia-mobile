@@ -153,7 +153,15 @@ class _ModelSelectorSheetState extends State<_ModelSelectorSheet> {
       if (!mounted) return;
       final selected = _pendingModelSelection;
       _pendingModelSelection = null;
-      if (selected == null) return;
+      if (selected == null ||
+          !widget.models.any(
+            (model) =>
+                model.id == selected.id &&
+                model.provider == selected.provider &&
+                model.selectable,
+          )) {
+        return;
+      }
       widget.onModelSelected?.call(selected);
       Navigator.of(context).pop(selected.id);
     });
@@ -333,7 +341,7 @@ class _ModelSelectorSheetState extends State<_ModelSelectorSheet> {
           reasoning: widget.reasoning,
           reasoningReady: widget.reasoningReady,
           onReasoningChanged: widget.onReasoningChanged,
-          onTap: () => _queueModelSelection(m),
+          onTap: m.selectable ? () => _queueModelSelection(m) : null,
         );
       },
     );
@@ -408,6 +416,7 @@ class _ModelSelectorSheetState extends State<_ModelSelectorSheet> {
     'ollama': 'LOCAL',
     'deepseek': 'DEEPSEEK',
     'mistral': 'MISTRAL',
+    'openrouter': 'OPENROUTER',
     'chatgpt_account': 'CHATGPT',
   };
 
@@ -425,7 +434,7 @@ class _ModelTile extends StatelessWidget {
   final ws.OsiaReasoningConfig reasoning;
   final bool reasoningReady;
   final ModelReasoningChanged? onReasoningChanged;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const _ModelTile({
     super.key,
@@ -446,6 +455,7 @@ class _ModelTile extends StatelessWidget {
     final reasoningOption = _findReasoningOption(reasoningOptions, reasoningId);
     final showChip = reasoningOption != null && !reasoningOption.isDefault;
     final showReasoningControl =
+        model.selectable &&
         reasoningReady &&
         reasoningOptions.isNotEmpty &&
         onReasoningChanged != null;
@@ -483,10 +493,22 @@ class _ModelTile extends StatelessWidget {
                         fontWeight: isActive
                             ? FontWeight.w600
                             : FontWeight.w500,
-                        color: isActive ? palette.accent : palette.textPrimary,
+                        color: !model.selectable
+                            ? palette.textMuted
+                            : isActive
+                            ? palette.accent
+                            : palette.textPrimary,
                       ),
                     ),
-                    if (model.description != null &&
+                    if (!model.selectable)
+                      Text(
+                        strings.modelUnavailableOnPc,
+                        style: TextStyle(
+                          color: palette.textMuted,
+                          fontSize: 11.5,
+                        ),
+                      )
+                    else if (model.description != null &&
                         model.description!.isNotEmpty) ...[
                       const SizedBox(height: 3),
                       Text(
@@ -499,7 +521,7 @@ class _ModelTile extends StatelessWidget {
                         ),
                       ),
                     ],
-                    if (showChip) ...[
+                    if (model.selectable && showChip) ...[
                       const SizedBox(height: 6),
                       _ReasoningChip(
                         label:
@@ -541,13 +563,13 @@ class _ModelTile extends StatelessWidget {
         ),
       ),
     );
-    return Motion.reduced(context) ? tile : PressableScale(child: tile);
+    return onTap == null || Motion.reduced(context)
+        ? tile
+        : PressableScale(child: tile);
   }
 
   String _selectedReasoningId(List<ModelReasoningOption> options) {
-    final key = model.provider == 'chatgpt_account'
-        ? 'chatgpt_account:${model.id}'
-        : model.id;
+    final key = ws.OsiaReasoningConfig.modelKey(model.provider, model.id);
     final selected =
         (model.reasoningOptions.isNotEmpty
                 ? model.selectedReasoning

@@ -14,6 +14,7 @@ import 'package:osia_mobile/services/execution_trace.dart';
 import 'package:osia_mobile/services/storage_service.dart';
 import 'package:osia_mobile/services/websocket_service.dart' as ws;
 import 'package:osia_mobile/theme.dart';
+import 'package:osia_mobile/widgets/accent_logo.dart';
 import 'package:osia_mobile/widgets/chat_bubble.dart';
 import 'package:osia_mobile/widgets/execution_trace_block.dart';
 import 'package:osia_mobile/widgets/thinking_orbs.dart';
@@ -497,6 +498,17 @@ void main() {
     FlutterSecureStorage.setMockInitialValues(<String, String>{
       'osia_token': 'token',
     });
+  });
+
+  testWidgets('an empty discussion only leaves the composer available', (
+    tester,
+  ) async {
+    final harness = await _pumpChat(tester);
+    expect(find.text('Say hello to OSIA'), findsNothing);
+    expect(find.text('Type a message or use the mic.'), findsNothing);
+    expect(find.byType(AccentLogo), findsNothing);
+    expect(find.byType(TextField), findsOneWidget);
+    await _disposeChatHarness(tester, harness);
   });
 
   testWidgets(

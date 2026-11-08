@@ -67,6 +67,12 @@ void main() {
                     'displayName': 'Duplicate',
                     'providerId': 'ollama',
                   },
+                  {
+                    'id': 'lmstudio/model',
+                    'providerId': 'ollama',
+                    'availability': 'installed',
+                    'selectable': false,
+                  },
                   {'id': '', 'providerId': 'ollama'},
                 ],
               },
@@ -87,7 +93,11 @@ void main() {
         final message = await messageFuture;
         expect(message.providers, hasLength(1));
         expect(message.providers.single.id, 'ollama');
-        expect(message.models.map((model) => model.id), ['llama3']);
+        expect(message.models.map((model) => model.id), [
+          'llama3',
+          'lmstudio/model',
+        ]);
+        expect(message.models.last.selectable, isFalse);
         expect(message.currentProvider, 'ollama');
       },
     );
@@ -359,6 +369,12 @@ void main() {
             ws.OsiaModel(id: 'gpt-a', label: 'GPT A', provider: 'openai'),
             ws.OsiaModel(id: 'gpt-b', label: 'GPT B', provider: 'openai'),
             ws.OsiaModel(id: 'llama', label: 'Llama', provider: 'ollama'),
+            ws.OsiaModel(
+              id: 'lmstudio/model',
+              label: 'Installed in LM Studio',
+              provider: 'ollama',
+              selectable: false,
+            ),
           ],
         ),
       );
@@ -399,6 +415,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('model:ollama:llama')), findsOneWidget);
       expect(find.byKey(const ValueKey('model:openai:gpt-a')), findsNothing);
+      expect(find.text('Unavailable on the PC'), findsOneWidget);
+      await tester.tap(find.text('Installed in LM Studio'));
+      await tester.pumpAndSettle();
+      expect(selected, isEmpty);
 
       await tester.tap(find.byKey(const ValueKey('models-back')));
       await tester.pumpAndSettle();
