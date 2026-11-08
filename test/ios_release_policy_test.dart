@@ -238,6 +238,15 @@ void main() {
     expect(workflow, isNot(contains('continue_on_error')));
     expect(workflow, isNot(contains('ignore_failure')));
     expect(workflow, isNot(contains('allow_failure')));
+    expect(
+      RegExp(
+        r'- name: Run Flutter tests\n\s+script: flutter test\n'
+        r'(?:\s*#[^\n]*\n)*\s*- name: Exclude integration-test plugin[^\n]*\n'
+        r'\s+script: flutter pub remove integration_test --offline\n'
+        r'\s+- name: Install CocoaPods dependencies',
+      ).allMatches(workflow).length,
+      2,
+    );
 
     final tests = workflow.indexOf('- name: Run Flutter tests');
     final initialize = workflow.indexOf('- name: Initialize signing keychain');

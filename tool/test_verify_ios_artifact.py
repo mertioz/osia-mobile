@@ -2,7 +2,7 @@ import unittest
 from io import BytesIO
 from zipfile import ZipFile
 from datetime import datetime, timedelta, timezone
-from verify_ios_artifact import verify_metadata, verify_no_location_api, source_product_version
+from verify_ios_artifact import source_product_version, verify_metadata, verify_native_payload
 
 
 class IosArtifactMetadataTests(unittest.TestCase):
@@ -15,7 +15,7 @@ class IosArtifactMetadataTests(unittest.TestCase):
                     with ZipFile(stream, "w") as archive:
                         archive.writestr(path, bytes.fromhex("cffaedfe") + marker)
                     with ZipFile(stream) as archive, self.assertRaises(ValueError):
-                        verify_no_location_api(archive)
+                        verify_native_payload(archive)
 
     def test_checks_native_code_not_resource_text_and_rejects_empty_bundle(self):
         stream = BytesIO()
@@ -23,12 +23,27 @@ class IosArtifactMetadataTests(unittest.TestCase):
             archive.writestr("Payload/Runner.app/Runner", bytes.fromhex("cffaedfe") + b"safe native code")
             archive.writestr("Payload/Runner.app/help.txt", b"requestWhenInUseAuthorization")
         with ZipFile(stream) as archive:
-            self.assertEqual(verify_no_location_api(archive), ["Payload/Runner.app/Runner"])
+            self.assertEqual(verify_native_payload(archive), ["Payload/Runner.app/Runner"])
         stream = BytesIO()
         with ZipFile(stream, "w") as archive:
             archive.writestr("Payload/Runner.app/help.txt", b"no executable")
         with ZipFile(stream) as archive, self.assertRaises(ValueError):
-            verify_no_location_api(archive)
+            verify_native_payload(archive)
+
+    def test_rejects_embedded_or_statically_linked_integration_test_plugin(self):
+        cases = {
+            "Payload/Runner.app/Frameworks/integration_test.framework/Info.plist": b"plist",
+            "Payload/Runner.app/Runner": (
+                bytes.fromhex("cffaedfe") + b"plugins.flutter.io/integration_test"
+            ),
+        }
+        for path, data in cases.items():
+            with self.subTest(path=path):
+                stream = BytesIO()
+                with ZipFile(stream, "w") as archive:
+                    archive.writestr(path, data)
+                with ZipFile(stream) as archive, self.assertRaisesRegex(ValueError, "[Ii]ntegration-test"):
+                    verify_native_payload(archive)
 
     def test_source_version_advances_without_weakening_identity_checks(self):
         self.assertEqual(source_product_version(

@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 from zipfile import ZipFile
 
 
-def verify_no_location_api(bundle: ZipFile) -> list[str]:
-    """Reject unused native location code, including statically linked SDKs.
+def verify_native_payload(bundle: ZipFile) -> list[str]:
+    """Reject unused location code and native integration-test instrumentation.
 
     Build22 passed source-only checks but Apple's ITMS-90683 scanner found
     DKCamera's location API in Runner. Inspect every shipped Mach-O executable,
@@ -27,6 +27,8 @@ def verify_no_location_api(bundle: ZipFile) -> list[str]:
     for name in bundle.namelist():
         if not name.startswith("Payload/") or name.endswith("/"):
             continue
+        if "/integration_test.framework/" in name:
+            raise ValueError(f"Integration-test framework remains in {name}")
         with bundle.open(name) as entry:
             header = entry.read(4)
             if header not in magic:
@@ -35,6 +37,9 @@ def verify_no_location_api(bundle: ZipFile) -> list[str]:
         native_files.append(name)
         if any(marker in data for marker in forbidden):
             raise ValueError(f"Unused native location API remains in {name}")
+        if (b"plugins.flutter.io/integration_test" in data
+                or b"_OBJC_CLASS_$_IntegrationTestPlugin" in data):
+            raise ValueError(f"Native integration-test plugin remains in {name}")
     if not native_files:
         raise ValueError("IPA contains no native executable to inspect")
     return native_files
@@ -101,7 +106,7 @@ def main() -> None:
         if len(info_paths) != 1:
             raise ValueError("Expected exactly one application in the IPA")
         info = plistlib.loads(bundle.read(info_paths[0]))
-        native_files = verify_no_location_api(bundle)
+        native_files = verify_native_payload(bundle)
     metadata = verify_metadata(info, profile, version, build)
     archive_info = plistlib.loads((archive_app / "Info.plist").read_bytes())
     verify_metadata(archive_info, profile, version, build)
@@ -111,6 +116,7 @@ def main() -> None:
         size_bytes=ipa.stat().st_size,
         archive_signature_verified=True,
         location_api_absent=True,
+        integration_test_plugin_absent=True,
         inspected_native_files=native_files,
         device_verified=False,
     )
