@@ -1,4 +1,49 @@
 workflows:
+  ios-ipad-store-capture:
+    name: OSIA App Store iPad screenshots
+    instance_type: mac_mini_m2
+    max_build_duration: 25
+    environment:
+      flutter: 3.44.1
+      xcode: 26.4
+      cocoapods: 1.16.2
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - name: Capture OSIA on the 13-inch iPad Pro simulator
+        script: |
+          set -euo pipefail
+          flutter config --no-enable-swift-package-manager
+          flutter pub get
+          device="$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          runtimes = json.load(sys.stdin)["devices"]
+          devices = runtimes.get("com.apple.CoreSimulator.SimRuntime.iOS-26-4", [])
+          print(next((d["udid"] for d in devices if d["name"] == "iPad Pro 13-inch (M5)"), ""))
+          ')"
+          if [ -z "$device" ]; then
+            device="$(xcrun simctl create "OSIA iPad Pro 13-inch" \
+              com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5 \
+              com.apple.CoreSimulator.SimRuntime.iOS-26-4)"
+          fi
+          xcrun simctl bootstatus "$device" -b
+          flutter drive --debug --no-pub -d "$device" \
+            --driver=test_driver/store_capture_driver.dart \
+            --target=integration_test/store_ipad_capture_test.dart
+          for name in 01-Chat 02-Conversations 03-Models; do
+            source="build/store-captures/OSIA-iPad-Pro-13-$name.png"
+            output="build/store-captures/OSIA-iPad-Pro-13-$name.jpg"
+            dimensions="$(sips -g pixelWidth -g pixelHeight "$source")"
+            printf '%s\n' "$dimensions"
+            printf '%s\n' "$dimensions" | grep -q 'pixelWidth: 2064$'
+            printf '%s\n' "$dimensions" | grep -q 'pixelHeight: 2752$'
+            sips -s format jpeg -s formatOptions 100 "$source" --out "$output"
+          done
+    artifacts:
+      - build/store-captures/OSIA-iPad-Pro-13-*.jpg
+
   ios-release-candidate:
     name: OSIA iOS - App Store / TestFlight release candidate
     instance_type: mac_mini_m2
