@@ -246,6 +246,30 @@ void main() {
     );
   });
 
+  test('cron outcome takes precedence over a stale completed status', () async {
+    final service = WebSocketService(
+      ip: '127.0.0.1',
+      token: 'test-only',
+      autoReconnect: false,
+    );
+    addTearDown(service.dispose);
+    final result = service.cronNotificationStream.first;
+    service.handleIncomingFrameForTest(
+      _canonicalFrame({
+        'type': 'cron_notification',
+        'id': 'cancelled-note',
+        'task_id': 'cron-a',
+        'status': 'completed',
+        'outcome': 'user_cancelled',
+        'conversation_id': 'conv-a',
+      }),
+    );
+    final event = await result;
+    expect(event.outcome, 'user_cancelled');
+    expect(event.failed, isTrue);
+    expect(event.conversationId, 'conv-a');
+  });
+
   test(
     'scheduled task settings payload preserves model and server metadata',
     () {

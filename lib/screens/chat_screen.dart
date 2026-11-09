@@ -1659,9 +1659,18 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     final strings = OsiaL10n.of(context);
     final title = event.title.trim();
-    final label = event.failed
-        ? strings.scheduledTaskFailed
-        : strings.scheduledTaskCompleted;
+    final outcomeLabel = switch (event.outcome) {
+      'user_cancelled' => strings.scheduledTaskCancelled,
+      'blocked_verified' || 'hard_safety_block' => strings.scheduledTaskBlocked,
+      'completed_unverified' ||
+      'outcome_unknown' => strings.scheduledTaskUnverified,
+      _ => null,
+    };
+    final label =
+        outcomeLabel ??
+        (event.failed
+            ? strings.scheduledTaskFailed
+            : strings.scheduledTaskCompleted);
     final message = title.isEmpty ? label : '$label: $title';
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -1672,6 +1681,7 @@ class _ChatScreenState extends State<ChatScreen> {
         completedLabel: strings.scheduledTaskCompleted,
         failedLabel: strings.scheduledTaskFailed,
         reminderLabel: strings.reminderNotification,
+        outcomeLabel: outcomeLabel,
       ),
     );
     final convId = event.conversationId;

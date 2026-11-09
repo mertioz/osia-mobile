@@ -1526,6 +1526,7 @@ class CronNotificationMessage {
   final String taskId;
   final String title;
   final String status;
+  final String outcome;
   final String conversationId;
   final String createdAt;
   final String requestId;
@@ -1541,6 +1542,7 @@ class CronNotificationMessage {
     required this.taskId,
     required this.title,
     required this.status,
+    this.outcome = '',
     required this.conversationId,
     required this.createdAt,
     this.requestId = '',
@@ -1556,13 +1558,28 @@ class CronNotificationMessage {
 
   factory CronNotificationMessage.fromJson(Map<String, dynamic> json) {
     final rawStatus = (json['status'] ?? '').toString().trim().toLowerCase();
+    final rawOutcome = (json['outcome'] ?? '').toString().trim().toLowerCase();
+    final outcome = switch (rawOutcome) {
+      'success_verified' ||
+      'completed_unverified' ||
+      'user_cancelled' ||
+      'hard_safety_block' ||
+      'blocked_verified' ||
+      'failed' ||
+      'outcome_unknown' => rawOutcome,
+      '' when const {'completed', 'failed', 'error'}.contains(rawStatus) => '',
+      _ => 'outcome_unknown',
+    };
     return CronNotificationMessage(
       id: (json['id'] ?? '').toString(),
       taskId: (json['task_id'] ?? json['taskId'] ?? '').toString(),
       title: (json['title'] ?? '').toString(),
-      status: rawStatus == 'failed' || rawStatus == 'error'
-          ? 'failed'
-          : 'completed',
+      status:
+          outcome == 'success_verified' ||
+              (outcome.isEmpty && rawStatus == 'completed')
+          ? 'completed'
+          : 'failed',
+      outcome: outcome,
       conversationId: (json['conversation_id'] ?? json['conversationId'] ?? '')
           .toString(),
       createdAt: (json['created_at'] ?? json['createdAt'] ?? '').toString(),

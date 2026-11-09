@@ -227,4 +227,23 @@ void main() {
       'OSIA reminder: Reminder: stand up',
     );
   });
+
+  test('a cancelled reminder keeps its cancellation label', () {
+    final note = ws.CronNotificationMessage.fromJson({
+      'id': 'note-cancelled',
+      'title': 'Reminder: stand up',
+      'status': 'failed',
+      'outcome': 'user_cancelled',
+    });
+    expect(
+      OsiaNotificationService.cronNotificationBody(
+        note,
+        completedLabel: 'Scheduled task completed',
+        failedLabel: 'Scheduled task failed',
+        reminderLabel: 'OSIA reminder',
+        outcomeLabel: 'Scheduled task cancelled',
+      ),
+      'Scheduled task cancelled: Reminder: stand up',
+    );
+  });
 }

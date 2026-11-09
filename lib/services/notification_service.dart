@@ -210,6 +210,7 @@ class OsiaNotificationService {
     required String completedLabel,
     required String failedLabel,
     required String reminderLabel,
+    String? outcomeLabel,
   }) async {
     final eventId = _eventIdFor(event);
     if (eventId.isEmpty) return OsiaNotificationResult.failed;
@@ -235,6 +236,7 @@ class OsiaNotificationService {
         completedLabel: completedLabel,
         failedLabel: failedLabel,
         reminderLabel: reminderLabel,
+        outcomeLabel: outcomeLabel,
       );
       await _client.show(
         id: _stableNotificationId(eventId),
@@ -255,10 +257,15 @@ class OsiaNotificationService {
     required String completedLabel,
     required String failedLabel,
     required String reminderLabel,
+    String? outcomeLabel,
   }) {
-    final base = event.failed
-        ? failedLabel
-        : (_looksLikeReminder(event.title) ? reminderLabel : completedLabel);
+    final base =
+        outcomeLabel ??
+        (event.failed
+            ? failedLabel
+            : (_looksLikeReminder(event.title)
+                  ? reminderLabel
+                  : completedLabel));
     final title = safeNotificationTitle(event.title);
     return title == null ? base : '$base: $title';
   }

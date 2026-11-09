@@ -106,6 +106,9 @@ class OsiaStrings {
   final String osiaWorkingBackground;
   final String scheduledTaskCompleted;
   final String scheduledTaskFailed;
+  final String scheduledTaskCancelled;
+  final String scheduledTaskBlocked;
+  final String scheduledTaskUnverified;
   final String reminderNotification;
   final String taskCompleted;
 
@@ -519,6 +522,9 @@ class OsiaStrings {
     required this.osiaWorkingBackground,
     required this.scheduledTaskCompleted,
     required this.scheduledTaskFailed,
+    required this.scheduledTaskCancelled,
+    required this.scheduledTaskBlocked,
+    required this.scheduledTaskUnverified,
     required this.reminderNotification,
     required this.taskCompleted,
     required this.availableModels,
@@ -2163,6 +2169,9 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   osiaWorkingBackground: 'OSIA is working in the background',
   scheduledTaskCompleted: 'Scheduled task completed',
   scheduledTaskFailed: 'Scheduled task failed',
+  scheduledTaskCancelled: 'Scheduled task cancelled',
+  scheduledTaskBlocked: 'Scheduled task blocked',
+  scheduledTaskUnverified: 'Scheduled task result unconfirmed',
   reminderNotification: 'OSIA reminder',
   taskCompleted: 'Task completed',
   availableModels: 'Available models',
@@ -2576,6 +2585,9 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   osiaWorkingBackground: 'OSIA travaille en arrière-plan',
   scheduledTaskCompleted: 'Tâche planifiée terminée',
   scheduledTaskFailed: 'Tâche planifiée échouée',
+  scheduledTaskCancelled: 'Tâche planifiée annulée',
+  scheduledTaskBlocked: 'Tâche planifiée bloquée',
+  scheduledTaskUnverified: 'Résultat de la tâche planifiée non confirmé',
   reminderNotification: 'Rappel OSIA',
   taskCompleted: 'Tâche terminée',
   availableModels: 'Modèles disponibles',
@@ -2984,6 +2996,9 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   osiaWorkingBackground: 'OSIA 正在后台工作',
   scheduledTaskCompleted: '定时任务已完成',
   scheduledTaskFailed: '定时任务失败',
+  scheduledTaskCancelled: '定时任务已取消',
+  scheduledTaskBlocked: '定时任务受阻',
+  scheduledTaskUnverified: '定时任务结果未确认',
   reminderNotification: 'OSIA 提醒',
   taskCompleted: '任务完成',
   availableModels: '可用模型',
@@ -3367,6 +3382,9 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   osiaWorkingBackground: 'OSIA はバックグラウンドで作業中',
   scheduledTaskCompleted: 'スケジュールタスク完了',
   scheduledTaskFailed: 'スケジュールタスク失敗',
+  scheduledTaskCancelled: 'スケジュールタスクをキャンセルしました',
+  scheduledTaskBlocked: 'スケジュールタスクがブロックされました',
+  scheduledTaskUnverified: 'スケジュールタスクの結果は未確認です',
   reminderNotification: 'OSIA リマインダー',
   taskCompleted: 'タスク完了',
   availableModels: '利用可能なモデル',
@@ -3773,6 +3791,9 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   osiaWorkingBackground: 'OSIA arbeitet im Hintergrund',
   scheduledTaskCompleted: 'Geplante Aufgabe abgeschlossen',
   scheduledTaskFailed: 'Geplante Aufgabe fehlgeschlagen',
+  scheduledTaskCancelled: 'Geplante Aufgabe abgebrochen',
+  scheduledTaskBlocked: 'Geplante Aufgabe blockiert',
+  scheduledTaskUnverified: 'Ergebnis der geplanten Aufgabe nicht bestätigt',
   reminderNotification: 'OSIA-Erinnerung',
   taskCompleted: 'Aufgabe abgeschlossen',
   availableModels: 'Verfügbare Modelle',
@@ -4196,6 +4217,9 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   osiaWorkingBackground: 'OSIA está trabajando en segundo plano',
   scheduledTaskCompleted: 'Tarea programada completada',
   scheduledTaskFailed: 'Tarea programada fallida',
+  scheduledTaskCancelled: 'Tarea programada cancelada',
+  scheduledTaskBlocked: 'Tarea programada bloqueada',
+  scheduledTaskUnverified: 'Resultado de la tarea programada sin confirmar',
   reminderNotification: 'Recordatorio OSIA',
   taskCompleted: 'Tarea completada',
   availableModels: 'Modelos disponibles',
