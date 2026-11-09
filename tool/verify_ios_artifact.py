@@ -13,11 +13,11 @@ from zipfile import ZipFile
 
 
 def verify_native_payload(bundle: ZipFile) -> list[str]:
-    """Reject unused location code and native integration-test instrumentation.
+    """Check every shipped Mach-O for native code rejected by App Review.
 
     Build22 passed source-only checks but Apple's ITMS-90683 scanner found
-    DKCamera's location API in Runner. Inspect every shipped Mach-O executable,
-    not just dynamically embedded frameworks or Dart permission call sites.
+    DKCamera's location API in Runner. Build30 contained flutter_webrtc's
+    private ReplayKit selector and was rejected under guideline 2.5.1.
     """
     magic = {bytes.fromhex(value) for value in
              ("cffaedfe", "cefaedfe", "cafebabe", "bebafeca", "cafebabf", "bfbafeca")}
@@ -37,6 +37,8 @@ def verify_native_payload(bundle: ZipFile) -> list[str]:
         native_files.append(name)
         if any(marker in data for marker in forbidden):
             raise ValueError(f"Unused native location API remains in {name}")
+        if b"buttonPressed:" in data:
+            raise ValueError(f"Private ReplayKit selector buttonPressed: remains in {name}")
         if (b"plugins.flutter.io/integration_test" in data
                 or b"_OBJC_CLASS_$_IntegrationTestPlugin" in data):
             raise ValueError(f"Native integration-test plugin remains in {name}")
@@ -116,6 +118,7 @@ def main() -> None:
         size_bytes=ipa.stat().st_size,
         archive_signature_verified=True,
         location_api_absent=True,
+        private_replaykit_selector_absent=True,
         integration_test_plugin_absent=True,
         inspected_native_files=native_files,
         device_verified=False,

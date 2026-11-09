@@ -30,6 +30,17 @@ class IosArtifactMetadataTests(unittest.TestCase):
         with ZipFile(stream) as archive, self.assertRaises(ValueError):
             verify_native_payload(archive)
 
+    def test_rejects_private_replaykit_selector_in_runner_and_framework(self):
+        runner = "Payload/Runner.app/Runner"
+        framework = "Payload/Runner.app/Frameworks/flutter_webrtc.framework/flutter_webrtc"
+        for path in (runner, framework):
+            with self.subTest(path=path):
+                stream = BytesIO()
+                with ZipFile(stream, "w") as archive:
+                    archive.writestr(path, bytes.fromhex("cffaedfe") + b"buttonPressed:\0")
+                with ZipFile(stream) as archive, self.assertRaisesRegex(ValueError, "Private ReplayKit selector"):
+                    verify_native_payload(archive)
+
     def test_rejects_embedded_or_statically_linked_integration_test_plugin(self):
         cases = {
             "Payload/Runner.app/Frameworks/integration_test.framework/Info.plist": b"plist",
