@@ -218,6 +218,72 @@ void main() {
     },
   );
 
+  test(
+    'cron replay stays deduplicated when the recent ID cache fills',
+    () async {
+      final service = WebSocketService(
+        ip: '127.0.0.1',
+        token: 'test-only',
+        autoReconnect: false,
+      );
+      addTearDown(service.dispose);
+      final events = <CronNotificationMessage>[];
+      final sub = service.cronNotificationStream.listen(events.add);
+      addTearDown(sub.cancel);
+
+      final frames = List.generate(
+        201,
+        (index) => _canonicalFrame({
+          'type': 'cron_notification',
+          'id': 'cron-note-$index',
+          'task_id': 'daily-task',
+          'status': 'completed',
+          'outcome': 'success_verified',
+        }),
+      );
+      for (final frame in frames) {
+        service.handleIncomingFrameForTest(frame);
+      }
+      await Future<void>.delayed(Duration.zero);
+      expect(events, hasLength(frames.length));
+
+      // The PC replays its last 30 notes after reconnecting or getting config.
+      for (final frame in frames.skip(frames.length - 30)) {
+        service.handleIncomingFrameForTest(frame);
+      }
+      await Future<void>.delayed(Duration.zero);
+      expect(events, hasLength(frames.length));
+    },
+  );
+
+  test('cron notes received before chat listens can be replayed', () async {
+    final service = WebSocketService(
+      ip: '127.0.0.1',
+      token: 'test-only',
+      autoReconnect: false,
+    );
+    addTearDown(service.dispose);
+    final frame = _canonicalFrame({
+      'type': 'cron_notification',
+      'id': 'note-before-chat',
+      'task_id': 'daily-task',
+      'status': 'completed',
+      'outcome': 'success_verified',
+    });
+
+    // Pairing authenticates the socket before Chat subscribes to notifications.
+    service.handleIncomingFrameForTest(frame);
+    final events = <CronNotificationMessage>[];
+    final sub = service.cronNotificationStream.listen(events.add);
+    addTearDown(sub.cancel);
+
+    // Chat requests config after subscribing and receives the note again.
+    service.handleIncomingFrameForTest(frame);
+    service.handleIncomingFrameForTest(frame);
+    await Future<void>.delayed(Duration.zero);
+    expect(events.map((event) => event.id), ['note-before-chat']);
+  });
+
   test('config cron jobs preserve conversation and model metadata', () {
     final config = ConfigData.fromJson({
       'cron_jobs': [

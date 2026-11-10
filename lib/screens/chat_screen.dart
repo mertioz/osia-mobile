@@ -1672,9 +1672,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ? strings.scheduledTaskFailed
             : strings.scheduledTaskCompleted);
     final message = title.isEmpty ? label : '$label: $title';
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
     unawaited(
       _notificationService.showCronNotification(
         event,
@@ -1682,12 +1679,18 @@ class _ChatScreenState extends State<ChatScreen> {
         failedLabel: strings.scheduledTaskFailed,
         reminderLabel: strings.reminderNotification,
         outcomeLabel: outcomeLabel,
+        onUnseen: () {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(SnackBar(content: Text(message)));
+          final convId = event.conversationId;
+          if (convId.isNotEmpty && convId == _activeConversationId) {
+            _requestConversationContent(convId);
+          }
+        },
       ),
     );
-    final convId = event.conversationId;
-    if (convId.isNotEmpty && convId == _activeConversationId) {
-      _requestConversationContent(convId);
-    }
   }
 
   void _onConversationBusy(ws.ConversationBusyEvent event) {

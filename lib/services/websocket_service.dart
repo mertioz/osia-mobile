@@ -8241,19 +8241,23 @@ class WebSocketService {
             debugPrint('[OSIA WS] rejected incomplete cron notification');
             break;
           }
+          // Pairing can receive the auth backlog before Chat subscribes. Leave
+          // those IDs available for replay when Chat requests config.
+          if (_cronNotificationCtrl.isClosed ||
+              !_cronNotificationCtrl.hasListener) {
+            break;
+          }
           final id = note.id;
           if (id.isNotEmpty) {
             if (_seenCronNotifications.contains(id)) break;
             _seenCronNotifications.add(id);
             if (_seenCronNotifications.length > 200) {
-              _seenCronNotifications.clear();
-              _seenCronNotifications.add(id);
+              // Keep the recent IDs the server can replay on reconnect.
+              _seenCronNotifications.remove(_seenCronNotifications.first);
             }
           }
           debugPrint('[OSIA WS] cron_notification: status=${note.status}');
-          if (!_cronNotificationCtrl.isClosed) {
-            _cronNotificationCtrl.add(note);
-          }
+          _cronNotificationCtrl.add(note);
         case 'browser_progress':
           _handleBrowserProgress(json);
         case 'document_progress':

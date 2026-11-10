@@ -211,12 +211,14 @@ class OsiaNotificationService {
     required String failedLabel,
     required String reminderLabel,
     String? outcomeLabel,
+    VoidCallback? onUnseen,
   }) async {
     final eventId = _eventIdFor(event);
     if (eventId.isEmpty) return OsiaNotificationResult.failed;
     if (await _hasHandled(eventId)) {
       return OsiaNotificationResult.duplicate;
     }
+    onUnseen?.call();
 
     final enabled = await storage.getNotificationsEnabled();
     if (!enabled) {

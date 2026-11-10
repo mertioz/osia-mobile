@@ -500,6 +500,42 @@ void main() {
     });
   });
 
+  testWidgets('cold chat only shows banners for unseen cron notes', (
+    tester,
+  ) async {
+    await StorageService().setShownNotificationIds(['seen-note']);
+    final harness = await _pumpChat(tester);
+    try {
+      void replayNote(String id, String title) {
+        harness.service.handleIncomingFrameForTest({
+          'type': 'cron_notification',
+          'id': id,
+          'task_id': 'daily-task',
+          'title': title,
+          'status': 'completed',
+          'outcome': 'success_verified',
+        });
+      }
+
+      replayNote('seen-note', 'Previously shown');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.text('Scheduled task completed: Previously shown'),
+        findsNothing,
+      );
+
+      // Native notifications are disabled by default, but a fresh note still
+      // belongs in Chat.
+      replayNote('new-note', 'Fresh note');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Scheduled task completed: Fresh note'), findsOneWidget);
+    } finally {
+      await _disposeChatHarness(tester, harness);
+    }
+  });
+
   testWidgets('an empty discussion only leaves the composer available', (
     tester,
   ) async {
