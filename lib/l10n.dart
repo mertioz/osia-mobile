@@ -280,6 +280,7 @@ class OsiaStrings {
   final String cronDate;
   final String cronTime;
   final String cronInvalid;
+  final String cronJobsConflict;
   final String cronModelDefault;
   final String cronModelInvalid;
   final String cronEveryMinutesTemplate; // {n}
@@ -672,6 +673,7 @@ class OsiaStrings {
     required this.cronDate,
     required this.cronTime,
     required this.cronInvalid,
+    required this.cronJobsConflict,
     required this.cronModelDefault,
     required this.cronModelInvalid,
     required this.cronEveryMinutesTemplate,
@@ -2334,6 +2336,8 @@ const OsiaStrings osiaStringsEn = OsiaStrings(
   cronDate: 'Date',
   cronTime: 'Time',
   cronInvalid: 'Enter a task and a valid schedule.',
+  cronJobsConflict:
+      'Scheduled tasks changed on the PC. Check the list and try again.',
   cronModelDefault: 'Default/current model',
   cronModelInvalid: 'Choose a valid model.',
   cronEveryMinutesTemplate: 'Every {n} min',
@@ -2752,6 +2756,8 @@ const OsiaStrings osiaStringsFr = OsiaStrings(
   cronDate: 'Date',
   cronTime: 'Heure',
   cronInvalid: 'Saisissez une tâche et un horaire valide.',
+  cronJobsConflict:
+      'Les tâches planifiées ont changé sur le PC. Vérifiez la liste et réessayez.',
   cronModelDefault: 'Modèle par défaut/actuel',
   cronModelInvalid: 'Choisissez un modèle valide.',
   cronEveryMinutesTemplate: 'Toutes les {n} min',
@@ -3149,6 +3155,7 @@ const OsiaStrings osiaStringsZh = OsiaStrings(
   cronDate: '日期',
   cronTime: '时间',
   cronInvalid: '请输入任务和有效的计划。',
+  cronJobsConflict: '电脑上的定时任务已更改。请检查列表后重试。',
   cronModelDefault: '默认/当前模型',
   cronModelInvalid: '请选择有效模型。',
   cronEveryMinutesTemplate: '每 {n} 分钟',
@@ -3541,6 +3548,7 @@ const OsiaStrings osiaStringsJa = OsiaStrings(
   cronDate: '日付',
   cronTime: '時刻',
   cronInvalid: 'タスクと有効なスケジュールを入力してください。',
+  cronJobsConflict: 'PCのスケジュールタスクが変更されました。一覧を確認してから再試行してください。',
   cronModelDefault: 'デフォルト/現在のモデル',
   cronModelInvalid: '有効なモデルを選択してください。',
   cronEveryMinutesTemplate: '{n} 分ごと',
@@ -3961,6 +3969,8 @@ const OsiaStrings osiaStringsDe = OsiaStrings(
   cronDate: 'Datum',
   cronTime: 'Uhrzeit',
   cronInvalid: 'Geben Sie eine Aufgabe und einen gültigen Zeitplan ein.',
+  cronJobsConflict:
+      'Die geplanten Aufgaben wurden am PC geändert. Prüfen Sie die Liste und versuchen Sie es erneut.',
   cronModelDefault: 'Standard-/aktuelles Modell',
   cronModelInvalid: 'Wählen Sie ein gültiges Modell.',
   cronEveryMinutesTemplate: 'Alle {n} Min',
@@ -4384,6 +4394,8 @@ const OsiaStrings osiaStringsEs = OsiaStrings(
   cronDate: 'Fecha',
   cronTime: 'Hora',
   cronInvalid: 'Introduce una tarea y un horario válido.',
+  cronJobsConflict:
+      'Las tareas programadas cambiaron en el PC. Revisa la lista e inténtalo de nuevo.',
   cronModelDefault: 'Modelo predeterminado/actual',
   cronModelInvalid: 'Elige un modelo válido.',
   cronEveryMinutesTemplate: 'Cada {n} min',

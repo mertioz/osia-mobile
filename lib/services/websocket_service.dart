@@ -1133,6 +1133,8 @@ class ConfigData {
   /// (`{task, schedule, enabled, conversation_id?}`) so it round-trips
   /// losslessly when written back via `set_setting cron_jobs`.
   final List<Map<String, dynamic>> cronJobs;
+  final String? cronJobsRevision;
+  final bool cronJobsConflict;
 
   /// Ordered `"provider:model"` fallback chain for heavy tasks.
   final List<String> heavyChain;
@@ -1172,6 +1174,8 @@ class ConfigData {
   const ConfigData({
     required this.apiKeysSet,
     required this.cronJobs,
+    this.cronJobsRevision,
+    this.cronJobsConflict = false,
     required this.heavyChain,
     required this.mediumChain,
     required this.aiHierarchyEnabled,
@@ -1236,9 +1240,12 @@ class ConfigData {
     }
 
     final settings = readSettings(config);
+    final cronJobsRevision = config['cron_jobs_revision'];
     return ConfigData(
       apiKeysSet: readKeysSet(config['api_keys_set']),
       cronJobs: readJobs(config['cron_jobs']),
+      cronJobsRevision: cronJobsRevision is String ? cronJobsRevision : null,
+      cronJobsConflict: config['cron_jobs_conflict'] == true,
       heavyChain: readChain(config['heavy_chain']),
       mediumChain: readChain(config['medium_chain']),
       aiHierarchyEnabled: config['ai_hierarchy_enabled'] == true,
@@ -4609,6 +4616,24 @@ class WebSocketService {
   /// JSON-serializable list/map (e.g. `cron_jobs`, `heavy_chain`).
   void sendSetSetting(String key, Object? value) {
     _send({'type': 'set_setting', 'key': key, 'value': value});
+  }
+
+  /// Replace scheduled tasks only if the PC's editable list still matches the
+  /// snapshot shown to the user. Older PCs don't advertise a revision.
+  void sendSetCronJobs(
+    List<Map<String, dynamic>> jobs, {
+    String? expectedRevision,
+  }) {
+    if (expectedRevision == null) {
+      sendSetSetting('cron_jobs', jobs);
+      return;
+    }
+    _send({
+      'type': 'set_setting',
+      'key': 'cron_jobs',
+      'value': jobs,
+      'expected_cron_jobs_revision': expectedRevision,
+    });
   }
 
   /// Ask the PC for the full configuration snapshot. The reply arrives on

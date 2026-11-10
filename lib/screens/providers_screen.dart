@@ -747,6 +747,7 @@ class _SystemSettingsSectionState extends State<SystemSettingsSection> {
             _CronScreen(
               wsService: widget.wsService,
               jobs: config.cronJobs,
+              jobsRevision: config.cronJobsRevision,
               timeFormat: _timeFormat,
               models: _models,
               currentModel: (config.settings['selected_model'] ?? '')
@@ -2669,11 +2670,12 @@ class _ProviderRow extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════════════════
 
 /// Lists the PC's cron jobs and lets the user add / edit / toggle / delete
-/// them. The local list is the source of truth; every change rewrites the
-/// whole `cron_jobs` array via `set_setting` (mirrors the desktop GUI).
+/// them. Edits send the whole `cron_jobs` array with the revision of the PC
+/// snapshot they are based on.
 class _CronScreen extends StatefulWidget {
   final ws.WebSocketService wsService;
   final List<Map<String, dynamic>> jobs;
+  final String? jobsRevision;
   // Current time format ('12h'/'24h'), resolved by the parent. Display-only:
   // the schedule strings saved to the PC stay canonical 24h.
   final String timeFormat;
@@ -2682,6 +2684,7 @@ class _CronScreen extends StatefulWidget {
   const _CronScreen({
     required this.wsService,
     required this.jobs,
+    required this.jobsRevision,
     required this.timeFormat,
     required this.models,
     required this.currentModel,
@@ -2693,6 +2696,7 @@ class _CronScreen extends StatefulWidget {
 
 class _CronScreenState extends State<_CronScreen> {
   late List<Map<String, dynamic>> _jobs;
+  String? _jobsRevision;
   StreamSubscription<ws.ConfigData>? _configSub;
   StreamSubscription<ws.ConnectionState>? _connSub;
 
@@ -2701,11 +2705,14 @@ class _CronScreenState extends State<_CronScreen> {
     super.initState();
     // Deep-ish copy so edits don't mutate the parent's snapshot in place.
     _jobs = widget.jobs.map((j) => Map<String, dynamic>.from(j)).toList();
+    _jobsRevision = widget.jobsRevision;
     _configSub = widget.wsService.configStream.listen((cfg) {
       if (!mounted) return;
       setState(() {
         _jobs = cfg.cronJobs.map((j) => Map<String, dynamic>.from(j)).toList();
+        _jobsRevision = cfg.cronJobsRevision;
       });
+      if (cfg.cronJobsConflict) _showCronConflict();
     });
     _connSub = widget.wsService.connectionStream.listen((state) {
       if (state == ws.ConnectionState.connected) {
@@ -2722,7 +2729,14 @@ class _CronScreenState extends State<_CronScreen> {
     super.dispose();
   }
 
-  void _persist() => widget.wsService.sendSetSetting('cron_jobs', _jobs);
+  void _persist() =>
+      widget.wsService.sendSetCronJobs(_jobs, expectedRevision: _jobsRevision);
+
+  void _showCronConflict() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(OsiaL10n.of(context).cronJobsConflict)),
+    );
+  }
 
   void _recoverConnection() {
     unawaited(widget.wsService.ensureConnected(reason: 'cron_open'));
@@ -2747,6 +2761,7 @@ class _CronScreenState extends State<_CronScreen> {
 
   Future<void> _edit({int? index}) async {
     final existing = index != null ? _jobs[index] : null;
+    final editRevision = _jobsRevision;
     final result = await Navigator.of(context).push<Map<String, dynamic>>(
       slideFadeRoute(
         _CronEditScreen(
@@ -2758,7 +2773,13 @@ class _CronScreenState extends State<_CronScreen> {
         ),
       ),
     );
-    if (result == null) return;
+    if (result == null || !mounted) return;
+    if (editRevision != _jobsRevision ||
+        (index != null &&
+            (index >= _jobs.length || _jobs[index]['id'] != existing?['id']))) {
+      _showCronConflict();
+      return;
+    }
     setState(() {
       if (index != null) {
         _jobs[index] = result;
