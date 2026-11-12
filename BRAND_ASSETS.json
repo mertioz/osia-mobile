@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "policyVersion": "1.0",
+  "effectiveDate": "2026-11-12",
+  "rightsHolder": "Aymen Gherbi (OSIA), entrepreneur individuel",
+  "permissionContact": "contact@osia.space",
+  "policy": "TRADEMARKS.md",
+  "artworkLicense": "LicenseRef-OSIA-Brand-Assets-1.0",
+  "scope": "Original OSIA artwork only; no rights claimed in third-party elements or Apache-licensed UI code.",
+  "assets": [
+    {
+      "path": "android/app/src/main/res/drawable-hdpi/ic_launcher_foreground.png",
+      "sha256": "3a2a3b279b68c4ee0c29bfed84c2111da14a91399c22cec022585920a3fd060d"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-mdpi/ic_launcher_foreground.png",
+      "sha256": "90ff538c9f32f8875555a8f800f3dc9280c84659bfc453c811fc459ea71422ee"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-xhdpi/ic_launcher_foreground.png",
+      "sha256": "74baff79fa050a719f827b8137be426e5f7b6524920e033bc098e035d7fed73e"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-xxhdpi/ic_launcher_foreground.png",
+      "sha256": "5085f9c755ae2b70d330e72a52da48cf0a62d7d68b82a08d0759ff8c9c4c551c"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-xxxhdpi/ic_launcher_foreground.png",
+      "sha256": "e8f4f74880100df66181000e59c31336c8462299c09e8ea46c839331fcbc79a8"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-hdpi/ic_launcher.png",
+      "sha256": "8c42147661f9f729da99997b54e92b785bf674ef4cc8e765424d6bfd40e57c01"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-mdpi/ic_launcher.png",
+      "sha256": "806e1774a0e2e68b94935ce41268cce84295f4d36438c5b51afb613a43c4a376"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+      "sha256": "9c3c4d56c4760d46e729735bf3dd505e2e851ee1331e92fd79c4468d44d56728"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+      "sha256": "309599237a1c5403a282fdd874838ae7349e7982aa49dd8876a776006608f2e0"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+      "sha256": "8c14c2a6fe47a33567579d61e3e7b21e9f383532ccc995e2221e081e1e5e507d"
+    },
+    {
+      "path": "assets/osia_icon.png",
+      "sha256": "0ae37497e8adbcb2c65573ec1124c55435d42fc0ccd8ac7f57e7e51a32eb459f"
+    },
+    {
+      "path": "assets/osia_icon_foreground.png",
+      "sha256": "fe50b6bffe967910f7b408a34b9e1e09e8e27fefb23f2adf76de2de3e94d47ec"
+    },
+    {
+      "path": "assets/osia_logo.png",
+      "sha256": "3cb10405954b6bdb60bdc9340b7aef04b57bfc717034ae6d2c7ff2e5f94ba95a"
+    },
+    {
+      "path": "assets/osia_logo_mark.png",
+      "sha256": "c8edb6ba2b2e07d0fb9d8deec465800135f6d1ed2ca33d4d9c3193436d419b61"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png",
+      "sha256": "a9363cf3c444139d95eff976475a24d706823794687130f6791f56f5194f70ac"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@1x.png",
+      "sha256": "2a38e49cd30c719bb0bc1f4b994824c178d207c6d7345c309cc12034682f04fe"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@2x.png",
+      "sha256": "677d9d306a79003a61bae4242647b104812b4fd37ca08a25f2d2510001693e93"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@3x.png",
+      "sha256": "8ac4c8cd4990d5c982778983d66b445c8b273a147384079770ca4482ead9f18e"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@1x.png",
+      "sha256": "65533d0ef961d2e544b037fd0e9854eadbf314b88a779b6008929a9448416064"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@2x.png",
+      "sha256": "705a628994386cdb860c1eb79e77f908c655a282d6789a342fbd1eb227de044c"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@3x.png",
+      "sha256": "bd340728b801f8a171bca6b883dd15c5c4e5cf4570b9dbcfd19297259cbbe6b3"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@1x.png",
+      "sha256": "677d9d306a79003a61bae4242647b104812b4fd37ca08a25f2d2510001693e93"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@2x.png",
+      "sha256": "32ad42294ba4d28b8a8bee6e55c78e5dfbe38f1c6dd8e8a4fd72a4c9239888bb"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@3x.png",
+      "sha256": "6cafa51533eb7714538e5851b79a835abef1bc0fd8b3864b4d7beeb8d6645b9c"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-50x50@1x.png",
+      "sha256": "4ecf59995215d9ac40d567f6fa3fb80d609a3fd29e7ad9b819a92e5e21557091"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-50x50@2x.png",
+      "sha256": "7c34c1e554ae73c9b411f52093584490233525ce2161fc91ff2dd3fd68a4f261"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-57x57@1x.png",
+      "sha256": "37d2dd68ec0a54a610db160913ef622e075bbc2c595c2ef85082cbd1c4fca606"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-57x57@2x.png",
+      "sha256": "170c85c4777b117a1ed2cdb9e50ebde89cffa272d17dfb34e8f74bee806b0f46"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-60x60@2x.png",
+      "sha256": "6cafa51533eb7714538e5851b79a835abef1bc0fd8b3864b4d7beeb8d6645b9c"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-60x60@3x.png",
+      "sha256": "bc156073d5a79ac6c08c857212bd26142076b5400fb0fb7f941c81182620b877"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-72x72@1x.png",
+      "sha256": "6723128109d495664d982e36702c7f9e205572b90b693a5a0fb84a596f373c30"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-72x72@2x.png",
+      "sha256": "fbdf4a383e49bd5176c1aa82e01818cbd5022efb8a55c3469122011fa62fab3c"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-76x76@1x.png",
+      "sha256": "d0e83d360bb69d352e8e4d52b1c617e3b3c19b69da3a907b03b930ae80ddedcf"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-76x76@2x.png",
+      "sha256": "6589253806d910d2b1e5ae57345e2735a20c10413bf43343fbf3e611a6e48849"
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-83.5x83.5@2x.png",
+      "sha256": "c5d44bb18f3da48fd7a46c7ad5dba5f727b946975c4d1ab943d8ef2090e930ec"
+    }
+  ],
+  "excludedThirdPartyOrPreviouslyLicensedMaterial": [
+    {
+      "path": "assets/fonts/",
+      "reason": "Inter fonts retain SIL OFL; not OSIA-reserved artwork."
+    },
+    {
+      "path": "macos/Runner/Assets.xcassets/AppIcon.appiconset/",
+      "reason": "Stock Flutter icons; no OSIA artwork claim."
+    },
+    {
+      "path": "web/",
+      "reason": "Stock Flutter web icons and template retain upstream rights."
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/LaunchImage.imageset/",
+      "reason": "Framework placeholder assets; no OSIA artwork claim."
+    }
+  ],
+  "hashBasis": "SHA-256 of Git source blobs; SVG line endings normalized to LF."
+}
