@@ -148,6 +148,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _mouseControlCommand = false;
   bool _contextCompactionCommand = false;
   String? _compactingConversationId;
+  String? _compactionRequestId;
+  final Map<String, bool> _contextCompacting = {};
+  final Map<String, int> _contextCompactionRevisions = {};
   String _slashStage = '';
   bool _fullSlashReasoning = false;
   bool _specialRequestPending = false;
@@ -1268,7 +1271,13 @@ class _ChatScreenState extends State<ChatScreen> {
           _optimisticUser[adoptedId] = _optimisticUserNoId!;
           _optimisticUserNoId = null;
         }
-      case ws.ConversationHistoryMessage(:final id, :final messages):
+      case ws.ConversationHistoryMessage(
+        :final id,
+        :final messages,
+        :final contextCompacting,
+        :final contextCompactionUpdate,
+        :final revision,
+      ):
         if (id != null && _isConversationDeletionPending(id)) break;
         // Capture the in-flight requested-load id BEFORE anything clears it: a
         // late/deferred history frame for a DIFFERENT conversation must not
@@ -1303,6 +1312,53 @@ class _ChatScreenState extends State<ChatScreen> {
           return;
         }
         final effectiveConvId = hasId ? id : viewing;
+        if (contextCompactionUpdate &&
+            effectiveConvId != null &&
+            revision < (_contextCompactionRevisions[effectiveConvId] ?? 0)) {
+          return;
+        }
+        if (effectiveConvId != null &&
+            revision >= (_contextCompactionRevisions[effectiveConvId] ?? 0)) {
+          setState(() {
+            _contextCompactionRevisions[effectiveConvId] = revision;
+            _contextCompacting[effectiveConvId] = contextCompacting;
+          });
+        }
+        if (contextCompactionUpdate &&
+            hasId &&
+            id == viewing &&
+            pendingId != id) {
+          setState(() {
+            for (final message in messages.where(
+              (m) => m.isContextCompactionNotice,
+            )) {
+              if (message.messageId.isEmpty ||
+                  _entries.any(
+                    (entry) =>
+                        entry.messageId == message.messageId ||
+                        entry.contextCompactionRequestId ==
+                                message.contextCompactionRequestId &&
+                            entry.contextCompactionRequestId.isNotEmpty,
+                  )) {
+                continue;
+              }
+              _entries.add(
+                _ChatEntry(
+                  content: _contextCompactionLabel(
+                    message.contextCompactionState,
+                  ),
+                  isUser: false,
+                  isSystem: true,
+                  messageId: message.messageId,
+                  contextCompactionState: message.contextCompactionState,
+                  contextCompactionRequestId:
+                      message.contextCompactionRequestId,
+                ),
+              );
+            }
+          });
+          return;
+        }
         if (effectiveConvId != null &&
             effectiveConvId.isNotEmpty &&
             !_canonicalHistory.accept(
@@ -1317,9 +1373,14 @@ class _ChatScreenState extends State<ChatScreen> {
         // can end in a 'tool'/'system' entry while the real reply isn't persisted
         // yet, and that must be treated as reply-less so it does not pass the
         // no-blank guard below as if the finished reply had landed.
+        final turnHistory = messages
+            .where((message) => !message.isContextCompactionNotice)
+            .toList(growable: false);
         final historyHasReply =
-            messages.isNotEmpty && messages.last.role == 'assistant';
-        final completedHistoryMessage = historyHasReply ? messages.last : null;
+            turnHistory.isNotEmpty && turnHistory.last.role == 'assistant';
+        final completedHistoryMessage = historyHasReply
+            ? turnHistory.last
+            : null;
         final completedHistoryTurn =
             completedHistoryMessage != null &&
                 effectiveConvId != null &&
@@ -1415,50 +1476,62 @@ class _ChatScreenState extends State<ChatScreen> {
           _entries
             ..clear()
             ..addAll(
-              messages.map(
-                (m) => _ChatEntry(
-                  content: m.content,
-                  isUser: m.role == 'user',
-                  conversationId: m.conversationId,
-                  clientRequestId: m.clientRequestId,
-                  turnId: m.turnId,
-                  messageId: m.messageId,
-                  runId: m.runId,
-                  providerId: m.providerId,
-                  modelId: m.modelId,
-                  effectiveReasoning: m.effectiveReasoning,
-                  screenshotIds: m.screenshotIds,
-                  // A user and its reply share turn identity. Only the reply
-                  // owns Thinking, including when restoring retained snapshots.
-                  executionTrace: m.role != 'assistant'
-                      ? null
-                      : _retainThinkingTrace(
-                          executionTraceForExactIdentity(
-                            m.executionTrace,
-                            conversationId: m.conversationId.isNotEmpty
-                                ? m.conversationId
-                                : (effectiveConvId ?? ''),
-                            requestId: m.clientRequestId,
-                            turnId: m.turnId,
-                            runId: m.runId,
-                            providerId: m.providerId,
-                            modelId: m.modelId,
-                            effectiveReasoning: m.effectiveReasoning,
-                          ),
-                          key: ExecutionTraceKey(
-                            conversationId: m.conversationId.isNotEmpty
-                                ? m.conversationId
-                                : (effectiveConvId ?? ''),
-                            requestId: m.clientRequestId,
-                            turnId: m.turnId,
-                            runId: m.runId,
-                            providerId: m.providerId,
-                            modelId: m.modelId,
-                            effectiveReasoning: m.effectiveReasoning,
-                          ),
-                        ),
-                ),
-              ),
+              messages
+                  .where(
+                    (m) =>
+                        m.role == 'user' ||
+                        m.role == 'assistant' ||
+                        m.isContextCompactionNotice,
+                  )
+                  .map(
+                    (m) => _ChatEntry(
+                      content: m.isContextCompactionNotice
+                          ? _contextCompactionLabel(m.contextCompactionState)
+                          : m.content,
+                      isUser: m.role == 'user',
+                      isSystem: m.isContextCompactionNotice,
+                      contextCompactionState: m.contextCompactionState,
+                      contextCompactionRequestId: m.contextCompactionRequestId,
+                      conversationId: m.conversationId,
+                      clientRequestId: m.clientRequestId,
+                      turnId: m.turnId,
+                      messageId: m.messageId,
+                      runId: m.runId,
+                      providerId: m.providerId,
+                      modelId: m.modelId,
+                      effectiveReasoning: m.effectiveReasoning,
+                      screenshotIds: m.screenshotIds,
+                      // A user and its reply share turn identity. Only the reply
+                      // owns Thinking, including when restoring retained snapshots.
+                      executionTrace: m.role != 'assistant'
+                          ? null
+                          : _retainThinkingTrace(
+                              executionTraceForExactIdentity(
+                                m.executionTrace,
+                                conversationId: m.conversationId.isNotEmpty
+                                    ? m.conversationId
+                                    : (effectiveConvId ?? ''),
+                                requestId: m.clientRequestId,
+                                turnId: m.turnId,
+                                runId: m.runId,
+                                providerId: m.providerId,
+                                modelId: m.modelId,
+                                effectiveReasoning: m.effectiveReasoning,
+                              ),
+                              key: ExecutionTraceKey(
+                                conversationId: m.conversationId.isNotEmpty
+                                    ? m.conversationId
+                                    : (effectiveConvId ?? ''),
+                                requestId: m.clientRequestId,
+                                turnId: m.turnId,
+                                runId: m.runId,
+                                providerId: m.providerId,
+                                modelId: m.modelId,
+                                effectiveReasoning: m.effectiveReasoning,
+                              ),
+                            ),
+                    ),
+                  ),
             );
           final liveTraceKey = _liveExecutionTrace?.key;
           if (liveTraceKey != null &&
@@ -4402,6 +4475,23 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  String _contextCompactionLabel(String state) {
+    final french = _slashLocale.startsWith('fr');
+    return switch (state) {
+      'running' => french ? 'Compaction en cours…' : 'Compacting context…',
+      'completed' => french ? 'Contexte compacté.' : 'Context compacted.',
+      'unchanged' =>
+        french
+            ? 'Le contexte est déjà court.'
+            : 'The context is already short.',
+      'failed' =>
+        french
+            ? 'Le résultat de la compaction n’a pas pu être confirmé.'
+            : 'The context compaction result could not be confirmed.',
+      _ => '',
+    };
+  }
+
   Future<void> _compactContext(String remaining) async {
     if (_activeWork || _compactingConversationId != null) return;
     if (remaining.trim().isNotEmpty ||
@@ -4430,25 +4520,58 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    final epoch = _conversationSelectionEpoch;
-    _compactingConversationId = id;
+    final operationId = 'compact_${ws.WebSocketService.newClientRequestId()}';
+    setState(() {
+      _compactingConversationId = id;
+      _compactionRequestId = operationId;
+    });
     _textCtrl.clear();
     _slashPaletteController.close();
     try {
-      final changed = await _wsService.compactConversationContext(id);
-      if (!mounted || _conversationSelectionEpoch != epoch) return;
-      _showSlashNotice(
-        changed ? 'Contexte compacté.' : 'Le contexte est déjà court.',
-        changed ? 'Context compacted.' : 'The context is already short.',
+      final changed = await _wsService.compactConversationContext(
+        id,
+        operationId: operationId,
       );
-    } catch (_) {
-      if (!mounted || _conversationSelectionEpoch != epoch) return;
-      _showSlashNotice(
-        'La compaction du contexte a échoué.',
-        'Context compaction failed.',
-      );
+      if (!mounted || _activeConversationId != id) return;
+      if (!_entries.any(
+        (entry) => entry.contextCompactionRequestId == operationId,
+      )) {
+        setState(
+          () => _entries.add(
+            _ChatEntry(
+              content: _contextCompactionLabel(
+                changed ? 'completed' : 'unchanged',
+              ),
+              isUser: false,
+              isSystem: true,
+              contextCompactionState: changed ? 'completed' : 'unchanged',
+              contextCompactionRequestId: operationId,
+            ),
+          ),
+        );
+        _scrollToBottomAnimated();
+      }
+    } catch (error) {
+      if (!mounted || _activeConversationId != id) return;
+      if (!_entries.any(
+        (entry) => entry.contextCompactionRequestId == operationId,
+      )) {
+        _showSlashNotice(
+          error is StateError && error.message == 'conversation_busy'
+              ? 'Cette discussion est occupée.'
+              : 'Le résultat de la compaction n’a pas pu être confirmé.',
+          error is StateError && error.message == 'conversation_busy'
+              ? 'This conversation is busy.'
+              : 'The context compaction result could not be confirmed.',
+        );
+      }
     } finally {
-      _compactingConversationId = null;
+      if (mounted) {
+        setState(() {
+          _compactingConversationId = null;
+          _compactionRequestId = null;
+        });
+      }
     }
   }
 
@@ -6125,8 +6248,20 @@ class _ChatScreenState extends State<ChatScreen> {
     final double bottomSafe = MediaQuery.of(context).padding.bottom;
     final double inputBarReserve = _inputBarHeight > 0 ? _inputBarHeight : 112;
     final double listBottomPadding = bottomSafe + 10 + inputBarReserve + 16;
+    final contextCompacting =
+        _connState == ws.ConnectionState.connected &&
+        ((_contextCompacting[_activeConversationId] ?? false) ||
+            (_compactingConversationId == _activeConversationId &&
+                _compactingConversationId != null &&
+                !_entries.any(
+                  (entry) =>
+                      entry.contextCompactionRequestId == _compactionRequestId,
+                )));
     final bool showStatusTrailer =
-        _liveExecutionTrace != null || _showThinkingTrailer || _noResponse;
+        contextCompacting ||
+        _liveExecutionTrace != null ||
+        _showThinkingTrailer ||
+        _noResponse;
 
     return Scaffold(
       key: _scaffoldKey,
@@ -6195,7 +6330,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     _entries.isEmpty &&
                         !_thinking &&
                         !_noResponse &&
-                        _liveExecutionTrace == null
+                        _liveExecutionTrace == null &&
+                        !contextCompacting
                     ? const SizedBox.expand()
                     : ListView.builder(
                         controller: _scrollCtrl,
@@ -6225,6 +6361,16 @@ class _ChatScreenState extends State<ChatScreen> {
                           // [InlineThinkingDots] on that bubble instead, so the
                           // standalone indicator is skipped to avoid two.
                           if (showStatusTrailer && index == _entries.length) {
+                            if (contextCompacting) {
+                              return ChatBubble(
+                                key: const ValueKey(
+                                  'context_compaction_progress',
+                                ),
+                                text: _contextCompactionLabel('running'),
+                                isUser: false,
+                                isSystem: true,
+                              );
+                            }
                             final trace = _liveExecutionTrace;
                             if (trace != null) {
                               return ExecutionTraceBlock(
@@ -7206,6 +7352,8 @@ class _ChatEntry {
   final bool isTranscript;
   final bool isStreaming;
   final bool isSystem;
+  final String contextCompactionState;
+  final String contextCompactionRequestId;
   final String conversationId;
   final String clientRequestId;
   final String turnId;
@@ -7223,6 +7371,8 @@ class _ChatEntry {
     this.isTranscript = false,
     this.isStreaming = false,
     this.isSystem = false,
+    this.contextCompactionState = '',
+    this.contextCompactionRequestId = '',
     this.conversationId = '',
     this.clientRequestId = '',
     this.turnId = '',
@@ -7256,6 +7406,8 @@ class _ChatEntry {
       isTranscript: isTranscript ?? this.isTranscript,
       isStreaming: isStreaming ?? this.isStreaming,
       isSystem: isSystem,
+      contextCompactionState: contextCompactionState,
+      contextCompactionRequestId: contextCompactionRequestId,
       conversationId: conversationId ?? this.conversationId,
       clientRequestId: clientRequestId ?? this.clientRequestId,
       turnId: turnId ?? this.turnId,

@@ -535,6 +535,9 @@ class HistoryMessage {
   final String modelId;
   final String effectiveReasoning;
   final List<String> screenshotIds;
+  final String contextCompactionState;
+  final String contextCompactionId;
+  final String contextCompactionRequestId;
   const HistoryMessage({
     required this.role,
     required this.content,
@@ -548,7 +551,21 @@ class HistoryMessage {
     this.modelId = '',
     this.effectiveReasoning = '',
     this.screenshotIds = const [],
+    this.contextCompactionState = '',
+    this.contextCompactionId = '',
+    this.contextCompactionRequestId = '',
   });
+
+  bool get isContextCompactionNotice =>
+      role == 'system' &&
+      const {
+        'completed',
+        'unchanged',
+        'failed',
+      }.contains(contextCompactionState) &&
+      RegExp(
+        r'^context_compaction_[0-9a-f]{32}$',
+      ).hasMatch(contextCompactionId);
 
   factory HistoryMessage.fromJson(Map<String, dynamic> json) {
     final raw = json['content'];
@@ -580,6 +597,11 @@ class HistoryMessage {
       executionTrace: ExecutionTraceSnapshot.parseHistory(
         json['execution_trace'],
       ),
+      contextCompactionState: (json['context_compaction_state'] ?? '')
+          .toString(),
+      contextCompactionId: (json['context_compaction_id'] ?? '').toString(),
+      contextCompactionRequestId: (json['context_compaction_request_id'] ?? '')
+          .toString(),
     );
   }
 }
@@ -591,12 +613,18 @@ class ConversationHistoryMessage extends OsiaMessage {
   final bool replayed;
   final bool legacyRouteUnavailable;
   final String requestId;
+  final bool contextCompacting;
+  final bool contextCompactionUpdate;
+  final int revision;
   const ConversationHistoryMessage({
     this.id,
     required this.messages,
     this.replayed = false,
     this.legacyRouteUnavailable = false,
     this.requestId = '',
+    this.contextCompacting = false,
+    this.contextCompactionUpdate = false,
+    this.revision = 0,
   });
 }
 
@@ -4276,15 +4304,18 @@ class WebSocketService {
     throw StateError('special state not confirmed by PC');
   }
 
-  Future<bool> compactConversationContext(String conversationId) async {
-    final snapshot = await _requestConversationSnapshot(
-      'compact_${newClientRequestId()}',
-      {
-        'type': 'compact_conversation_context',
-        'conversation_id': conversationId,
-      },
-      timeout: const Duration(seconds: 140),
-    );
+  Future<bool> compactConversationContext(
+    String conversationId, {
+    String? operationId,
+  }) async {
+    final requestId = operationId ?? 'compact_${newClientRequestId()}';
+    if (!RegExp(r'^compact_[A-Za-z0-9_-]{1,112}$').hasMatch(requestId)) {
+      throw ArgumentError('invalid context compaction operation identity');
+    }
+    final snapshot = await _requestConversationSnapshot(requestId, {
+      'type': 'compact_conversation_context',
+      'conversation_id': conversationId,
+    }, timeout: const Duration(seconds: 140));
     if (snapshot.compactConversationId != conversationId) {
       throw StateError('context compaction identity mismatch');
     }
@@ -8190,6 +8221,9 @@ class WebSocketService {
             legacyRouteUnavailable: json['legacy_route_unavailable'] == true,
             requestId: (json['request_id'] ?? json['client_request_id'] ?? '')
                 .toString(),
+            contextCompacting: json['context_compacting'] == true,
+            contextCompactionUpdate: json['context_compaction_update'] == true,
+            revision: json['revision'] is int ? json['revision'] as int : 0,
           );
           _reconcileLegacyRouteUnavailableReplay(history);
           _emit(history);
