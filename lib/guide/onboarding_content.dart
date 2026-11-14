@@ -145,12 +145,12 @@ const onboardingSlides = <OnboardingSlide>[
       es: 'Habla con naturalidad',
     ),
     OnboardingText(
-      en: 'Ask a question or describe\nwhat you need help with.',
-      fr: 'Posez une question ou dites\nce dont vous avez besoin.',
-      zh: '直接提问，\n或说说你需要什么帮助。',
-      ja: '質問や、手伝ってほしいことを\n気軽に伝えてみましょう。',
-      de: 'Stelle eine Frage oder sag,\nwobei du Hilfe brauchst.',
-      es: 'Haz una pregunta o cuenta\nen qué necesitas ayuda.',
+      en: 'Write a message. Type /\nfor chat commands.',
+      fr: 'Écrivez un message. Tapez /\npour les commandes.',
+      zh: '直接提问，或输入 /\n查看聊天命令。',
+      ja: 'チャットで質問しましょう。\n/ でコマンドを表示。',
+      de: 'Schreib im Chat. Tippe /\nfür Befehle.',
+      es: 'Escribe un mensaje. Usa /\npara ver comandos.',
     ),
   ),
   OnboardingSlide(
