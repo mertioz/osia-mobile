@@ -21,6 +21,10 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   GoogleFonts.config.allowRuntimeFetching = false;
   LicenseRegistry.addLicense(() async* {
+    final license = await rootBundle.loadString('LICENSE');
+    yield LicenseEntryWithLineBreaks(const ['OSIA'], license);
+  });
+  LicenseRegistry.addLicense(() async* {
     final license = await rootBundle.loadString('assets/fonts/OFL.txt');
     yield LicenseEntryWithLineBreaks(const ['Inter'], license);
   });

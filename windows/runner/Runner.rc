@@ -93,7 +93,7 @@ BEGIN
             VALUE "FileDescription", "osia_mobile" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "osia_mobile" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.osia. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Aymen Gherbi (OSIA) and contributors" "\0"
             VALUE "OriginalFilename", "osia_mobile.exe" "\0"
             VALUE "ProductName", "osia_mobile" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"

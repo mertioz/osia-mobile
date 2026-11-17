@@ -59,6 +59,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - LICENSE
     - assets/fonts/
     - assets/osia_logo.png
     - assets/osia_logo_mark.png

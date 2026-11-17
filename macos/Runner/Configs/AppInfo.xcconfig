@@ -11,4 +11,4 @@ PRODUCT_NAME = osia_mobile
 PRODUCT_BUNDLE_IDENTIFIER = com.osia.osiaMobile
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.osia. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 Aymen Gherbi (OSIA) and contributors

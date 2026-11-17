@@ -95,13 +95,6 @@ or STUN URL manually.
 
 ## License
 
-OSIA-authored code is open source under **Apache License 2.0**; commercial
-use, modification and integration are permitted. See LICENSE and LICENSING.md.
-
-The OSIA name and reserved original artwork have separate permissions in
-TRADEMARKS.md and BRAND_ASSETS.json. Internal business use and noncommercial
-sharing remain permitted. A commercial offering using that identity requires
-prior written permission from contact@osia.space. Commercial code reuse under
-your own branding, replacing reserved artwork, needs no OSIA commercial approval.
-
-Third-party fonts, Flutter templates and libraries retain their own licenses.
+Original OSIA Mobile code, documentation, logo and visual assets use the
+[MIT License](LICENSE), which permits commercial reuse. See [LICENSING.md](LICENSING.md)
+and [third-party notices](THIRD_PARTY_NOTICES.md) for fonts, Flutter templates and libraries.
