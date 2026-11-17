@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:osia_mobile/l10n.dart';
+import 'package:osia_mobile/chat_status.dart';
 import 'package:osia_mobile/screens/chat_screen.dart';
 import 'package:osia_mobile/screens/settings_screen.dart';
 import 'package:osia_mobile/services/background_connection_service.dart';
@@ -127,6 +128,38 @@ class _StableWebSocketService extends ws.WebSocketService {
   final List<String> deleteRequests = <String>[];
   final List<String> deleteOperationIds = <String>[];
   final List<(int, String)> bulkDeleteRequests = <(int, String)>[];
+  final List<String> chatStatusRequests = <String>[];
+  int controlRequests = 0;
+
+  @override
+  Future<ChatStatusSnapshot> requestChatStatus({
+    required String conversationId,
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
+    chatStatusRequests.add(conversationId);
+    return ChatStatusSnapshot.fromJson({
+      'schema_version': 1,
+      'command_id': 'status.info',
+      'connection': 'account',
+      'model': {'provider_id': 'fixture', 'id': 'fixture', 'label': 'PC model'},
+      'context': {'used': 100, 'maximum': 1000, 'estimated': false},
+      'quota': {
+        'state': 'available',
+        'windows': [
+          {'label': '5 h', 'remaining_percent': 75},
+        ],
+      },
+    });
+  }
+
+  @override
+  Future<ws.Conversation> setConversationControl({
+    required String? conversationId,
+    required bool disabled,
+  }) async {
+    controlRequests++;
+    throw StateError('conversation_busy');
+  }
 
   @override
   ws.ConnectionState get state => ws.ConnectionState.connected;
@@ -546,6 +579,104 @@ void main() {
     expect(find.byType(TextField), findsOneWidget);
     await _disposeChatHarness(tester, harness);
   });
+
+  testWidgets(
+    'read-only slash information works during an active turn without sending text',
+    (tester) async {
+      await _mockSlashCatalog(tester);
+      final harness = await _pumpChat(tester);
+      final service = harness.service;
+      try {
+        service.handleIncomingFrameForTest({
+          'type': 'config',
+          'config': {'conversation_control': true},
+        });
+        await tester.pump();
+        await tester.enterText(find.byType(TextField), 'long task');
+        await tester.pump();
+        await _tapGlassIconWithoutPointer(tester, Icons.arrow_upward_rounded);
+        await tester.pump();
+        final requestId = service.sentTurns.single.$2;
+        service.handleIncomingFrameForTest(
+          _canonicalTurnFrame(
+            type: 'turn_accepted',
+            conversationId: 'conv-nav',
+            requestId: requestId,
+            turnId: 'busy-info-turn',
+          ),
+        );
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('composer-stop-button')),
+          findsOneWidget,
+        );
+        for (final alias in ['status', 'help']) {
+          await tester.enterText(find.byType(TextField), '/$alias');
+          await tester.pump(const Duration(milliseconds: 160));
+          await tester.tap(
+            find.text(
+              alias == 'status'
+                  ? '/status  Status'
+                  : '/help  Slash command help',
+            ),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          await tester.pump();
+          expect(
+            find.text(alias == 'status' ? 'OSIA status' : 'Help'),
+            findsOneWidget,
+          );
+          if (alias == 'status') {
+            expect(find.text('PC model'), findsOneWidget);
+            expect(service.chatStatusRequests, ['conv-nav']);
+          }
+          expect(service.sentTurns, hasLength(1));
+          await tester.tap(find.text('Close'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+        }
+        expect(
+          find.byKey(const ValueKey('composer-stop-button')),
+          findsOneWidget,
+        );
+        await tester.enterText(find.byType(TextField), '/control');
+        await tester.pump();
+        await tester.testTextInput.receiveAction(TextInputAction.send);
+        await tester.pump();
+        expect(
+          find.text('Wait for the turn to finish before changing /control.'),
+          findsOneWidget,
+        );
+        expect(service.controlRequests, 0);
+        expect(service.sentTurns, hasLength(1));
+      } finally {
+        await _disposeChatHarness(tester, harness);
+      }
+    },
+  );
+
+  testWidgets(
+    'unsupported control is handled locally instead of becoming a prompt',
+    (tester) async {
+      await _mockSlashCatalog(tester);
+      final harness = await _pumpChat(tester);
+      try {
+        await tester.enterText(find.byType(TextField), '/control');
+        await tester.pump();
+        await tester.testTextInput.receiveAction(TextInputAction.send);
+        await tester.pump();
+        expect(
+          find.text('This command requires a compatible connected PC.'),
+          findsOneWidget,
+        );
+        expect(harness.service.sentTurns, isEmpty);
+        expect(harness.service.controlRequests, 0);
+      } finally {
+        await _disposeChatHarness(tester, harness);
+      }
+    },
+  );
 
   testWidgets(
     'language changes update the same canonical text and voice connection',
@@ -1617,7 +1748,10 @@ void main() {
       await tester.tap(find.text('/status  Status'));
       await tester.pumpAndSettle();
       expect(find.text('OSIA status'), findsOneWidget);
-      expect(find.text('PC connection'), findsOneWidget);
+      expect(find.text('PC model'), findsOneWidget);
+      expect(find.text('Context'), findsOneWidget);
+      expect(find.text('Remaining quota · 5 h'), findsOneWidget);
+      expect(find.text('PC connection'), findsNothing);
       await tester.tap(find.text('Close'));
       await tester.pumpAndSettle();
 

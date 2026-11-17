@@ -537,6 +537,17 @@ String? slashPaletteQuery(String text) {
   return token;
 }
 
+/// Composer actions that must be handled locally, never sent as chat text.
+String? localSlashActionId(String text) => switch (slashPaletteQuery(text)) {
+  'status' => 'status.info',
+  'help' => 'help.info',
+  'control' => 'control.toggle',
+  _ => null,
+};
+
+bool isReadOnlySlashInformation(String commandId) =>
+    commandId == 'status.info' || commandId == 'help.info';
+
 class ConversationMention {
   final int start;
   final int end;
@@ -740,9 +751,9 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
   String filter = '',
   bool currentWebAvailable = false,
   bool chatSlashExtensionsAvailable = false,
-  bool mouseControlAvailable = false,
+  bool controlAvailable = false,
+  bool controlDisabled = false,
   bool contextCompactionAvailable = false,
-  bool mouseControlDisabled = false,
   bool modelsAvailable = false,
   List<SlashConnectorChoice> connectors = const [],
 }) {
@@ -755,7 +766,7 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
     final available = switch (item.availabilityPredicate) {
       'current_web_available' => currentWebAvailable,
       'chat_slash_extensions' => chatSlashExtensionsAvailable,
-      'conversation_mouse_control' => mouseControlAvailable,
+      'conversation_control' => controlAvailable,
       'conversation_context_compaction' => contextCompactionAvailable,
       'selectable_models_present' => modelsAvailable,
       _ => true,
@@ -767,10 +778,10 @@ List<SlashPaletteSelection> buildSlashPaletteResults({
         id: item.id,
         alias: item.alias,
         title: item.localizedName(locale),
-        description: item.id == 'mouse_control.toggle' && mouseControlDisabled
+        description: item.id == 'control.toggle' && controlDisabled
             ? (locale.startsWith('fr')
-                  ? 'Réactiver le contrôle de la souris dans cette discussion'
-                  : "Restore OSIA's mouse control in this conversation")
+                  ? 'Réactiver la souris et les nouvelles captures dans cette discussion'
+                  : 'Restore pointer control and new captures in this conversation')
             : item.localizedDescription(locale),
         argumentHint:
             item.argumentHint[locale.startsWith('fr') ? 'fr' : 'en'] ??

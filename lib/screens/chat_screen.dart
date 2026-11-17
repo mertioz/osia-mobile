@@ -9,6 +9,7 @@ import '../l10n.dart';
 import '../motion.dart';
 import '../nav.dart';
 import '../slash_commands.dart';
+import '../chat_status.dart';
 import '../services/audio_service.dart';
 import '../services/attachment_service.dart';
 import '../services/background_connection_service.dart';
@@ -145,7 +146,8 @@ class _ChatScreenState extends State<ChatScreen> {
   SlashTurnDirectivesV1 _slashDirectives = const SlashTurnDirectivesV1();
   Map<String, dynamic> _slashAvailability = const {};
   bool _chatSlashExtensions = false;
-  bool _mouseControlCommand = false;
+  bool _controlCommand = false;
+  bool _controlRequestPending = false;
   bool _contextCompactionCommand = false;
   String? _compactingConversationId;
   String? _compactionRequestId;
@@ -153,7 +155,6 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, int> _contextCompactionRevisions = {};
   String _slashStage = '';
   bool _fullSlashReasoning = false;
-  bool _specialRequestPending = false;
   List<ws.ConfigSkill> _slashSkills = const [];
   // WOR-78 Fix A (refined): focus handle for the input bar's text field, owned
   // here so the keyboard is CONDITIONAL on where the user lands — focus it on a
@@ -552,7 +553,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _connState = state;
           if (state != ws.ConnectionState.connected) {
             _chatSlashExtensions = false;
-            _mouseControlCommand = false;
+            _controlCommand = false;
             _fullSlashReasoning = false;
           }
           // Fresh banner-switcher key on every connection-state change so a
@@ -664,7 +665,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _reasoningConfigLoaded = true;
           _slashAvailability = cfg.slashCommands;
           _chatSlashExtensions = cfg.chatSlashExtensions;
-          _mouseControlCommand = cfg.conversationMouseControl;
+          _controlCommand = cfg.conversationControl;
           _contextCompactionCommand = cfg.conversationContextCompaction;
           _fullSlashReasoning =
               cfg.settings['slash_reasoning_model_options'] == true;
@@ -4142,7 +4143,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool get _canSend {
     final text = _textCtrl.text.trim();
     return !_activeWork &&
-        !_specialRequestPending &&
+        !_controlRequestPending &&
         !_attachmentInteractionLocked &&
         (text.isNotEmpty || _pendingAttachments.isNotEmpty);
   }
@@ -4174,14 +4175,14 @@ class _ChatScreenState extends State<ChatScreen> {
   bool get _chatSlashAvailable =>
       _connState == ws.ConnectionState.connected && _chatSlashExtensions;
 
-  bool get _mouseControlAvailable =>
-      _connState == ws.ConnectionState.connected && _mouseControlCommand;
+  bool get _controlAvailable =>
+      _connState == ws.ConnectionState.connected && _controlCommand;
 
-  bool get _conversationMouseControlDisabled =>
+  bool get _conversationControlDisabled =>
       canonicalConversationForActiveId(
         _conversations,
         _activeConversationId,
-      )?.specialMode ??
+      )?.controlDisabled ??
       false;
 
   List<SlashConnectorChoice> get _slashConnectorChoices {
@@ -4242,11 +4243,11 @@ class _ChatScreenState extends State<ChatScreen> {
       locale: _slashLocale,
       filter: query,
       chatSlashExtensionsAvailable: _chatSlashAvailable,
-      mouseControlAvailable: _mouseControlAvailable,
+      controlAvailable: _controlAvailable,
+      controlDisabled: _conversationControlDisabled,
       contextCompactionAvailable:
           _connState == ws.ConnectionState.connected &&
           _contextCompactionCommand,
-      mouseControlDisabled: _conversationMouseControlDisabled,
       currentWebAvailable:
           _connState == ws.ConnectionState.connected &&
           _slashAvailability['current_web_available'] == true,
@@ -4307,7 +4308,21 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _updateSlashPalette() {
-    if (_activeWork || _specialRequestPending) {
+    if (_activeWork || _controlRequestPending) {
+      final query = slashPaletteQuery(_textCtrl.text);
+      final rows = query == null
+          ? const <SlashPaletteSelection>[]
+          : _slashCommandRows(query)
+                .where(
+                  (row) =>
+                      row.type == SlashPaletteSelectionType.command &&
+                      isReadOnlySlashInformation(row.id),
+                )
+                .toList();
+      if (rows.isNotEmpty) {
+        _slashPaletteController.show(rows, _onSlashSelection);
+        return;
+      }
       _slashPaletteController.close();
       return;
     }
@@ -4359,6 +4374,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _submitComposer() {
+    if (_handleLocalSlashAction()) return;
     if (_slashPaletteController.isOpen) {
       _slashPaletteController.activate();
       return;
@@ -4366,8 +4382,47 @@ class _ChatScreenState extends State<ChatScreen> {
     unawaited(_sendText());
   }
 
+  bool _handleLocalSlashAction() {
+    final commandId = localSlashActionId(_textCtrl.text);
+    if (commandId == null) return false;
+    if (commandId == 'control.toggle' && !_controlAvailable) {
+      _slashPaletteController.close();
+      _showSlashNotice(
+        'Cette commande nécessite un PC connecté compatible.',
+        'This command requires a compatible connected PC.',
+      );
+      return true;
+    }
+    _onSlashSelection(
+      SlashPaletteSelection(
+        type: SlashPaletteSelectionType.command,
+        id: commandId,
+        title: '',
+        handlerContract: switch (commandId) {
+          'status.info' => 'show_safe_status_v1',
+          'help.info' => 'show_available_help_v1',
+          _ => 'toggle_conversation_control_v1',
+        },
+      ),
+    );
+    return true;
+  }
+
   void _onSlashSelection(SlashPaletteSelection selection) {
-    if (!selection.enabled || _activeWork) return;
+    if (!selection.enabled) return;
+    final readOnlyInformation =
+        selection.type == SlashPaletteSelectionType.command &&
+        isReadOnlySlashInformation(selection.id);
+    if ((_activeWork || _controlRequestPending) && !readOnlyInformation) {
+      if (selection.id == 'control.toggle') {
+        _slashPaletteController.close();
+        _showSlashNotice(
+          'Attends la fin du tour avant de modifier /control.',
+          'Wait for the turn to finish before changing /control.',
+        );
+      }
+      return;
+    }
     try {
       switch (selection.type) {
         case SlashPaletteSelectionType.skill:
@@ -4436,8 +4491,8 @@ class _ChatScreenState extends State<ChatScreen> {
           );
         case 'select_exact_model_v1':
           _showSlashModels();
-        case 'toggle_conversation_mouse_control_v1':
-          unawaited(_toggleConversationMouseControl());
+        case 'toggle_conversation_control_v1':
+          unawaited(_toggleConversationControl());
         case 'compact_conversation_context_v1':
           unawaited(_compactContext(consumeSlashPalettePrefix(_textCtrl.text)));
         case 'select_skill_v1':
@@ -4575,13 +4630,13 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _toggleConversationMouseControl() async {
-    if (!_mouseControlAvailable || _specialRequestPending) return;
+  Future<void> _toggleConversationControl() async {
+    if (!_controlAvailable || _controlRequestPending) return;
     final conversationId = _activeConversationId;
     final selectionEpoch = _conversationSelectionEpoch;
-    final enabled = !_conversationMouseControlDisabled;
+    final disabled = !_conversationControlDisabled;
     setState(() {
-      _specialRequestPending = true;
+      _controlRequestPending = true;
       _textCtrl.text = consumeSlashPalettePrefix(_textCtrl.text);
       _textCtrl.selection = TextSelection.collapsed(
         offset: _textCtrl.text.length,
@@ -4589,9 +4644,9 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     _slashPaletteController.close();
     try {
-      final conversation = await _wsService.setConversationSpecial(
+      final conversation = await _wsService.setConversationControl(
         conversationId: conversationId,
-        enabled: enabled,
+        disabled: disabled,
       );
       if (!mounted ||
           selectionEpoch != _conversationSelectionEpoch ||
@@ -4604,28 +4659,28 @@ class _ChatScreenState extends State<ChatScreen> {
           _activeConversationTitle = conversation.title;
         });
       }
-      if (enabled) {
+      if (disabled) {
         _showSlashNotice(
-          'Contrôle de la souris désactivé dans cette discussion.',
-          'Mouse control disabled in this conversation.',
+          'Souris et nouvelles captures désactivées dans cette discussion.',
+          'Pointer control and new captures disabled in this conversation.',
         );
       } else {
         _showSlashNotice(
-          'Contrôle de la souris réactivé dans cette discussion.',
-          'Mouse control restored in this conversation.',
+          'Souris et nouvelles captures réactivées dans cette discussion.',
+          'Pointer control and new captures restored in this conversation.',
         );
       }
     } on StateError catch (error) {
       if (!mounted || selectionEpoch != _conversationSelectionEpoch) return;
       if (error.message == 'conversation_busy') {
         _showSlashNotice(
-          'Attends la fin du tour avant de modifier /mousecontrol.',
-          'Wait for the turn to finish before changing /mousecontrol.',
+          'Attends la fin du tour avant de modifier /control.',
+          'Wait for the turn to finish before changing /control.',
         );
       } else {
         _showSlashNotice(
-          'Impossible de modifier /mousecontrol dans cette discussion.',
-          'Could not change /mousecontrol in this conversation.',
+          'Impossible de modifier /control dans cette discussion.',
+          'Could not change /control in this conversation.',
         );
       }
     } on TimeoutException {
@@ -4635,7 +4690,7 @@ class _ChatScreenState extends State<ChatScreen> {
         'The PC did not confirm the change.',
       );
     } finally {
-      if (mounted) setState(() => _specialRequestPending = false);
+      if (mounted) setState(() => _controlRequestPending = false);
     }
   }
 
@@ -4832,28 +4887,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _slashDirectives = const SlashTurnDirectivesV1();
   }
 
-  ws.OsiaModel? get _slashCurrentModel {
-    for (final model in _models) {
-      if (model.id == _selectedModel && model.provider == _selectedProvider) {
-        return model;
-      }
-    }
-    return null;
-  }
-
-  String get _currentSlashReasoning {
-    final model = _slashCurrentModel;
-    if (model != null && model.reasoningOptions.isNotEmpty) {
-      return model.selectedReasoning;
-    }
-    final provider = (_selectedProvider ?? '').trim().toLowerCase();
-    final modelId = (_selectedModel ?? '').trim();
-    final key = ws.OsiaReasoningConfig.modelKey(provider, modelId);
-    return _reasoning.models[key] ??
-        _reasoning.providers[provider] ??
-        _reasoning.defaultLevel;
-  }
-
   String _slashProviderLabel(bool localeFr, {String? provider}) {
     if (_connState != ws.ConnectionState.connected) {
       return localeFr ? 'Fournisseur indisponible' : 'Unavailable provider';
@@ -4877,26 +4910,18 @@ class _ChatScreenState extends State<ChatScreen> {
         (localeFr ? 'Fournisseur indisponible' : 'Unavailable provider');
   }
 
-  String _slashTransportLabel(bool localeFr) {
-    if (_connState != ws.ConnectionState.connected) {
-      return localeFr ? 'hors ligne' : 'offline';
-    }
-    return switch (_wsService.committedTransportState) {
-      ws.CommittedTransportState.lanDirect => 'LAN direct',
-      ws.CommittedTransportState.webRtcP2p => 'WebRTC/P2P',
-      ws.CommittedTransportState.relayOsia => 'Relay OSIA',
-      ws.CommittedTransportState.switching =>
-        localeFr ? 'bascule' : 'switching',
-    };
-  }
-
   Future<void> _showSlashInformation(String commandId) async {
     final french = _slashLocale.startsWith('fr');
     final help = commandId == 'help.info';
     final title = help
         ? (french ? 'Aide' : 'Help')
         : (french ? 'État d’OSIA' : 'OSIA status');
+    final conversationId = _activeConversationId ?? '';
+    final selectionEpoch = _conversationSelectionEpoch;
     if (!mounted) return;
+    final status = help
+        ? null
+        : _wsService.requestChatStatus(conversationId: conversationId);
     await showDialog<void>(
       context: context,
       builder: (context) {
@@ -4912,14 +4937,32 @@ class _ChatScreenState extends State<ChatScreen> {
                   ? Text(
                       [
                         french
-                            ? '@ discussion  ·  Référencer une discussion'
-                            : '@ conversation  ·  Reference a conversation',
+                            ? '@ discussion  ·  Ajouter une discussion passée comme contexte'
+                            : '@ conversation  ·  Add a past chat as context',
                         for (final entry in _slashCommandRows(''))
                           if (entry.enabled)
                             '/${entry.alias}${entry.argumentHint.isEmpty ? '' : ' ${entry.argumentHint}'}  ·  ${entry.description}',
                       ].join('\n\n'),
                     )
-                  : _slashStatusCards(palette, french),
+                  : FutureBuilder<ChatStatusSnapshot>(
+                      future: status,
+                      builder: (context, snapshot) {
+                        if (selectionEpoch != _conversationSelectionEpoch ||
+                            (_activeConversationId ?? '') != conversationId ||
+                            snapshot.hasError) {
+                          return Text(
+                            french
+                                ? 'État indisponible.'
+                                : 'Status unavailable.',
+                          );
+                        }
+                        final value = snapshot.data;
+                        if (value == null) {
+                          return Text(french ? 'Chargement…' : 'Loading…');
+                        }
+                        return _slashStatusRows(palette, french, value);
+                      },
+                    ),
             ),
           ),
           actions: [
@@ -4933,107 +4976,46 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _slashStatusCards(OsiaPalette palette, bool french) {
-    Widget card(String title, List<(String, String)> rows) {
-      return Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: palette.surfaceElevated,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: TextStyle(
-                color: palette.accent,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            for (final (label, value) in rows)
-              Padding(
-                padding: const EdgeInsets.only(top: 7),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        label,
-                        style: TextStyle(color: palette.textMuted),
-                      ),
-                    ),
-                    if (value.isNotEmpty)
-                      Expanded(child: Text(value, textAlign: TextAlign.end)),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      );
-    }
-
-    final model = _connState == ws.ConnectionState.connected
-        ? _slashCurrentModel
-        : null;
-    final connectors = _slashConnectorChoices;
-    final ready = connectors.where((item) => item.usable).length;
-    final connectorLabel = french ? 'Connecteurs' : 'Connectors';
-    final effort = ModelReasoningOption(
-      _currentSlashReasoning,
-    ).label(OsiaL10n.of(context));
+  Widget _slashStatusRows(
+    OsiaPalette palette,
+    bool french,
+    ChatStatusSnapshot snapshot,
+  ) {
     return Column(
       mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        card(french ? 'Modèle' : 'Model', [
-          (_slashProviderLabel(french), model?.label ?? '—'),
-          (french ? 'Raisonnement' : 'Reasoning', model == null ? '—' : effort),
-          (
-            french ? 'Disponibilité' : 'Availability',
-            model?.selectable == true
-                ? (french ? 'Prêt' : 'Ready')
-                : (french ? 'Indisponible' : 'Unavailable'),
-          ),
-        ]),
-        const SizedBox(height: 8),
-        card(french ? 'Discussion' : 'Chat', [
-          (
-            french ? 'Connexion au PC' : 'PC connection',
-            _slashTransportLabel(french),
-          ),
-          (
-            french ? 'Routage' : 'Routing',
-            _aiHierarchyEnabled
-                ? (french ? 'Automatique' : 'Automatic')
-                : (french ? 'Modèle sélectionné' : 'Selected model'),
-          ),
-          (
-            _mouseControlCommand
-                ? (french ? 'Contrôle de la souris' : 'Mouse control')
-                : (french ? 'Mode vision et souris' : 'Vision and mouse mode'),
-            _conversationMouseControlDisabled
-                ? (french ? 'Désactivé' : 'Disabled')
-                : (french ? 'Actif' : 'Enabled'),
-          ),
-        ]),
-        const SizedBox(height: 8),
-        card('$connectorLabel · $ready/${connectors.length}', [
-          if (connectors.isEmpty)
-            (french ? 'Aucun connecteur' : 'No connectors', ''),
-          for (final connector in connectors.take(8))
-            (
-              connector.displayName,
-              slashConnectorStateLabel(connector.state, _slashLocale),
+        for (final (label, value) in snapshot.rows(french: french))
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    label,
+                    style: TextStyle(color: palette.textMuted),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(flex: 4, child: Text(value, textAlign: TextAlign.end)),
+              ],
             ),
-        ]),
+          ),
+        if (snapshot.estimateNotice(french: french) case final notice?)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(notice, style: TextStyle(color: palette.textMuted)),
+          ),
       ],
     );
   }
 
   Future<void> _sendText() async {
     _wsService.setClientLocale(widget.languageController.code);
-    if (_activeWork || _specialRequestPending) return;
+    if (_handleLocalSlashAction()) return;
+    if (_activeWork || _controlRequestPending) return;
     if (_textCtrl.text.trim().toLowerCase() == '/compact') {
       await _compactContext('');
       return;
@@ -5063,15 +5045,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final hasImage = attachments.any(
       (attachment) => attachment.detectedCategory == 'image',
     );
-    if (hasImage &&
-        !_mouseControlCommand &&
-        _conversationMouseControlDisabled) {
-      _showSlashNotice(
-        'Réactive la vision sur le PC connecté avant d’envoyer une image.',
-        'Restore vision on the connected PC before sending an image.',
-      );
-      return;
-    }
     if (exactModel != null && hasImage) {
       final compatible = _models.any(
         (model) =>
@@ -6537,7 +6510,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 modelLabel: _currentModelLabel(strings),
                 onModelTap: _openModelSelector,
                 onChanged: _onComposerChanged,
-                onSubmitted: _activeWork ? null : (_) => _submitComposer(),
+                onSubmitted:
+                    !_activeWork || localSlashActionId(_textCtrl.text) != null
+                    ? (_) => _submitComposer()
+                    : null,
                 onKeyEvent: _onSlashKey,
                 onTapOutside: (_) => _slashPaletteController.close(),
                 directives: _composerDirectiveChips,

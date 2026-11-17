@@ -13,7 +13,7 @@ void main() {
       'model',
       'status',
       'help',
-      'mousecontrol',
+      'control',
       'compact',
       'skill',
       'skillcreator',
@@ -30,15 +30,16 @@ void main() {
         chatSlashExtensionsAvailable: true,
       );
       expect(legacy.map((item) => item.alias), isNot(contains('mousecontrol')));
+      expect(legacy.map((item) => item.alias), isNot(contains('control')));
       expect(legacy.map((item) => item.alias), contains('skill'));
 
       final current = buildSlashPaletteResults(
         catalog: catalog,
         locale: 'fr',
         chatSlashExtensionsAvailable: true,
-        mouseControlAvailable: true,
+        controlAvailable: true,
+        controlDisabled: true,
         currentWebAvailable: true,
-        mouseControlDisabled: true,
         modelsAvailable: true,
       );
       expect(
@@ -46,8 +47,12 @@ void main() {
         hasLength(7),
       );
       expect(
-        current.firstWhere((item) => item.alias == 'mousecontrol').description,
-        'Réactiver le contrôle de la souris dans cette discussion',
+        current.map((item) => item.alias),
+        isNot(contains('mousecontrol')),
+      );
+      expect(
+        current.firstWhere((item) => item.alias == 'control').description,
+        'Réactiver la souris et les nouvelles captures dans cette discussion',
       );
 
       final create = SlashTurnDirectivesV1.fromJson({
@@ -75,13 +80,22 @@ void main() {
   test('palette grammar is initial-only and preserves literal slash text', () {
     expect(slashPaletteQuery('/'), '');
     expect(slashPaletteQuery('/ '), '');
-    expect(slashPaletteQuery('/ mousecontrol'), 'mousecontrol');
+    expect(slashPaletteQuery('/ compact'), 'compact');
     expect(slashPaletteQuery('  /web'), 'web');
     expect(slashPaletteQuery('//web'), isNull);
     expect(slashPaletteQuery('https://osia.space'), isNull);
     expect(slashPaletteQuery('hello /web'), isNull);
     expect(slashPaletteQuery('/UPPER'), isNull);
     expect(slashPaletteQuery('/1'), isNull);
+    expect(localSlashActionId('/status'), 'status.info');
+    expect(localSlashActionId('/ help'), 'help.info');
+    expect(localSlashActionId('/control remaining text'), 'control.toggle');
+    expect(localSlashActionId('//control'), isNull);
+    expect(localSlashActionId('please /status'), isNull);
+    expect(localSlashActionId('/status-other'), isNull);
+    expect(isReadOnlySlashInformation('status.info'), isTrue);
+    expect(isReadOnlySlashInformation('help.info'), isTrue);
+    expect(isReadOnlySlashInformation('control.toggle'), isFalse);
     expect(
       consumeSlashPalettePrefix('/ skillcreator a new brief'),
       'a new brief',

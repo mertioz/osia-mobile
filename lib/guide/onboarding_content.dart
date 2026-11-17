@@ -145,12 +145,12 @@ const onboardingSlides = <OnboardingSlide>[
       es: 'Habla con naturalidad',
     ),
     OnboardingText(
-      en: 'Write a message. Type /\nfor chat commands.',
-      fr: 'Écrivez un message. Tapez /\npour les commandes.',
-      zh: '直接提问，或输入 /\n查看聊天命令。',
-      ja: 'チャットで質問しましょう。\n/ でコマンドを表示。',
-      de: 'Schreib im Chat. Tippe /\nfür Befehle.',
-      es: 'Escribe un mensaje. Usa /\npara ver comandos.',
+      en: '/ opens commands.\n@ adds a past chat as context.',
+      fr: '/ : commandes.\n@ : contexte d’un ancien chat.',
+      zh: '/ 查看命令。\n@ 引用过去的对话补充上下文。',
+      ja: '/ でコマンド表示。\n@ で過去の会話を文脈に。',
+      de: '/ : Befehle.\n@ : frühere Chats als Kontext.',
+      es: '/ : comandos.\n@ : contexto de un chat previo.',
     ),
   ),
   OnboardingSlide(

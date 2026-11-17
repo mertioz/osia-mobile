@@ -11,6 +11,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../slash_commands.dart';
+import '../chat_status.dart';
 import 'lan_direct_transport.dart';
 import 'lan_discovery_service.dart';
 import 'execution_trace.dart';
@@ -384,14 +385,14 @@ class Conversation {
   final String title;
   final DateTime? date;
   final String? folderId;
-  final bool specialMode;
+  final bool controlDisabled;
 
   const Conversation({
     required this.id,
     required this.title,
     this.date,
     this.folderId,
-    this.specialMode = false,
+    this.controlDisabled = false,
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
@@ -415,7 +416,7 @@ class Conversation {
           (json['folder_id'] == null || json['folder_id'].toString().isEmpty)
           ? null
           : json['folder_id'].toString(),
-      specialMode: json['special_mode'] == true,
+      controlDisabled: json['control_disabled'] == true,
     );
   }
 }
@@ -458,8 +459,8 @@ class ConversationsMessage extends OsiaMessage {
   final int version;
   final int snapshotRevision;
   final String operationId;
-  final String specialConversationId;
-  final String specialError;
+  final String controlConversationId;
+  final String controlError;
   final String compactConversationId;
   final bool compactChanged;
   final String compactError;
@@ -470,8 +471,8 @@ class ConversationsMessage extends OsiaMessage {
     this.version = 1,
     this.snapshotRevision = 0,
     this.operationId = '',
-    this.specialConversationId = '',
-    this.specialError = '',
+    this.controlConversationId = '',
+    this.controlError = '',
     this.compactConversationId = '',
     this.compactChanged = false,
     this.compactError = '',
@@ -1190,7 +1191,7 @@ class ConfigData {
   /// display state and stable connector identities, never secrets or endpoints.
   final Map<String, dynamic> slashCommands;
   final bool chatSlashExtensions;
-  final bool conversationMouseControl;
+  final bool conversationControl;
   final bool conversationContextCompaction;
 
   /// Safe mirror of PC settings needed by Mobile controls (e.g. `time_format`,
@@ -1213,7 +1214,7 @@ class ConfigData {
     this.reasoning = const OsiaReasoningConfig(),
     this.slashCommands = const {},
     this.chatSlashExtensions = false,
-    this.conversationMouseControl = false,
+    this.conversationControl = false,
     this.conversationContextCompaction = false,
     required this.settings,
   });
@@ -1285,7 +1286,7 @@ class ConfigData {
       ),
       slashCommands: parseSlashAvailabilityOverlay(config['slash_commands']),
       chatSlashExtensions: config['chat_slash_extensions'] == 1,
-      conversationMouseControl: config['conversation_mouse_control'] == true,
+      conversationControl: config['conversation_control'] == true,
       conversationContextCompaction:
           config['conversation_context_compaction'] == true,
       settings: settings,
@@ -3848,6 +3849,7 @@ class WebSocketService {
 
   /// Close the connection and stop reconnection attempts.
   void disconnect() {
+    _failChatStatusRequests();
     _intentionalClose = true;
     lanDiscoveryService.stop();
     _connectGeneration++;
@@ -4195,6 +4197,75 @@ class WebSocketService {
     _send({'type': 'load_conversation', 'id': id});
   }
 
+  final _chatStatusRequests =
+      <
+        String,
+        ({String conversationId, Completer<ChatStatusSnapshot> result})
+      >{};
+
+  /// Fetch one PC-authored snapshot without changing the active chat turn.
+  Future<ChatStatusSnapshot> requestChatStatus({
+    required String conversationId,
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
+    final operationId = 'status_${newClientRequestId()}';
+    final result = Completer<ChatStatusSnapshot>();
+    _chatStatusRequests[operationId] = (
+      conversationId: conversationId,
+      result: result,
+    );
+    if (!_send({
+      'type': 'get_chat_status',
+      'operation_id': operationId,
+      'conversation_id': conversationId,
+    })) {
+      _chatStatusRequests.remove(operationId);
+      throw StateError('chat status request could not be sent');
+    }
+    try {
+      return await result.future.timeout(timeout);
+    } finally {
+      _chatStatusRequests.remove(operationId);
+    }
+  }
+
+  void _handleChatStatus(Map<String, dynamic> frame) {
+    final operationId = frame['operation_id'];
+    final pending = _chatStatusRequests[operationId];
+    if (pending == null ||
+        frame['conversation_id'] != pending.conversationId ||
+        pending.result.isCompleted) {
+      return;
+    }
+    _chatStatusRequests.remove(operationId);
+    final raw = frame['status'];
+    if (raw is! Map || (frame['error'] != null && frame['error'] != '')) {
+      pending.result.completeError(StateError('chat status unavailable'));
+      return;
+    }
+    try {
+      pending.result.complete(
+        ChatStatusSnapshot.fromJson(raw.cast<String, dynamic>()),
+      );
+    } on FormatException catch (error) {
+      pending.result.completeError(error);
+    } on TypeError catch (error) {
+      pending.result.completeError(error);
+    }
+  }
+
+  void _failChatStatusRequests() {
+    final pending = _chatStatusRequests.values.toList();
+    _chatStatusRequests.clear();
+    for (final request in pending) {
+      if (!request.result.isCompleted) {
+        request.result.completeError(
+          StateError('chat status connection closed'),
+        );
+      }
+    }
+  }
+
   final _screenshotTransfers = <String, _ScreenshotTransfer>{};
 
   Future<Uint8List> requestChatScreenshot({
@@ -4279,29 +4350,29 @@ class WebSocketService {
     });
   }
 
-  /// Request an exact, PC-owned conversation mode change.
-  Future<Conversation> setConversationSpecial({
+  /// Persist the PC-owned pointer/capture setting for this conversation only.
+  Future<Conversation> setConversationControl({
     required String? conversationId,
-    required bool enabled,
+    required bool disabled,
   }) async {
     final snapshot =
-        await _requestConversationSnapshot('special_${newClientRequestId()}', {
-          'type': 'set_conversation_special',
+        await _requestConversationSnapshot('control_${newClientRequestId()}', {
+          'type': 'set_conversation_control',
           'conversation_id': conversationId ?? '',
-          'enabled': enabled,
+          'disabled': disabled,
         });
-    if (snapshot.specialError.isNotEmpty) {
-      throw StateError(snapshot.specialError);
+    if (snapshot.controlError.isNotEmpty) {
+      throw StateError(snapshot.controlError);
     }
-    final id = snapshot.specialConversationId;
+    final id = snapshot.controlConversationId;
     if (id.isNotEmpty && (conversationId == null || id == conversationId)) {
       for (final conversation in snapshot.conversations) {
-        if (conversation.id == id && conversation.specialMode == enabled) {
+        if (conversation.id == id && conversation.controlDisabled == disabled) {
           return conversation;
         }
       }
     }
-    throw StateError('special state not confirmed by PC');
+    throw StateError('control state not confirmed by PC');
   }
 
   Future<bool> compactConversationContext(
@@ -5472,6 +5543,7 @@ class WebSocketService {
   }
 
   void _setState(ConnectionState newState) {
+    if (newState != ConnectionState.connected) _failChatStatusRequests();
     if (_disposed || _connectionCtrl.isClosed) return;
     if (_state == newState) return;
     if (newState != ConnectionState.connected) {
@@ -8004,6 +8076,8 @@ class WebSocketService {
               frameType: 'error',
             );
           }
+        case 'chat_status':
+          _handleChatStatus(json);
         case 'conversations':
           final raw = json['items'] ?? json['conversations'];
           if (raw is List) {
@@ -8048,9 +8122,9 @@ class WebSocketService {
                 version: version,
                 snapshotRevision: snapshotRevision,
                 operationId: (json['operation_id'] ?? '').toString(),
-                specialConversationId: (json['special_conversation_id'] ?? '')
+                controlConversationId: (json['control_conversation_id'] ?? '')
                     .toString(),
-                specialError: (json['special_error'] ?? '').toString(),
+                controlError: (json['control_error'] ?? '').toString(),
                 compactConversationId: (json['compact_conversation_id'] ?? '')
                     .toString(),
                 compactChanged: json['compact_changed'] == true,
